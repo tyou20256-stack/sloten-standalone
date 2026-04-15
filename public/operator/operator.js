@@ -12,6 +12,7 @@
     selectedId: null,
     messagesByConv: {},
     contactsByConv: {},
+    detailsById: {}, // cached full conversation rows (survives list filter changes)
     filter: 'open',
     ws: null,
     wsConvId: null,
@@ -98,10 +99,21 @@
     try {
       const r = await api('GET', `/api/conversations/${id}`);
       state.contactsByConv[id] = r.contact;
+      state.detailsById[id] = r.conversation;
       const m = await api('GET', `/api/conversations/${id}/messages?include_private=1`);
       state.messagesByConv[id] = m.messages || [];
       renderDetail();
     } catch (e) { console.warn('loadMessages', e.message); }
+  }
+
+  async function refreshSelectedDetail() {
+    if (!state.selectedId) return;
+    try {
+      const r = await api('GET', `/api/conversations/${state.selectedId}`);
+      state.detailsById[state.selectedId] = r.conversation;
+      state.contactsByConv[state.selectedId] = r.contact;
+      renderDetail();
+    } catch (e) { console.warn('refreshSelectedDetail', e.message); }
   }
 
   async function sendMessage(text) {
@@ -116,26 +128,18 @@
     } catch (e) { alert('送信失敗: ' + e.message); }
   }
 
-  async function takeOver() {
+  async function patchConv(patch) {
     if (!state.selectedId) return;
-    await api('PATCH', `/api/conversations/${state.selectedId}`, { status: 'open', assignee_id: state.staff.id });
+    await api('PATCH', `/api/conversations/${state.selectedId}`, patch);
+    // Refresh detail first so the selected conv stays visible even if it's
+    // filtered out of the list after the status change (Chatwoot-style).
+    await refreshSelectedDetail();
     await loadConversations();
   }
-  async function resolveConv() {
-    if (!state.selectedId) return;
-    await api('PATCH', `/api/conversations/${state.selectedId}`, { status: 'closed' });
-    await loadConversations();
-  }
-  async function reopenConv() {
-    if (!state.selectedId) return;
-    await api('PATCH', `/api/conversations/${state.selectedId}`, { status: 'open' });
-    await loadConversations();
-  }
-  async function returnToBot() {
-    if (!state.selectedId) return;
-    await api('PATCH', `/api/conversations/${state.selectedId}`, { status: 'bot', assignee_id: null });
-    await loadConversations();
-  }
+  const takeOver    = () => patchConv({ status: 'open', assignee_id: state.staff.id });
+  const resolveConv = () => patchConv({ status: 'closed' });
+  const reopenConv  = () => patchConv({ status: 'open' });
+  const returnToBot = () => patchConv({ status: 'bot', assignee_id: null });
 
   // --- WebSocket ---
   function closeWS() {
@@ -163,9 +167,15 @@
           conv.last_message_at = f.message.created_at;
           renderList();
         }
+        // Keep detail cache fresh too
+        if (state.detailsById[convId]) {
+          state.detailsById[convId].last_message_preview = (f.message.content || '').slice(0, 200);
+          state.detailsById[convId].last_message_at = f.message.created_at;
+        }
       } else if (f.type === 'conversation.updated' && f.conversation) {
         const i = state.conversations.findIndex((c) => c.id === f.conversation.id);
         if (i >= 0) state.conversations[i] = f.conversation;
+        state.detailsById[f.conversation.id] = f.conversation;
         renderList();
         renderDetail();
       }
@@ -221,7 +231,9 @@
       detail.appendChild(el('div', { class: 'slo-op-detail-empty' }, '左の一覧から会話を選択してください'));
       return;
     }
-    const conv = state.conversations.find((c) => c.id === state.selectedId);
+    // Prefer cached detail (survives list-filter changes); fall back to list entry.
+    const conv = state.detailsById[state.selectedId]
+      || state.conversations.find((c) => c.id === state.selectedId);
     if (!conv) {
       detail.appendChild(el('div', { class: 'slo-op-detail-empty' }, '会話を読み込み中…'));
       return;

@@ -212,6 +212,8 @@
     state.conversationId = r.conversation.id;
     state.status = r.conversation.status;
     saveState();
+    // First-time conversation: open WS immediately so operator replies appear in real time.
+    connectWS();
     return state.conversationId;
   }
 
@@ -356,7 +358,8 @@
     dom.root.setAttribute('data-open', '1');
     dom.input.focus();
     if (!state.conversationId) {
-      // Greet message only on fresh open
+      // Greet message only on fresh open. WS is deferred until first send
+      // creates the conversation (ensureConversation calls connectWS).
       renderMessage({
         id: 'greet-' + Date.now(),
         sender_type: 'bot',
@@ -376,8 +379,9 @@
     buildUI();
     if (cfg.autoOpen) await open();
     if (state.conversationId) {
-      // Resume: prefetch history so when user opens panel it's ready.
-      // Defer WS until open() to keep passive tabs light.
+      // Resume on fresh page load: connect WS eagerly so operator replies
+      // arrive even if the user hasn't opened the panel yet.
+      connectWS();
     }
     setStatus('準備完了');
   }
