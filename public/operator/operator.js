@@ -12,13 +12,30 @@
     selectedId: null,
     messagesByConv: {},
     contactsByConv: {},
-    detailsById: {}, // cached full conversation rows (survives list filter changes)
-    historyByContact: {}, // contact_id -> conversations[]
+    detailsById: {},       // cached full conversation rows (survives list filter changes)
+    historyByContact: {},  // contact_id -> conversations[]
+    labels: [],            // global labels catalog
+    templates: [],         // canned responses
     filter: 'open',
     ws: null,
     wsConvId: null,
     listTimer: null,
+    privateMode: false,    // composer is in "internal note" mode
+    tplOpen: false,
+    searchDebounce: null,
+    notifyGranted: false,
   };
+
+  const PRIORITIES = [
+    { key: 'low',    label: '低' },
+    { key: 'normal', label: '通常' },
+    { key: 'high',   label: '高' },
+    { key: 'urgent', label: '緊急' },
+  ];
+
+  function escapeHtml(s) {
+    return String(s || '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
 
   const $ = (sel) => document.querySelector(sel);
   const el = (tag, attrs = {}, ...children) => {
@@ -87,6 +104,17 @@
     }
   }
 
+  async function loadLabels() {
+    try { const r = await api('GET', '/api/labels'); state.labels = r.labels || []; }
+    catch (e) { console.warn('loadLabels', e.message); }
+  }
+  async function loadTemplates() {
+    try {
+      const r = await api('GET', '/api/templates?tenant_id=tenant_default');
+      state.templates = r.templates || [];
+    } catch (e) { console.warn('loadTemplates', e.message); }
+  }
+
   async function selectConversation(id) {
     if (state.selectedId === id) return;
     state.selectedId = id;
@@ -136,9 +164,39 @@
         sender_type: 'staff',
         sender_id: String(state.staff.id),
         content: text.trim(),
+        is_private: state.privateMode,
       });
-      // WS will broadcast — render will happen on frame arrival.
     } catch (e) { alert('送信失敗: ' + e.message); }
+  }
+
+  async function markRead(convId) {
+    try { await api('POST', `/api/conversations/${convId}/mark_read`); }
+    catch (e) { /* ignore */ }
+  }
+
+  async function setPriority(p) {
+    if (!state.selectedId) return;
+    await api('PATCH', `/api/conversations/${state.selectedId}`, { priority: p });
+    await refreshSelectedDetail();
+    await loadConversations();
+  }
+  async function addLabel(name) {
+    if (!state.selectedId) return;
+    const conv = state.detailsById[state.selectedId];
+    const current = (conv?.labels || '').split(',').filter(Boolean);
+    if (current.includes(name)) return;
+    current.push(name);
+    await api('PATCH', `/api/conversations/${state.selectedId}`, { labels: current });
+    await refreshSelectedDetail();
+    await loadConversations();
+  }
+  async function removeLabel(name) {
+    if (!state.selectedId) return;
+    const conv = state.detailsById[state.selectedId];
+    const current = (conv?.labels || '').split(',').filter(Boolean).filter((x) => x !== name);
+    await api('PATCH', `/api/conversations/${state.selectedId}`, { labels: current });
+    await refreshSelectedDetail();
+    await loadConversations();
   }
 
   async function patchConv(patch) {
@@ -174,12 +232,23 @@
         state.messagesByConv[convId] = arr;
         renderDetail();
         renderInfo();
-        // Bump list entry
+        // Bump list entry + unread
         const conv = state.conversations.find((c) => c.id === convId);
         if (conv) {
-          conv.last_message_preview = (f.message.content || '').slice(0, 200);
-          conv.last_message_at = f.message.created_at;
+          if (!f.message.is_private) {
+            conv.last_message_preview = (f.message.content || '').slice(0, 200);
+            conv.last_message_at = f.message.created_at;
+            if ((f.message.sender_type === 'customer' || f.message.sender_type === 'bot')
+                && state.selectedId !== convId) {
+              conv.unread_count_staff = (conv.unread_count_staff || 0) + 1;
+              notifyNewMessage(conv, f.message);
+            }
+          }
           renderList();
+        }
+        // If selected and visible, auto-mark-read after 2s
+        if (state.selectedId === convId && !document.hidden) {
+          setTimeout(() => { markRead(convId); }, 2000);
         }
         // Keep detail cache fresh too
         if (state.detailsById[convId]) {
@@ -218,12 +287,21 @@
     for (const c of state.conversations) {
       const contact = state.contactsByConv[c.id];
       const title = contact?.name || contact?.email || c.contact_id.slice(0, 8);
+      const priorityEl = c.priority && c.priority !== 'normal'
+        ? el('span', { class: 'slo-op-priority', 'data-p': c.priority }, (PRIORITIES.find((p) => p.key === c.priority) || {}).label || c.priority)
+        : null;
+      const titleLine = el('div', { class: 'slo-op-conv-title' });
+      if (priorityEl) titleLine.appendChild(priorityEl);
+      titleLine.appendChild(document.createTextNode(title));
+      if (c.unread_count_staff > 0) {
+        titleLine.appendChild(el('span', { class: 'slo-op-unread' }, String(c.unread_count_staff)));
+      }
       const item = el('div', {
         class: 'slo-op-conv',
         'data-selected': c.id === state.selectedId ? '1' : '0',
         onclick: () => selectConversation(c.id),
       },
-        el('div', { class: 'slo-op-conv-title' }, title),
+        titleLine,
         el('div', { class: 'slo-op-conv-preview' }, c.last_message_preview || '—'),
         el('div', { class: 'slo-op-conv-meta' },
           el('span', {},
@@ -269,12 +347,24 @@
     if (conv.status === 'closed') {
       actions.appendChild(el('button', { class: 'primary', onclick: reopenConv }, '再オープン'));
     }
+    // Priority selector
+    const prioritySelect = el('select', {
+      onchange: (ev) => setPriority(ev.target.value),
+    });
+    for (const p of PRIORITIES) {
+      const opt = el('option', { value: p.key }, p.label);
+      if ((conv.priority || 'normal') === p.key) opt.setAttribute('selected', '');
+      prioritySelect.appendChild(opt);
+    }
+    actions.insertBefore(prioritySelect, actions.firstChild);
+
     detail.appendChild(el('div', { class: 'slo-op-detail-header' },
       el('div', {},
         el('div', { class: 'slo-op-detail-title' }, title),
         el('div', { class: 'slo-op-detail-sub' },
           `status: ${conv.status}` +
           (conv.assignee_id ? ` / assignee: ${conv.assignee_id}` : '') +
+          ` / priority: ${conv.priority || 'normal'}` +
           ` / ${conv.id.slice(0, 8)}`
         )
       ),
@@ -285,17 +375,43 @@
     const msgsEl = el('div', { class: 'slo-op-msgs', id: 'slo-msgs' });
     const msgs = state.messagesByConv[conv.id] || [];
     for (const m of msgs) {
-      const b = el('div', { class: 'slo-op-msg', 'data-sender': m.sender_type, 'data-msg-id': m.id },
-        el('div', {}, m.content || ''),
+      const body = el('div', {});
+      if (m.is_private) body.appendChild(el('span', { class: 'slo-op-msg-private-tag' }, '内部'));
+      body.appendChild(document.createTextNode(m.content || ''));
+      const b = el('div', { class: 'slo-op-msg', 'data-sender': m.sender_type, 'data-private': m.is_private ? '1' : '0', 'data-msg-id': m.id },
+        body,
         el('div', { class: 'slo-op-msg-meta' }, `${m.sender_type} · ${formatTime(m.created_at)}`)
       );
       msgsEl.appendChild(b);
     }
     detail.appendChild(msgsEl);
 
-    // Composer
-    const input = el('textarea', { rows: '2', placeholder: 'メッセージを入力… (Enter で送信、Shift+Enter で改行)' });
-    const btn = el('button', { onclick: () => { const v = input.value; input.value = ''; sendMessage(v); } }, '送信');
+    // Composer (toggle bar + input)
+    const toggleBar = el('div', { class: 'slo-op-compose-toggle' },
+      el('label', {},
+        el('input', {
+          type: 'checkbox',
+          onchange: (ev) => { state.privateMode = ev.target.checked; renderDetail(); },
+        }),
+        '内部メモ (顧客に送信しない)'
+      ),
+      el('button', {
+        onclick: (ev) => { ev.stopPropagation(); state.tplOpen = !state.tplOpen; renderDetail(); },
+      }, '📝 定型返信')
+    );
+    // Persist checkbox state after re-render
+    const cbox = toggleBar.querySelector('input');
+    cbox.checked = state.privateMode;
+
+    const input = el('textarea', {
+      rows: '2',
+      placeholder: state.privateMode
+        ? '内部メモ (他のオペレーターのみに見える) …'
+        : 'メッセージを入力… (Enter で送信、Shift+Enter で改行)',
+    });
+    const btn = el('button', {
+      onclick: () => { const v = input.value; input.value = ''; sendMessage(v); },
+    }, state.privateMode ? 'メモ保存' : '送信');
     if (conv.status === 'closed') {
       input.setAttribute('disabled', '');
       btn.setAttribute('disabled', '');
@@ -307,10 +423,41 @@
         sendMessage(v);
       }
     });
-    detail.appendChild(el('div', { class: 'slo-op-compose' }, input, btn));
+    const composeWrap = el('div', {
+      class: 'slo-op-compose' + (state.privateMode ? ' slo-op-compose-private' : ''),
+    }, input, btn);
 
-    // Scroll to bottom
+    // Templates dropdown
+    const tplPanel = el('div', { class: 'slo-op-tpl-panel', 'data-open': state.tplOpen ? '1' : '0' });
+    if (state.templates.length === 0) {
+      tplPanel.appendChild(el('div', { style: 'padding:12px;color:#9ca3af;font-size:12px;' }, '定型返信はまだありません'));
+    } else {
+      for (const t of state.templates.slice(0, 30)) {
+        tplPanel.appendChild(el('div', {
+          class: 'slo-op-tpl-item',
+          onclick: () => {
+            input.value = (input.value ? input.value + '\n' : '') + (t.content || '');
+            state.tplOpen = false;
+            renderDetail();
+            setTimeout(() => { const ta = $('#slo-detail textarea'); if (ta) ta.focus(); }, 0);
+          },
+        },
+          el('div', { class: 'slo-op-tpl-item-name' }, t.name || ''),
+          el('div', { class: 'slo-op-tpl-item-preview' }, (t.content || '').slice(0, 200))
+        ));
+      }
+    }
+
+    detail.appendChild(toggleBar);
+    detail.appendChild(composeWrap);
+    detail.appendChild(tplPanel);
+
+    // Scroll to bottom + mark read
     requestAnimationFrame(() => { const m = $('#slo-msgs'); if (m) m.scrollTop = m.scrollHeight; });
+    if ((conv.unread_count_staff || 0) > 0) {
+      markRead(conv.id);
+      conv.unread_count_staff = 0;
+    }
   }
 
   function renderTop() {
@@ -377,6 +524,45 @@
     addRow('最終更新', formatDate(contact.updated_at));
     info.appendChild(fields);
 
+    // Labels section
+    const labelsSec = el('div', { class: 'slo-op-info-section' });
+    labelsSec.appendChild(el('h4', {}, 'ラベル'));
+    const labelsGroup = el('div', { class: 'slo-op-labels-group' });
+    const activeLabels = (conv.labels || '').split(',').filter(Boolean);
+    for (const name of activeLabels) {
+      const def = state.labels.find((l) => l.name === name);
+      const color = def?.color || '#6b7280';
+      labelsGroup.appendChild(el('span', { class: 'slo-op-label', style: `background:${color}` },
+        name,
+        el('button', { title: '削除', onclick: () => removeLabel(name) }, '×')
+      ));
+    }
+    labelsSec.appendChild(labelsGroup);
+    const available = state.labels.filter((l) => !activeLabels.includes(l.name));
+    const picker = el('div', { class: 'slo-op-label-picker' });
+    for (const l of available) {
+      picker.appendChild(el('button', {
+        class: 'slo-op-label-add',
+        style: `border-color:${l.color};color:${l.color}`,
+        onclick: () => addLabel(l.name),
+      }, '+ ' + l.name));
+    }
+    picker.appendChild(el('button', {
+      class: 'slo-op-label-add',
+      onclick: async () => {
+        const name = prompt('新しいラベル名');
+        if (!name) return;
+        const color = prompt('色コード (例: #2563eb)', '#2563eb') || '#2563eb';
+        try {
+          await api('POST', '/api/labels', { name: name.trim(), color });
+          await loadLabels();
+          await addLabel(name.trim());
+        } catch (e) { alert('作成失敗: ' + e.message); }
+      },
+    }, '+ 新規'));
+    labelsSec.appendChild(picker);
+    info.appendChild(labelsSec);
+
     // Metadata (including external_id, custom attrs)
     const meta = parseMetadata(contact.metadata);
     if (meta && typeof meta === 'object' && Object.keys(meta).length > 0) {
@@ -420,6 +606,72 @@
   }
 
   // --- Boot ---
+  // --- Search ---
+  async function runSearch(q) {
+    const results = $('#slo-search-results');
+    results.innerHTML = '';
+    if (!q || q.length < 1) { results.removeAttribute('data-open'); return; }
+    try {
+      const r = await api('GET', '/api/search?q=' + encodeURIComponent(q) + '&limit=20');
+      results.setAttribute('data-open', '1');
+      const convSec = el('div', { class: 'slo-op-search-section' });
+      convSec.appendChild(el('h5', {}, `会話 (${r.conversations.length})`));
+      for (const c of r.conversations.slice(0, 8)) {
+        convSec.appendChild(el('div', {
+          class: 'slo-op-search-item',
+          onclick: () => {
+            $('#slo-search').value = '';
+            results.removeAttribute('data-open');
+            selectConversation(c.id);
+          },
+          html: `<b>${escapeHtml(c.contact_name || c.contact_email || c.contact_id.slice(0,8))}</b> — ${escapeHtml((c.last_message_preview || '').slice(0, 120))} <span style="color:#9ca3af;font-size:10px;">${formatTime(c.last_message_at || c.created_at)}</span>`,
+        }));
+      }
+      results.appendChild(convSec);
+
+      const msgSec = el('div', { class: 'slo-op-search-section' });
+      msgSec.appendChild(el('h5', {}, `メッセージ (${r.messages.length})`));
+      for (const m of r.messages.slice(0, 8)) {
+        msgSec.appendChild(el('div', {
+          class: 'slo-op-search-item',
+          onclick: () => {
+            $('#slo-search').value = '';
+            results.removeAttribute('data-open');
+            selectConversation(m.conversation_id);
+          },
+          html: `<span style="color:#6b7280;">[${m.sender_type}]</span> ${escapeHtml((m.content || '').slice(0, 180))} <span style="color:#9ca3af;font-size:10px;">${formatTime(m.created_at)}</span>`,
+        }));
+      }
+      results.appendChild(msgSec);
+
+      const ctSec = el('div', { class: 'slo-op-search-section' });
+      ctSec.appendChild(el('h5', {}, `ユーザー (${r.contacts.length})`));
+      for (const ct of r.contacts.slice(0, 5)) {
+        ctSec.appendChild(el('div', {
+          class: 'slo-op-search-item',
+          html: `<b>${escapeHtml(ct.name || ct.email || ct.phone || ct.id.slice(0,8))}</b> ${ct.email ? '· ' + escapeHtml(ct.email) : ''} ${ct.phone ? '· ' + escapeHtml(ct.phone) : ''}`,
+        }));
+      }
+      results.appendChild(ctSec);
+
+      if (r.conversations.length + r.messages.length + r.contacts.length === 0) {
+        results.innerHTML = '<div style="padding:20px;color:#9ca3af;font-size:12px;text-align:center;">該当なし</div>';
+      }
+    } catch (e) { console.warn('search', e.message); }
+  }
+
+  // --- Browser notifications ---
+  function notifyNewMessage(conv, msg) {
+    if (!state.notifyGranted) return;
+    if (document.hasFocus() && state.selectedId === conv.id) return;
+    try {
+      const contact = state.contactsByConv[conv.id];
+      const title = (contact?.name || contact?.email || conv.contact_id.slice(0, 8)) + ' から新着';
+      const n = new Notification(title, { body: (msg.content || '').slice(0, 140), tag: conv.id });
+      n.onclick = () => { window.focus(); selectConversation(conv.id); n.close(); };
+    } catch (_) { /* ignore */ }
+  }
+
   async function boot() {
     $('#slo-login-form').addEventListener('submit', async (ev) => {
       ev.preventDefault();
@@ -445,6 +697,33 @@
       });
     }
 
+    // Search wiring
+    const searchInput = $('#slo-search');
+    searchInput.addEventListener('input', (ev) => {
+      clearTimeout(state.searchDebounce);
+      const q = ev.target.value;
+      state.searchDebounce = setTimeout(() => runSearch(q), 250);
+    });
+    searchInput.addEventListener('focus', () => {
+      if (searchInput.value) runSearch(searchInput.value);
+    });
+    document.addEventListener('click', (ev) => {
+      if (!ev.target.closest('.slo-op-top-search')) {
+        $('#slo-search-results').removeAttribute('data-open');
+      }
+      if (!ev.target.closest('.slo-op-tpl-panel') && !ev.target.closest('.slo-op-compose-toggle button')) {
+        if (state.tplOpen) { state.tplOpen = false; if (state.selectedId) renderDetail(); }
+      }
+    });
+
+    // Browser notifications permission
+    if ('Notification' in window) {
+      if (Notification.permission === 'granted') state.notifyGranted = true;
+      else if (Notification.permission !== 'denied') {
+        Notification.requestPermission().then((p) => { state.notifyGranted = p === 'granted'; });
+      }
+    }
+
     if (await checkAuth()) onAuthenticated();
     else document.body.setAttribute('data-view', 'login');
   }
@@ -452,7 +731,7 @@
   async function onAuthenticated() {
     document.body.setAttribute('data-view', 'app');
     renderTop();
-    await loadConversations();
+    await Promise.all([loadConversations(), loadLabels(), loadTemplates()]);
     if (state.listTimer) clearInterval(state.listTimer);
     state.listTimer = setInterval(loadConversations, 10000);
   }

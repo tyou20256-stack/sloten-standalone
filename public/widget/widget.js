@@ -334,6 +334,8 @@
     ws.addEventListener('message', (ev) => {
       let f; try { f = JSON.parse(ev.data); } catch { return; }
       if (f.type === 'message.created' && f.message) {
+        // Skip private notes — operator-only.
+        if (f.message.is_private) return;
         renderMessage(f.message);
       } else if (f.type === 'conversation.updated' && f.conversation) {
         state.status = f.conversation.status;

@@ -13,20 +13,39 @@ const VALID_CONTENT_TYPE = new Set(['text', 'input_select', 'file', 'system_even
 async function insertMessage(env, { conversationId, tenantId, senderType, senderId, content, contentType, contentAttributes, isPrivate }) {
   const id = uuid();
   const attrs = contentAttributes ? JSON.stringify(contentAttributes) : null;
+  const priv = isPrivate ? 1 : 0;
   await env.DB.prepare(
     `INSERT INTO messages (id, conversation_id, tenant_id, sender_type, sender_id, content, content_type, content_attributes, is_private)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(id, conversationId, tenantId, senderType, senderId || null, content, contentType, attrs, isPrivate ? 1 : 0).run();
+  ).bind(id, conversationId, tenantId, senderType, senderId || null, content, contentType, attrs, priv).run();
 
-  // Update conversation last_message_at + preview
+  // Update conversation metadata. Private messages don't bump last_message_preview
+  // (preview is visible to customer via widget resume loadHistory).
+  // Staff unread increments when the message was authored by customer or bot —
+  // i.e. something staff might want to react to.
   const preview = (content || '').slice(0, 200);
-  await env.DB.prepare(
-    `UPDATE conversations SET last_message_at = datetime('now'), last_message_preview = ?, updated_at = datetime('now') WHERE id = ?`
-  ).bind(preview, conversationId).run();
+  const bumpUnread = (senderType === 'customer' || senderType === 'bot') && !priv ? 1 : 0;
+  if (priv) {
+    // Private: only update updated_at
+    await env.DB.prepare(`UPDATE conversations SET updated_at = datetime('now') WHERE id = ?`)
+      .bind(conversationId).run();
+  } else {
+    await env.DB.prepare(
+      `UPDATE conversations
+          SET last_message_at = datetime('now'),
+              last_message_preview = ?,
+              unread_count_staff = unread_count_staff + ?,
+              updated_at = datetime('now')
+        WHERE id = ?`
+    ).bind(preview, bumpUnread, conversationId).run();
+  }
 
   const row = await env.DB.prepare('SELECT * FROM messages WHERE id = ?').bind(id).first();
 
-  // Best-effort broadcast to connected WebSocket peers.
+  // Broadcast: private notes go to operator peers only (customer widget filters
+  // is_private=1 client-side via include_private=0 query; over WS we must not
+  // deliver them to customer connections. Simplification for Phase 2-7: broadcast
+  // to the room and let the widget JS drop any frame where is_private=1).
   try {
     await broadcastToConversation(env, conversationId, {
       type: 'message.created',

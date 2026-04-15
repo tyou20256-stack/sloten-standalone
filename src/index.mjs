@@ -19,8 +19,10 @@ import {
   createContact, getContact, listContacts, listContactConversations,
 } from './handlers/contacts-native.mjs';
 import {
-  createConversation, listConversations, getConversation, updateConversation,
+  createConversation, listConversations, getConversation, updateConversation, markRead,
 } from './handlers/conversations-native.mjs';
+import { searchHandler } from './handlers/search.mjs';
+import { listLabels, createLabel, updateLabel, deleteLabel } from './handlers/labels.mjs';
 import {
   sendMessage, listMessages,
 } from './handlers/messages-native.mjs';
@@ -153,6 +155,22 @@ export default {
         const m = path.match(/^\/api\/conversations\/([^/]+)\/messages$/);
         if (m && method === 'GET') return requireAdmin(listMessages)(request, env, corsHeaders, m[1]);
         if (m && method === 'POST') return requireAdmin(sendMessage)(request, env, corsHeaders, m[1]);
+      }
+      {
+        const m = path.match(/^\/api\/conversations\/([^/]+)\/mark_read$/);
+        if (m && method === 'POST') return requireAdmin(markRead)(request, env, corsHeaders, m[1]);
+      }
+
+      // Search
+      if (path === '/api/search' && method === 'GET') return requireAdmin(searchHandler)(request, env, corsHeaders);
+
+      // Labels
+      if (path === '/api/labels' && method === 'GET') return requireAdmin(listLabels)(request, env, corsHeaders);
+      if (path === '/api/labels' && method === 'POST') return requireAdmin(createLabel)(request, env, corsHeaders);
+      {
+        const m = path.match(/^\/api\/labels\/(\d+)$/);
+        if (m && method === 'PUT')    return requireAdmin(updateLabel)(request, env, corsHeaders, parseInt(m[1], 10));
+        if (m && method === 'DELETE') return requireAdmin(deleteLabel)(request, env, corsHeaders, parseInt(m[1], 10));
       }
 
       // FAQ

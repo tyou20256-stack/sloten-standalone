@@ -5,6 +5,18 @@ import { ok, created, err, parseJson } from '../json.mjs';
 import { broadcastToConversation } from '../broadcast.mjs';
 
 const VALID_STATUS = new Set(['bot', 'open', 'closed']);
+const VALID_PRIORITY = new Set(['low', 'normal', 'high', 'urgent']);
+
+function normalizeLabels(input) {
+  if (input == null) return null;
+  if (Array.isArray(input)) {
+    return input.map((s) => String(s).trim()).filter(Boolean).join(',');
+  }
+  if (typeof input === 'string') {
+    return input.split(',').map((s) => s.trim()).filter(Boolean).join(',');
+  }
+  return null;
+}
 
 export async function createConversation(request, env, corsHeaders) {
   const { body, response } = await parseJson(request, corsHeaders);
@@ -36,10 +48,17 @@ export async function listConversations(request, env, corsHeaders) {
   const url = new URL(request.url);
   const tenantId = url.searchParams.get('tenant_id') || env.DEFAULT_TENANT_ID || 'tenant_default';
   const status = url.searchParams.get('status');
+  const priority = url.searchParams.get('priority');
+  const label = url.searchParams.get('label');
   const limit = Math.min(parseInt(url.searchParams.get('limit') || '50', 10), 200);
   let q = 'SELECT * FROM conversations WHERE tenant_id = ?';
   const vals = [tenantId];
   if (status && VALID_STATUS.has(status)) { q += ' AND status = ?'; vals.push(status); }
+  if (priority && VALID_PRIORITY.has(priority)) { q += ' AND priority = ?'; vals.push(priority); }
+  if (label) {
+    q += ` AND (',' || COALESCE(labels,'') || ',') LIKE ?`;
+    vals.push(`%,${label},%`);
+  }
   q += ' ORDER BY COALESCE(last_message_at, created_at) DESC LIMIT ?';
   vals.push(limit);
   const { results } = await env.DB.prepare(q).bind(...vals).all();
@@ -71,6 +90,17 @@ export async function updateConversation(request, env, corsHeaders, id) {
     updates.push('assignee_id = ?');
     vals.push(body.assignee_id || null);
   }
+  if (body.priority !== undefined) {
+    if (!VALID_PRIORITY.has(body.priority)) return err('Invalid priority', 400, corsHeaders);
+    updates.push('priority = ?');
+    vals.push(body.priority);
+  }
+  if (body.labels !== undefined) {
+    const normalized = normalizeLabels(body.labels);
+    if (normalized == null) return err('Invalid labels', 400, corsHeaders);
+    updates.push('labels = ?');
+    vals.push(normalized);
+  }
   if (updates.length === 0) return err('No updatable fields', 400, corsHeaders);
   updates.push(`updated_at = datetime('now')`);
   vals.push(id);
@@ -80,4 +110,13 @@ export async function updateConversation(request, env, corsHeaders, id) {
     await broadcastToConversation(env, id, { type: 'conversation.updated', conversation: row });
   } catch (_) { /* swallow */ }
   return ok({ success: true, conversation: row }, corsHeaders);
+}
+
+// Mark conversation as read for staff — zero the staff unread counter.
+export async function markRead(request, env, corsHeaders, id) {
+  const conv = await env.DB.prepare('SELECT * FROM conversations WHERE id = ?').bind(id).first();
+  if (!conv) return err('Conversation not found', 404, corsHeaders);
+  await env.DB.prepare(`UPDATE conversations SET unread_count_staff = 0, updated_at = datetime('now') WHERE id = ?`)
+    .bind(id).run();
+  return ok({ success: true }, corsHeaders);
 }
