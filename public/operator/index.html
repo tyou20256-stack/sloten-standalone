@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex" />
+  <title>Sloten Operator Console</title>
+  <link rel="stylesheet" href="./operator.css" />
+</head>
+<body data-view="login">
+  <!-- Login view -->
+  <div class="slo-op-login">
+    <form class="slo-op-login-card" id="slo-login-form" autocomplete="on">
+      <h1>オペレーターログイン</h1>
+      <label for="slo-login-email">メールアドレス</label>
+      <input id="slo-login-email" type="email" autocomplete="username" required />
+      <label for="slo-login-password">パスワード</label>
+      <input id="slo-login-password" type="password" autocomplete="current-password" required />
+      <div class="slo-op-login-err" id="slo-login-err"></div>
+      <button type="submit">ログイン</button>
+    </form>
+  </div>
+
+  <!-- App view -->
+  <div class="slo-op-app">
+    <div class="slo-op-top">
+      <div class="slo-op-top-brand">Sloten Operator</div>
+      <div class="slo-op-top-user">
+        <span id="slo-top-user"></span>
+        <button id="slo-logout">ログアウト</button>
+      </div>
+    </div>
+    <div class="slo-op-list">
+      <div class="slo-op-filter">
+        <button data-status="open" data-active="1">対応中</button>
+        <button data-status="bot">ボット</button>
+        <button data-status="closed">解決済</button>
+        <button data-status="all">全て</button>
+      </div>
+      <div class="slo-op-convs" id="slo-convs"></div>
+    </div>
+    <div class="slo-op-detail" id="slo-detail">
+      <div class="slo-op-detail-empty">左の一覧から会話を選択してください</div>
+    </div>
+  </div>
+
+  <script src="./operator.js"></script>
+</body>
+</html>

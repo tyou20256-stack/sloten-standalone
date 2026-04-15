@@ -1,0 +1,236 @@
+/* Sloten Operator Console — scoped .slo-op-* */
+
+:root { color-scheme: light; }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Yu Gothic UI", sans-serif;
+  background: #f3f4f6;
+  color: #111827;
+  font-size: 14px;
+}
+
+.slo-op-login {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.slo-op-login-card {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+  padding: 32px;
+  width: 100%;
+  max-width: 380px;
+}
+.slo-op-login-card h1 { margin: 0 0 24px; font-size: 20px; }
+.slo-op-login-card label { display: block; font-size: 12px; color: #4b5563; margin: 12px 0 4px; }
+.slo-op-login-card input {
+  width: 100%;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 10px 12px;
+  font: inherit;
+  outline: none;
+}
+.slo-op-login-card input:focus { border-color: #2563eb; }
+.slo-op-login-card .slo-op-login-err {
+  color: #b91c1c; font-size: 13px; margin-top: 12px; display: none;
+}
+.slo-op-login-card .slo-op-login-err[data-visible="1"] { display: block; }
+.slo-op-login-card button {
+  margin-top: 20px;
+  width: 100%;
+  background: #2563eb;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 14px;
+}
+.slo-op-login-card button:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.slo-op-app {
+  display: none;
+  grid-template-columns: 320px 1fr;
+  grid-template-rows: 56px 1fr;
+  height: 100vh;
+  grid-template-areas:
+    "top top"
+    "list detail";
+}
+body[data-view="app"] .slo-op-login { display: none; }
+body[data-view="app"] .slo-op-app { display: grid; }
+
+.slo-op-top {
+  grid-area: top;
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+}
+.slo-op-top-brand { font-weight: 600; }
+.slo-op-top-user { font-size: 13px; color: #4b5563; }
+.slo-op-top-user button {
+  margin-left: 12px;
+  background: #e5e7eb;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.slo-op-list {
+  grid-area: list;
+  background: #fff;
+  border-right: 1px solid #e5e7eb;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.slo-op-filter {
+  border-bottom: 1px solid #e5e7eb;
+  padding: 8px;
+  display: flex;
+  gap: 4px;
+}
+.slo-op-filter button {
+  flex: 1;
+  background: #f3f4f6;
+  border: 1px solid transparent;
+  color: #374151;
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.slo-op-filter button[data-active="1"] {
+  background: #fff;
+  border-color: #2563eb;
+  color: #2563eb;
+  font-weight: 600;
+}
+
+.slo-op-convs {
+  flex: 1;
+  overflow-y: auto;
+}
+.slo-op-conv {
+  padding: 12px 14px;
+  border-bottom: 1px solid #f3f4f6;
+  cursor: pointer;
+  position: relative;
+}
+.slo-op-conv:hover { background: #f9fafb; }
+.slo-op-conv[data-selected="1"] { background: #eff6ff; border-left: 3px solid #2563eb; padding-left: 11px; }
+.slo-op-conv-title { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.slo-op-conv-preview { color: #6b7280; font-size: 12px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.slo-op-conv-meta { display: flex; justify-content: space-between; margin-top: 4px; font-size: 11px; color: #9ca3af; }
+.slo-op-conv-status {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-right: 4px;
+}
+.slo-op-conv-status[data-s="bot"] { background: #fef3c7; color: #92400e; }
+.slo-op-conv-status[data-s="open"] { background: #dcfce7; color: #166534; }
+.slo-op-conv-status[data-s="closed"] { background: #e5e7eb; color: #374151; }
+
+.slo-op-detail {
+  grid-area: detail;
+  display: flex;
+  flex-direction: column;
+  background: #f9fafb;
+  overflow: hidden;
+}
+.slo-op-detail-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #9ca3af;
+}
+
+.slo-op-detail-header {
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+  padding: 12px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.slo-op-detail-title { font-weight: 600; }
+.slo-op-detail-sub { font-size: 11px; color: #6b7280; margin-top: 2px; }
+.slo-op-detail-actions { display: flex; gap: 8px; }
+.slo-op-detail-actions button {
+  border: 1px solid #d1d5db;
+  background: #fff;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.slo-op-detail-actions button.primary { background: #2563eb; color: #fff; border-color: #2563eb; }
+.slo-op-detail-actions button.danger  { background: #fee2e2; color: #991b1b; border-color: #fecaca; }
+
+.slo-op-msgs {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.slo-op-msg {
+  max-width: 72%;
+  padding: 8px 12px;
+  border-radius: 10px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font-size: 13px;
+}
+.slo-op-msg[data-sender="customer"] { background: #fff; border: 1px solid #e5e7eb; align-self: flex-start; }
+.slo-op-msg[data-sender="bot"]      { background: #f3f4f6; align-self: flex-start; }
+.slo-op-msg[data-sender="staff"]    { background: #2563eb; color: #fff; align-self: flex-end; }
+.slo-op-msg[data-sender="system"]   { background: transparent; color: #9ca3af; font-size: 11px; align-self: center; max-width: 100%; }
+.slo-op-msg-meta { font-size: 10px; color: #9ca3af; margin-top: 2px; }
+.slo-op-msg[data-sender="staff"] .slo-op-msg-meta { color: rgba(255,255,255,0.8); }
+
+.slo-op-compose {
+  border-top: 1px solid #e5e7eb;
+  background: #fff;
+  padding: 10px;
+  display: flex;
+  gap: 8px;
+}
+.slo-op-compose textarea {
+  flex: 1;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font: inherit;
+  resize: none;
+  max-height: 120px;
+  outline: none;
+}
+.slo-op-compose textarea:focus { border-color: #2563eb; }
+.slo-op-compose button {
+  background: #2563eb;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 0 18px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+}
+.slo-op-compose button:disabled { opacity: 0.5; cursor: not-allowed; }

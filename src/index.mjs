@@ -24,6 +24,9 @@ import {
 import {
   sendMessage, listMessages,
 } from './handlers/messages-native.mjs';
+import {
+  loginHandler, logoutHandler, meHandler, resolveStaffFromCookie,
+} from './handlers/staff-auth.mjs';
 
 export { ConversationRoom } from './durable/conversation-room.mjs';
 
@@ -42,12 +45,21 @@ function bearerAuth(request, env) {
   return env.ADMIN_API_TOKEN && m[1] === env.ADMIN_API_TOKEN;
 }
 
-function requireAdmin(handler) {
+// Cookie (staff) OR Bearer (admin) — either grants access.
+function requireStaffOrAdmin(handler) {
   return async (request, env, corsHeaders, ...rest) => {
-    if (!bearerAuth(request, env)) return err('Unauthorized', 401, corsHeaders);
-    return handler(request, env, corsHeaders, ...rest);
+    if (bearerAuth(request, env)) {
+      return handler(request, env, corsHeaders, ...rest);
+    }
+    const staff = await resolveStaffFromCookie(request, env);
+    if (staff) {
+      request.__staff = staff;
+      return handler(request, env, corsHeaders, ...rest);
+    }
+    return err('Unauthorized', 401, corsHeaders);
   };
 }
+const requireAdmin = requireStaffOrAdmin; // alias for existing handler wiring
 
 export default {
   async fetch(request, env, ctx) {
@@ -68,10 +80,18 @@ export default {
       if (path === '/widget' && method === 'GET') {
         return Response.redirect(new URL('/widget/', request.url).toString(), 302);
       }
-      // Static assets (widget/*) — serve from ASSETS binding.
-      if (env.ASSETS && path.startsWith('/widget/') && method === 'GET') {
+      if (path === '/operator' && method === 'GET') {
+        return Response.redirect(new URL('/operator/', request.url).toString(), 302);
+      }
+      // Static assets — serve from ASSETS binding.
+      if (env.ASSETS && (path.startsWith('/widget/') || path.startsWith('/operator/')) && method === 'GET') {
         return env.ASSETS.fetch(request);
       }
+
+      // --- Staff auth (cookie-based) ---
+      if (path === '/api/staff/login' && method === 'POST') return loginHandler(request, env, corsHeaders);
+      if (path === '/api/staff/logout' && method === 'POST') return logoutHandler(request, env, corsHeaders);
+      if (path === '/api/staff/me' && method === 'GET') return meHandler(request, env, corsHeaders);
 
       // --- WebSocket upgrade to ConversationRoom Durable Object ---
       {
@@ -83,7 +103,8 @@ export default {
         }
         if ((m = path.match(/^\/ws\/operator\/conversations\/([^/]+)$/))) {
           if (upgrade !== 'websocket') return err('Expected WebSocket upgrade', 426, corsHeaders);
-          if (!bearerAuth(request, env)) return err('Unauthorized', 401, corsHeaders);
+          const staff = await resolveStaffFromCookie(request, env);
+          if (!bearerAuth(request, env) && !staff) return err('Unauthorized', 401, corsHeaders);
           return forwardToConversationRoom(env, m[1], 'operator', request);
         }
       }
