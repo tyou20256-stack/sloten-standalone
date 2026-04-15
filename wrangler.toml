@@ -1,7 +1,12 @@
 name = "sloten-standalone"
 main = "src/index.mjs"
-compatibility_date = "2024-05-15"
+compatibility_date = "2024-09-23"
 workers_dev = true
+
+# Static assets served by the Worker (widget HTML/JS/CSS).
+[assets]
+directory = "./public"
+binding = "ASSETS"
 
 [vars]
 ENVIRONMENT = "development"

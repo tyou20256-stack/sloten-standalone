@@ -1,0 +1,403 @@
+/*
+ * Sloten Chat Widget — embeddable standalone script.
+ *
+ * Usage (host site):
+ *   <script src="https://<worker>/widget/widget.js"
+ *           data-api="https://<worker>"
+ *           data-tenant-id="tenant_default"
+ *           data-title="スロット天国サポート"
+ *           async></script>
+ *
+ * Config precedence: script[data-*] > window.SlotenChatConfig > defaults.
+ * All state persisted in localStorage under "sloten_chat:v1".
+ */
+(function () {
+  'use strict';
+  if (window.__SlotenChatLoaded) return;
+  window.__SlotenChatLoaded = true;
+
+  const script = document.currentScript || document.querySelector('script[src*="widget.js"]');
+  const ds = (script && script.dataset) || {};
+  const userCfg = window.SlotenChatConfig || {};
+  const defaults = { tenantId: 'tenant_default', title: 'サポート', subtitle: 'AI オペレーター', autoOpen: false };
+
+  const apiBase = (ds.api || userCfg.api || (script ? new URL(script.src).origin : window.location.origin)).replace(/\/$/, '');
+  const cfg = {
+    apiBase,
+    wsBase: apiBase.replace(/^http/, 'ws'),
+    tenantId: ds.tenantId || userCfg.tenantId || defaults.tenantId,
+    title: ds.title || userCfg.title || defaults.title,
+    subtitle: ds.subtitle || userCfg.subtitle || defaults.subtitle,
+    autoOpen: (ds.autoOpen || userCfg.autoOpen || '').toString() === '1' || userCfg.autoOpen === true,
+    cssUrl: ds.cssUrl || userCfg.cssUrl || (script ? new URL('./widget.css', script.src).toString() : null),
+  };
+
+  const STORAGE_KEY = 'sloten_chat:v1';
+  const state = Object.assign(
+    { contactId: null, conversationId: null, status: null, history: [] },
+    loadState()
+  );
+
+  function loadState() {
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') || {}; }
+    catch { return {}; }
+  }
+  function saveState() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        contactId: state.contactId,
+        conversationId: state.conversationId,
+      }));
+    } catch (_) {}
+  }
+
+  async function api(method, path, body) {
+    const r = await fetch(cfg.apiBase + path, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const text = await r.text();
+    let data; try { data = JSON.parse(text); } catch { data = { raw: text }; }
+    if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+    return data;
+  }
+
+  function injectStyles() {
+    if (cfg.cssUrl && !document.querySelector('link[data-sloten-chat="1"]')) {
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = cfg.cssUrl;
+      link.setAttribute('data-sloten-chat', '1');
+      document.head.appendChild(link);
+    }
+  }
+
+  // --- DOM construction ---
+  const el = (tag, attrs = {}, ...children) => {
+    const n = document.createElement(tag);
+    for (const k in attrs) {
+      if (k === 'class') n.className = attrs[k];
+      else if (k === 'html') n.innerHTML = attrs[k];
+      else if (k.startsWith('on')) n.addEventListener(k.slice(2).toLowerCase(), attrs[k]);
+      else n.setAttribute(k, attrs[k]);
+    }
+    for (const c of children) {
+      if (c == null) continue;
+      n.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+    }
+    return n;
+  };
+
+  const ICON_CHAT = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 5.94 2 10.8c0 2.52 1.26 4.79 3.3 6.41L4 22l5.22-2.61c.9.14 1.83.21 2.78.21 5.52 0 10-3.94 10-8.8C22 5.94 17.52 2 12 2z"/></svg>';
+
+  const dom = {};
+  function buildUI() {
+    dom.root = el('div', { class: 'sloten-chat-root', 'data-open': cfg.autoOpen ? '1' : '0' });
+    dom.launcher = el('button', {
+      class: 'sloten-chat-launcher',
+      'aria-label': 'チャットを開く',
+      onclick: open,
+      html: ICON_CHAT,
+    });
+    dom.panel = el('div', { class: 'sloten-chat-panel', role: 'dialog', 'aria-label': 'サポートチャット' });
+    const header = el('div', { class: 'sloten-chat-header' },
+      el('div', {},
+        el('div', { class: 'sloten-chat-title' }, cfg.title),
+        el('div', { class: 'sloten-chat-subtitle' }, cfg.subtitle)
+      ),
+      el('button', { class: 'sloten-chat-close', 'aria-label': '閉じる', onclick: close }, '\u00d7')
+    );
+    dom.banner = el('div', { class: 'sloten-chat-banner' });
+    dom.messages = el('div', { class: 'sloten-chat-messages' });
+    dom.typing = el('div', { class: 'sloten-chat-typing' }, '入力中…');
+    dom.input = el('textarea', {
+      class: 'sloten-chat-input',
+      rows: '1',
+      placeholder: 'メッセージを入力…',
+      onkeydown: onKeyDown,
+      oninput: () => autoResize(dom.input),
+    });
+    dom.send = el('button', { class: 'sloten-chat-send', onclick: onSend }, '送信');
+    const inputWrap = el('div', { class: 'sloten-chat-input-wrap' }, dom.input, dom.send);
+    dom.status = el('div', { class: 'sloten-chat-status' }, '接続準備中');
+
+    dom.panel.appendChild(header);
+    dom.panel.appendChild(dom.banner);
+    dom.panel.appendChild(dom.messages);
+    dom.messages.appendChild(dom.typing);
+    dom.panel.appendChild(inputWrap);
+    dom.panel.appendChild(dom.status);
+    dom.root.appendChild(dom.launcher);
+    dom.root.appendChild(dom.panel);
+    (document.body || document.documentElement).appendChild(dom.root);
+  }
+
+  function autoResize(ta) {
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight, 100) + 'px';
+  }
+
+  function onKeyDown(ev) {
+    if (ev.key === 'Enter' && !ev.shiftKey) {
+      ev.preventDefault();
+      onSend();
+    }
+  }
+
+  function setStatus(text) { dom.status.textContent = text; }
+  function setBanner(text) {
+    if (!text) { dom.banner.removeAttribute('data-visible'); dom.banner.textContent = ''; }
+    else { dom.banner.setAttribute('data-visible', '1'); dom.banner.textContent = text; }
+  }
+  function setTyping(on) { dom.typing.setAttribute('data-visible', on ? '1' : '0'); }
+
+  function formatTime(iso) {
+    try {
+      const d = new Date((iso && !iso.endsWith('Z') ? iso.replace(' ', 'T') + 'Z' : iso));
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } catch { return ''; }
+  }
+
+  function renderMessage(msg) {
+    if (!msg || !msg.id) return;
+    if (dom.messages.querySelector(`[data-msg-id="${msg.id}"]`)) return; // dedupe
+    const bubble = el('div', { class: 'sloten-chat-msg', 'data-sender': msg.sender_type || 'bot', 'data-msg-id': msg.id });
+    const contentDiv = el('div', {}, msg.content || '');
+    bubble.appendChild(contentDiv);
+
+    if (msg.content_type === 'input_select' && msg.content_attributes) {
+      try {
+        const attrs = typeof msg.content_attributes === 'string' ? JSON.parse(msg.content_attributes) : msg.content_attributes;
+        const items = (attrs && attrs.items) || [];
+        if (items.length) {
+          const group = el('div', { class: 'sloten-chat-selects' });
+          for (const it of items) {
+            const btn = el('button', {
+              class: 'sloten-chat-select-btn',
+              onclick: () => sendText(it.title || it.value),
+            }, it.title || it.value);
+            group.appendChild(btn);
+          }
+          bubble.appendChild(group);
+        }
+      } catch (_) {}
+    }
+
+    bubble.appendChild(el('div', { class: 'sloten-chat-meta' }, formatTime(msg.created_at)));
+    dom.messages.insertBefore(bubble, dom.typing);
+    scrollToBottom();
+  }
+
+  function scrollToBottom() {
+    requestAnimationFrame(() => { dom.messages.scrollTop = dom.messages.scrollHeight; });
+  }
+
+  // --- Bootstrap conversation ---
+  async function ensureContact() {
+    if (state.contactId) return state.contactId;
+    const r = await api('POST', '/api/widget/contacts', { tenant_id: cfg.tenantId });
+    state.contactId = r.contact.id;
+    saveState();
+    return state.contactId;
+  }
+
+  async function ensureConversation() {
+    if (state.conversationId) return state.conversationId;
+    await ensureContact();
+    const r = await api('POST', '/api/widget/conversations', {
+      tenant_id: cfg.tenantId,
+      contact_id: state.contactId,
+    });
+    state.conversationId = r.conversation.id;
+    state.status = r.conversation.status;
+    saveState();
+    return state.conversationId;
+  }
+
+  async function loadHistory() {
+    if (!state.conversationId) return;
+    try {
+      const r = await api('GET', `/api/widget/conversations/${state.conversationId}/messages`);
+      for (const m of (r.messages || [])) renderMessage(m);
+    } catch (e) {
+      console.warn('[sloten-chat] loadHistory failed:', e.message);
+      state.conversationId = null;
+      saveState();
+    }
+  }
+
+  async function refreshConversation() {
+    if (!state.conversationId) return;
+    try {
+      const r = await api('GET', `/api/widget/conversations/${state.conversationId}`);
+      state.status = r.conversation.status;
+      if (r.conversation.status === 'open' && r.conversation.assignee_id) {
+        setBanner('担当者におつなぎしました。少々お待ちください。');
+      } else if (r.conversation.status === 'closed') {
+        setBanner('この会話は終了しています。新しい質問は送信ボタンから。');
+      } else {
+        setBanner('');
+      }
+    } catch (_) { /* ignore */ }
+  }
+
+  // --- Sending ---
+  let sending = false;
+  async function onSend() {
+    const text = (dom.input.value || '').trim();
+    if (!text || sending) return;
+    dom.input.value = '';
+    autoResize(dom.input);
+    await sendText(text);
+  }
+
+  async function sendText(text) {
+    if (!text) return;
+    sending = true;
+    dom.send.disabled = true;
+    setTyping(true);
+    try {
+      await ensureConversation();
+      await api('POST', `/api/widget/conversations/${state.conversationId}/messages`, {
+        sender_type: 'customer',
+        content: text,
+      });
+      // Broadcast will render it via WS; also render optimistically if WS absent.
+      if (!wsActive()) {
+        renderMessage({
+          id: 'local-' + Date.now(),
+          sender_type: 'customer',
+          content: text,
+          created_at: new Date().toISOString(),
+        });
+        setTimeout(pollMessages, 800);
+      }
+    } catch (e) {
+      renderMessage({
+        id: 'err-' + Date.now(),
+        sender_type: 'system',
+        content: '送信に失敗しました: ' + e.message,
+        created_at: new Date().toISOString(),
+      });
+    } finally {
+      sending = false;
+      dom.send.disabled = false;
+      setTyping(false);
+    }
+  }
+
+  // --- WebSocket ---
+  let ws = null;
+  let wsReconnectTimer = null;
+  let pollTimer = null;
+
+  function wsActive() { return ws && ws.readyState === WebSocket.OPEN; }
+
+  function connectWS() {
+    if (!state.conversationId) return;
+    try {
+      ws = new WebSocket(`${cfg.wsBase}/ws/widget/conversations/${state.conversationId}`);
+    } catch (e) {
+      console.warn('[sloten-chat] ws construct failed:', e.message);
+      startPolling();
+      return;
+    }
+    ws.addEventListener('open', () => {
+      setStatus('接続中');
+      stopPolling();
+    });
+    ws.addEventListener('message', (ev) => {
+      let f; try { f = JSON.parse(ev.data); } catch { return; }
+      if (f.type === 'message.created' && f.message) {
+        renderMessage(f.message);
+      } else if (f.type === 'conversation.updated' && f.conversation) {
+        state.status = f.conversation.status;
+        refreshConversation();
+      }
+    });
+    ws.addEventListener('close', () => {
+      setStatus('再接続待機中');
+      startPolling();
+      scheduleReconnect();
+    });
+    ws.addEventListener('error', () => {
+      try { ws.close(); } catch (_) {}
+    });
+  }
+
+  function scheduleReconnect() {
+    if (wsReconnectTimer) return;
+    wsReconnectTimer = setTimeout(() => {
+      wsReconnectTimer = null;
+      connectWS();
+    }, 3000);
+  }
+
+  function startPolling() {
+    if (pollTimer) return;
+    pollTimer = setInterval(pollMessages, 5000);
+  }
+  function stopPolling() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  }
+
+  async function pollMessages() {
+    if (!state.conversationId) return;
+    try {
+      const r = await api('GET', `/api/widget/conversations/${state.conversationId}/messages`);
+      for (const m of (r.messages || [])) renderMessage(m);
+      refreshConversation();
+    } catch (_) { /* ignore */ }
+  }
+
+  // --- Lifecycle ---
+  async function open() {
+    dom.root.setAttribute('data-open', '1');
+    dom.input.focus();
+    if (!state.conversationId) {
+      // Greet message only on fresh open
+      renderMessage({
+        id: 'greet-' + Date.now(),
+        sender_type: 'bot',
+        content: 'こんにちは！ご質問やお困りごとをお書きください。',
+        created_at: new Date().toISOString(),
+      });
+    } else {
+      await loadHistory();
+      await refreshConversation();
+      connectWS();
+    }
+  }
+  function close() { dom.root.setAttribute('data-open', '0'); }
+
+  async function init() {
+    injectStyles();
+    buildUI();
+    if (cfg.autoOpen) await open();
+    if (state.conversationId) {
+      // Resume: prefetch history so when user opens panel it's ready.
+      // Defer WS until open() to keep passive tabs light.
+    }
+    setStatus('準備完了');
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init, { once: true });
+  } else {
+    init();
+  }
+
+  // Expose minimal API for host pages.
+  window.SlotenChat = {
+    open,
+    close,
+    reset() {
+      state.contactId = null;
+      state.conversationId = null;
+      localStorage.removeItem(STORAGE_KEY);
+      dom.messages.querySelectorAll('.sloten-chat-msg').forEach((n) => n.remove());
+    },
+    getState() { return Object.assign({}, state); },
+  };
+})();

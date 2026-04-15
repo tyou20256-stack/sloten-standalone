@@ -1,0 +1,231 @@
+/*
+ * Sloten Chat Widget — scoped CSS.
+ * All selectors prefixed `.sloten-chat-` to avoid host page collisions.
+ * Theme via CSS variables on .sloten-chat-root.
+ */
+
+.sloten-chat-root {
+  --slc-brand: #2563eb;
+  --slc-brand-fg: #ffffff;
+  --slc-bg: #ffffff;
+  --slc-fg: #111827;
+  --slc-muted: #6b7280;
+  --slc-border: #e5e7eb;
+  --slc-bubble-customer: #2563eb;
+  --slc-bubble-customer-fg: #ffffff;
+  --slc-bubble-bot: #f3f4f6;
+  --slc-bubble-bot-fg: #111827;
+  --slc-bubble-staff: #ecfdf5;
+  --slc-bubble-staff-fg: #065f46;
+  --slc-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+  --slc-radius: 12px;
+  --slc-font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Yu Gothic UI", sans-serif;
+
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 2147483000;
+  font-family: var(--slc-font);
+  font-size: 14px;
+  color: var(--slc-fg);
+}
+
+.sloten-chat-root *,
+.sloten-chat-root *::before,
+.sloten-chat-root *::after {
+  box-sizing: border-box;
+}
+
+.sloten-chat-launcher {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background: var(--slc-brand);
+  color: var(--slc-brand-fg);
+  border: none;
+  cursor: pointer;
+  box-shadow: var(--slc-shadow);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s ease;
+}
+.sloten-chat-launcher:hover { transform: scale(1.05); }
+.sloten-chat-launcher svg { width: 28px; height: 28px; }
+.sloten-chat-launcher[data-unread="1"]::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #ef4444;
+  border: 2px solid #ffffff;
+}
+
+.sloten-chat-panel {
+  width: 360px;
+  max-width: calc(100vw - 40px);
+  height: 560px;
+  max-height: calc(100vh - 100px);
+  background: var(--slc-bg);
+  border-radius: var(--slc-radius);
+  box-shadow: var(--slc-shadow);
+  display: none;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--slc-border);
+}
+.sloten-chat-root[data-open="1"] .sloten-chat-panel { display: flex; }
+.sloten-chat-root[data-open="1"] .sloten-chat-launcher { display: none; }
+
+.sloten-chat-header {
+  background: var(--slc-brand);
+  color: var(--slc-brand-fg);
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.sloten-chat-title { font-weight: 600; font-size: 15px; }
+.sloten-chat-subtitle { font-size: 12px; opacity: 0.85; margin-top: 2px; }
+.sloten-chat-close {
+  background: transparent;
+  border: none;
+  color: var(--slc-brand-fg);
+  cursor: pointer;
+  font-size: 22px;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+.sloten-chat-banner {
+  padding: 8px 12px;
+  background: #fef3c7;
+  color: #78350f;
+  font-size: 12px;
+  border-bottom: 1px solid var(--slc-border);
+  display: none;
+}
+.sloten-chat-banner[data-visible="1"] { display: block; }
+
+.sloten-chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #f9fafb;
+}
+
+.sloten-chat-msg {
+  max-width: 85%;
+  padding: 8px 12px;
+  border-radius: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+.sloten-chat-msg[data-sender="customer"] {
+  background: var(--slc-bubble-customer);
+  color: var(--slc-bubble-customer-fg);
+  align-self: flex-end;
+  border-bottom-right-radius: 4px;
+}
+.sloten-chat-msg[data-sender="bot"] {
+  background: var(--slc-bubble-bot);
+  color: var(--slc-bubble-bot-fg);
+  align-self: flex-start;
+  border-bottom-left-radius: 4px;
+}
+.sloten-chat-msg[data-sender="staff"] {
+  background: var(--slc-bubble-staff);
+  color: var(--slc-bubble-staff-fg);
+  align-self: flex-start;
+  border-bottom-left-radius: 4px;
+}
+.sloten-chat-msg[data-sender="system"] {
+  background: transparent;
+  color: var(--slc-muted);
+  font-size: 12px;
+  align-self: center;
+  max-width: 100%;
+}
+
+.sloten-chat-meta {
+  font-size: 10px;
+  color: var(--slc-muted);
+  margin-top: 2px;
+}
+.sloten-chat-msg[data-sender="customer"] .sloten-chat-meta { color: rgba(255,255,255,0.8); }
+
+.sloten-chat-selects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.sloten-chat-select-btn {
+  background: var(--slc-bg);
+  border: 1px solid var(--slc-brand);
+  color: var(--slc-brand);
+  padding: 6px 10px;
+  border-radius: 16px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.sloten-chat-select-btn:hover { background: var(--slc-brand); color: var(--slc-brand-fg); }
+
+.sloten-chat-typing {
+  align-self: flex-start;
+  padding: 8px 12px;
+  background: var(--slc-bubble-bot);
+  border-radius: 12px;
+  color: var(--slc-muted);
+  font-size: 12px;
+  display: none;
+}
+.sloten-chat-typing[data-visible="1"] { display: block; }
+
+.sloten-chat-input-wrap {
+  border-top: 1px solid var(--slc-border);
+  padding: 8px;
+  display: flex;
+  gap: 6px;
+  background: var(--slc-bg);
+}
+.sloten-chat-input {
+  flex: 1;
+  border: 1px solid var(--slc-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  resize: none;
+  outline: none;
+  max-height: 100px;
+  color: var(--slc-fg);
+  background: var(--slc-bg);
+}
+.sloten-chat-input:focus { border-color: var(--slc-brand); }
+.sloten-chat-send {
+  background: var(--slc-brand);
+  color: var(--slc-brand-fg);
+  border: none;
+  border-radius: 8px;
+  padding: 0 14px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+.sloten-chat-send:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.sloten-chat-status {
+  font-size: 11px;
+  padding: 4px 8px;
+  border-top: 1px solid var(--slc-border);
+  color: var(--slc-muted);
+  text-align: center;
+  background: var(--slc-bg);
+}

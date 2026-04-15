@@ -64,6 +64,15 @@ export default {
         return ok({ status: 'ok', environment: env.ENVIRONMENT, provider: env.AI_PROVIDER }, corsHeaders);
       }
 
+      // /widget alias → /widget/index.html (convenience).
+      if (path === '/widget' && method === 'GET') {
+        return Response.redirect(new URL('/widget/', request.url).toString(), 302);
+      }
+      // Static assets (widget/*) — serve from ASSETS binding.
+      if (env.ASSETS && path.startsWith('/widget/') && method === 'GET') {
+        return env.ASSETS.fetch(request);
+      }
+
       // --- WebSocket upgrade to ConversationRoom Durable Object ---
       {
         const upgrade = request.headers.get('Upgrade');
