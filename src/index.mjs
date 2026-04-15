@@ -153,8 +153,20 @@ export default {
         return Response.redirect(new URL('/admin/', request.url).toString(), 302);
       }
       // Static assets — serve from ASSETS binding.
-      if (env.ASSETS && (path.startsWith('/widget/') || path.startsWith('/operator/') || path.startsWith('/admin/')) && method === 'GET') {
-        return env.ASSETS.fetch(request);
+      if (env.ASSETS && (path.startsWith('/widget/') || path.startsWith('/operator/') || path.startsWith('/admin/') || path.startsWith('/shared/')) && method === 'GET') {
+        const assetRes = await env.ASSETS.fetch(request);
+        // Force browsers + CF edges to always revalidate widget/operator/admin
+        // JS+CSS so bug fixes propagate within seconds, not hours. HTML is
+        // already cache-busting via script src anyway; the extra revalidate
+        // cost is trivial (304s from CF).
+        if (assetRes.ok && /\.(m?js|css|html)$/.test(path)) {
+          const headers = new Headers(assetRes.headers);
+          headers.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+          headers.set('Pragma', 'no-cache');
+          headers.set('Expires', '0');
+          return new Response(assetRes.body, { status: assetRes.status, headers });
+        }
+        return assetRes;
       }
 
       // --- Staff auth (cookie-based) ---
