@@ -240,10 +240,11 @@ export default {
       }
 
       // --- Widget-facing (public: contact create, conversation create, message send) ---
-      // Rate-limited: 30 req / 10 min per IP for widget writes.
+      // Rate-limited: 120 requests per minute per IP. Normal menu navigation
+      // should never hit this; burst abuse still gets throttled quickly.
       if (method !== 'GET' && method !== 'OPTIONS' && path.startsWith('/api/widget/')) {
         const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
-        const check = await checkRateLimit(env, `widget:${ip}`, 30, 600, ctx);
+        const check = await checkRateLimit(env, `widget:${ip}`, 120, 60, ctx);
         if (!check.allowed) return rateLimitResponse(check, corsHeaders);
       }
 
