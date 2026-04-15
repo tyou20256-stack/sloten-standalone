@@ -100,7 +100,174 @@
     if (state.section === 'labels') return renderLabels(content);
     if (state.section === 'staff') return renderStaff(content);
     if (state.section === 'ai-logs') return renderAiLogs(content);
+    if (state.section === 'prompts') return renderPrompts(content);
+    if (state.section === 'teams') return renderTeams(content);
     if (state.section === 'export') return renderExport(content);
+  }
+
+  // --- Prompts (A/B) ---
+  async function renderPrompts(root) {
+    root.appendChild(el('h2', {}, 'プロンプト (A/B テスト)'));
+    root.appendChild(el('p', { style: 'color:#6b7280;margin:0 0 16px;' },
+      '有効なプロンプトから weight 加重ランダムで選択されます。各プロンプトの 👍/👎 率で比較判断してください。'));
+    const tb = el('div', { class: 'slo-adm-sect-toolbar' },
+      el('button', { class: 'slo-adm-btn', onclick: () => promptModal() }, '+ 新規'));
+    root.appendChild(tb);
+    const listDiv = el('div');
+    root.appendChild(listDiv);
+    try {
+      const r = await api('GET', '/api/ai-prompts');
+      state.data.prompts = r.prompts || [];
+      renderPromptsTable(listDiv);
+    } catch (e) { listDiv.innerHTML = '<div class="slo-adm-empty">エラー: ' + esc(e.message) + '</div>'; }
+  }
+  function renderPromptsTable(root) {
+    root.innerHTML = '';
+    const rows = state.data.prompts || [];
+    if (rows.length === 0) { root.appendChild(el('div', { class: 'slo-adm-empty' }, 'プロンプトがありません')); return; }
+    const table = el('table', { class: 'slo-adm-table' });
+    table.appendChild(el('thead', {}, el('tr', {},
+      el('th', { style: 'width:25%' }, '名前'),
+      el('th', {}, '説明 / 先頭'),
+      el('th', { style: 'width:90px' }, 'weight'),
+      el('th', { style: 'width:80px' }, '有効'),
+      el('th', { style: 'width:140px' }, '👍 / 👎 / 呼出'),
+      el('th', { style: 'width:140px' }, ''))));
+    const tbody = el('tbody');
+    for (const r of rows) {
+      const upRatio = r.stats && (r.stats.up + r.stats.down) > 0 ? Math.round(100 * r.stats.up / (r.stats.up + r.stats.down)) : null;
+      tbody.appendChild(el('tr', {},
+        el('td', {}, r.name),
+        el('td', {}, (r.description || r.system_prompt || '').slice(0, 100)),
+        el('td', {}, String(r.weight)),
+        el('td', {}, el('span', { class: 'slo-adm-badge', 'data-active': String(r.is_active ?? 0) }, r.is_active ? '有効' : '無効')),
+        el('td', {}, r.stats ? `👍${r.stats.up} / 👎${r.stats.down} / ${r.stats.calls}${upRatio != null ? ` (${upRatio}%)` : ''}` : '—'),
+        el('td', {}, el('div', { class: 'slo-adm-row-actions' },
+          el('button', { onclick: () => promptModal(r) }, '編集'),
+          el('button', { class: 'danger', onclick: () => deletePrompt(r.id) }, '削除')))
+      ));
+    }
+    table.appendChild(tbody);
+    root.appendChild(table);
+  }
+  function promptModal(row) {
+    openModal(row ? 'プロンプト編集' : 'プロンプト新規', (form, actions) => {
+      form.appendChild(el('label', {}, '名前'));
+      const n = el('input', { value: row?.name || '' }); form.appendChild(n);
+      form.appendChild(el('label', {}, '説明 (任意)'));
+      const d = el('input', { value: row?.description || '' }); form.appendChild(d);
+      form.appendChild(el('label', {}, 'system_prompt'));
+      const sp = el('textarea', { style: 'min-height:200px;font-family:ui-monospace,monospace;font-size:12px;' }, row?.system_prompt || ''); form.appendChild(sp);
+      form.appendChild(el('label', {}, 'weight (0-100)'));
+      const w = el('input', { type: 'number', value: String(row?.weight ?? 50), min: '0', max: '100' }); form.appendChild(w);
+      form.appendChild(el('label', {}, '有効'));
+      const act = el('select', {},
+        el('option', { value: '1' }, '有効'),
+        el('option', { value: '0' }, '無効'));
+      act.value = (row?.is_active ?? 1) ? '1' : '0';
+      form.appendChild(act);
+
+      actions.appendChild(el('button', { class: 'slo-adm-btn slo-adm-btn-secondary', onclick: closeModal }, 'キャンセル'));
+      actions.appendChild(el('button', { class: 'slo-adm-btn', onclick: async () => {
+        const body = {
+          name: n.value.trim(), description: d.value || null, system_prompt: sp.value,
+          weight: parseInt(w.value, 10), is_active: act.value === '1' ? 1 : 0,
+        };
+        try {
+          if (row) await api('PATCH', `/api/ai-prompts/${row.id}`, body);
+          else     await api('POST', '/api/ai-prompts', body);
+          closeModal(); navigate('prompts');
+        } catch (e) { alert(e.message); }
+      } }, '保存'));
+    });
+  }
+  async function deletePrompt(id) {
+    if (!(await confirmDialog('このプロンプトを削除しますか？'))) return;
+    try { await api('DELETE', `/api/ai-prompts/${id}`); navigate('prompts'); } catch (e) { alert(e.message); }
+  }
+
+  // --- Teams ---
+  async function renderTeams(root) {
+    root.appendChild(el('h2', {}, 'チーム'));
+    const tb = el('div', { class: 'slo-adm-sect-toolbar' },
+      el('button', { class: 'slo-adm-btn', onclick: () => teamModal() }, '+ 新規'));
+    root.appendChild(tb);
+    const listDiv = el('div');
+    root.appendChild(listDiv);
+    try {
+      const [teams, staff] = await Promise.all([
+        api('GET', '/api/teams'),
+        api('GET', '/api/staff'),
+      ]);
+      state.data.teams = teams.teams || [];
+      state.data.staffForTeams = staff.staff || [];
+      renderTeamsTable(listDiv);
+    } catch (e) { listDiv.innerHTML = '<div class="slo-adm-empty">エラー: ' + esc(e.message) + '</div>'; }
+  }
+  function renderTeamsTable(root) {
+    root.innerHTML = '';
+    const rows = state.data.teams || [];
+    if (rows.length === 0) { root.appendChild(el('div', { class: 'slo-adm-empty' }, 'チームがありません')); return; }
+    for (const t of rows) {
+      const card = el('div', { style: 'background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin-bottom:12px;' });
+      const header = el('div', { style: 'display:flex;justify-content:space-between;align-items:center;' },
+        el('div', {},
+          el('div', { style: 'font-weight:600;font-size:15px;' }, t.name),
+          el('div', { style: 'font-size:12px;color:#6b7280;' }, t.description || '—')),
+        el('div', {},
+          el('button', { class: 'slo-adm-btn slo-adm-btn-secondary', style: 'margin-right:4px;', onclick: () => teamModal(t) }, '編集'),
+          el('button', { class: 'slo-adm-btn slo-adm-btn-danger', onclick: () => deleteTeam(t.id) }, '削除'))
+      );
+      card.appendChild(header);
+
+      card.appendChild(el('div', { style: 'font-size:11px;color:#6b7280;margin-top:12px;text-transform:uppercase;' }, `メンバー (${t.members.length})`));
+      const memRow = el('div', { style: 'display:flex;flex-wrap:wrap;gap:6px;margin-top:6px;' });
+      for (const m of t.members) {
+        memRow.appendChild(el('span', { style: 'display:inline-flex;align-items:center;gap:4px;background:#eff6ff;color:#1e40af;padding:3px 8px;border-radius:10px;font-size:12px;' },
+          `${m.name || m.email} (${m.role})`,
+          el('button', { style: 'border:none;background:transparent;color:#1e40af;cursor:pointer;padding:0;font-size:13px;', onclick: () => removeTeamMember(t.id, m.id) }, '×')
+        ));
+      }
+      const select = el('select', { style: 'margin-left:6px;font-size:12px;padding:3px 6px;border:1px solid #d1d5db;border-radius:4px;' },
+        el('option', { value: '' }, '+ メンバー追加'));
+      const currentIds = new Set(t.members.map((m) => m.id));
+      for (const s of (state.data.staffForTeams || [])) {
+        if (!currentIds.has(s.id)) select.appendChild(el('option', { value: String(s.id) }, `${s.name || s.email} (${s.role})`));
+      }
+      select.addEventListener('change', async () => {
+        if (!select.value) return;
+        try { await api('POST', `/api/teams/${t.id}/members`, { staff_id: parseInt(select.value, 10) }); navigate('teams'); }
+        catch (e) { alert(e.message); }
+      });
+      memRow.appendChild(select);
+      card.appendChild(memRow);
+      root.appendChild(card);
+    }
+  }
+  function teamModal(row) {
+    openModal(row ? 'チーム編集' : 'チーム新規', (form, actions) => {
+      form.appendChild(el('label', {}, '名前'));
+      const n = el('input', { value: row?.name || '' }); form.appendChild(n);
+      form.appendChild(el('label', {}, '説明'));
+      const d = el('input', { value: row?.description || '' }); form.appendChild(d);
+      actions.appendChild(el('button', { class: 'slo-adm-btn slo-adm-btn-secondary', onclick: closeModal }, 'キャンセル'));
+      actions.appendChild(el('button', { class: 'slo-adm-btn', onclick: async () => {
+        const body = { name: n.value.trim(), description: d.value || null };
+        try {
+          if (row) await api('PATCH', `/api/teams/${row.id}`, body);
+          else     await api('POST', '/api/teams', body);
+          closeModal(); navigate('teams');
+        } catch (e) { alert(e.message); }
+      } }, '保存'));
+    });
+  }
+  async function removeTeamMember(teamId, staffId) {
+    if (!(await confirmDialog('このメンバーをチームから外しますか？'))) return;
+    try { await api('DELETE', `/api/teams/${teamId}/members/${staffId}`); navigate('teams'); } catch (e) { alert(e.message); }
+  }
+  async function deleteTeam(id) {
+    if (!(await confirmDialog('このチームを削除しますか？'))) return;
+    try { await api('DELETE', `/api/teams/${id}`); navigate('teams'); } catch (e) { alert(e.message); }
   }
 
   // --- Helpers for new sections ---

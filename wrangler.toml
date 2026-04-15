@@ -41,6 +41,9 @@ class_name = "ConversationRoom"
 tag = "v1"
 new_classes = ["ConversationRoom"]
 
+[triggers]
+crons = ["* * * * *"]
+
 # Secrets (set via wrangler secret put):
 #   ADMIN_API_TOKEN        — admin bearer auth
 #   SESSION_SIGNING_KEY    — HMAC for session cookies (32+ bytes)

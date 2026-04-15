@@ -50,6 +50,8 @@ export async function listConversations(request, env, corsHeaders) {
   const status = url.searchParams.get('status');
   const priority = url.searchParams.get('priority');
   const label = url.searchParams.get('label');
+  const teamId = url.searchParams.get('team_id');
+  const snoozed = url.searchParams.get('snoozed'); // '1' = only snoozed, '0' = exclude snoozed
   const limit = Math.min(parseInt(url.searchParams.get('limit') || '50', 10), 200);
   let q = 'SELECT * FROM conversations WHERE tenant_id = ?';
   const vals = [tenantId];
@@ -59,6 +61,9 @@ export async function listConversations(request, env, corsHeaders) {
     q += ` AND (',' || COALESCE(labels,'') || ',') LIKE ?`;
     vals.push(`%,${label},%`);
   }
+  if (teamId) { q += ' AND team_id = ?'; vals.push(parseInt(teamId, 10)); }
+  if (snoozed === '1') q += ` AND snoozed_until IS NOT NULL AND snoozed_until > datetime('now')`;
+  else if (snoozed === '0') q += ` AND (snoozed_until IS NULL OR snoozed_until <= datetime('now'))`;
   q += ' ORDER BY COALESCE(last_message_at, created_at) DESC LIMIT ?';
   vals.push(limit);
   const { results } = await env.DB.prepare(q).bind(...vals).all();
@@ -100,6 +105,22 @@ export async function updateConversation(request, env, corsHeaders, id) {
     if (normalized == null) return err('Invalid labels', 400, corsHeaders);
     updates.push('labels = ?');
     vals.push(normalized);
+  }
+  if (body.team_id !== undefined) {
+    updates.push('team_id = ?');
+    vals.push(body.team_id == null ? null : parseInt(body.team_id, 10));
+  }
+  if (body.snoozed_until !== undefined) {
+    // Accept null (unsnoozed), ISO string, or 'YYYY-MM-DD HH:MM:SS'.
+    updates.push('snoozed_until = ?');
+    if (body.snoozed_until == null) {
+      vals.push(null);
+    } else {
+      const d = new Date(body.snoozed_until);
+      if (isNaN(d.getTime())) return err('Invalid snoozed_until', 400, corsHeaders);
+      // Store as SQLite-friendly 'YYYY-MM-DD HH:MM:SS' (UTC)
+      vals.push(d.toISOString().slice(0, 19).replace('T', ' '));
+    }
   }
   if (updates.length === 0) return err('No updatable fields', 400, corsHeaders);
   updates.push(`updated_at = datetime('now')`);

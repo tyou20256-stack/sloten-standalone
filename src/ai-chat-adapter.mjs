@@ -5,22 +5,26 @@
 // Phase 1: plain prompt concatenation. Embeddings / RAG ranking comes later.
 
 import { recordAiCall } from './handlers/ai-logs.mjs';
+import { pickActivePrompt } from './handlers/ai-prompts.mjs';
 import { maskPII } from './pii-masker.mjs';
 
 const MAX_CONTEXT_FAQ = 8;
 const MAX_CONTEXT_KB = 3;
 
-function buildSystemPrompt(faqRows, kbRows) {
+function buildSystemPrompt(faqRows, kbRows, header) {
   const faqText = faqRows.slice(0, MAX_CONTEXT_FAQ)
     .map((r) => `Q: ${r.question}\nA: ${r.answer}`)
     .join('\n\n');
   const kbText = kbRows.slice(0, MAX_CONTEXT_KB)
     .map((r) => `[${r.title || 'untitled'}]\n${(r.content || '').slice(0, 1500)}`)
     .join('\n\n---\n\n');
-  return [
+  const head = header || [
     'あなたはスロット天国のカスタマーサポート担当です。',
     '日本語で簡潔に、丁寧に回答してください。',
     'FAQ やナレッジに情報がない場合は「担当者におつなぎします」と案内してください。',
+  ].join('\n');
+  return [
+    head,
     '',
     '=== FAQ ===',
     faqText || '(no FAQ entries)',
@@ -85,7 +89,12 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
   const provider = (env.AI_PROVIDER || 'gemini').toLowerCase();
   const model = provider === 'anthropic' ? 'claude-haiku-4-5-20251001' : 'gemini-2.5-flash-lite';
   const { faqRows, kbRows } = await loadContext(env, tenantId);
-  const system = buildSystemPrompt(faqRows, kbRows);
+
+  // Choose active prompt via weighted random (A/B testing). Fall back to hard-coded.
+  let promptRow = null;
+  try { promptRow = await pickActivePrompt(env, tenantId); } catch (_) {}
+  const promptHeader = promptRow ? promptRow.system_prompt : null;
+  const system = buildSystemPrompt(faqRows, kbRows, promptHeader);
 
   const maskedInput = maskPII(customerMessage || '');
   const started = Date.now();
@@ -119,6 +128,7 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
     latency_ms: Date.now() - started,
     status,
     error_message: errorMessage,
+    prompt_id: promptRow?.id || null,
   });
 
   if (status === 'error') throw new Error(errorMessage);

@@ -94,7 +94,10 @@
   // --- Conversations ---
   async function loadConversations() {
     try {
-      const qs = state.filter === 'all' ? '' : `?status=${state.filter}`;
+      let qs = '';
+      if (state.filter === 'snoozed') qs = '?snoozed=1';
+      else if (state.filter !== 'all') qs = `?status=${state.filter}&snoozed=0`;
+      else qs = '?snoozed=0';
       const r = await api('GET', '/api/conversations' + qs);
       state.conversations = r.conversations || [];
       renderList();
@@ -113,6 +116,10 @@
       const r = await api('GET', '/api/templates?tenant_id=tenant_default');
       state.templates = r.templates || [];
     } catch (e) { console.warn('loadTemplates', e.message); }
+  }
+  async function loadTeams() {
+    try { const r = await api('GET', '/api/teams'); state.teams = r.teams || []; }
+    catch (e) { state.teams = []; }
   }
 
   async function selectConversation(id) {
@@ -211,6 +218,9 @@
   const resolveConv = () => patchConv({ status: 'closed' });
   const reopenConv  = () => patchConv({ status: 'open' });
   const returnToBot = () => patchConv({ status: 'bot', assignee_id: null });
+  async function snoozeConv(iso) { await patchConv({ snoozed_until: iso }); }
+  async function unsnoozeConv()  { await patchConv({ snoozed_until: null }); }
+  async function setTeam(teamId) { await patchConv({ team_id: teamId || null }); }
 
   // --- WebSocket ---
   function closeWS() {
@@ -347,6 +357,11 @@
     if (conv.status === 'closed') {
       actions.appendChild(el('button', { class: 'primary', onclick: reopenConv }, '再オープン'));
     }
+    // Snooze button — schedules a future wake via datetime-local picker.
+    const snoozeBtn = el('button', { onclick: () => openSnoozeDialog(conv) },
+      conv.snoozed_until ? `⏰ ${formatTime(conv.snoozed_until)}` : '⏰ スヌーズ');
+    actions.appendChild(snoozeBtn);
+    if (conv.snoozed_until) actions.appendChild(el('button', { onclick: unsnoozeConv }, '解除'));
     // Priority selector
     const prioritySelect = el('select', {
       onchange: (ev) => setPriority(ev.target.value),
@@ -607,6 +622,33 @@
 
   // --- Boot ---
   // --- Search ---
+  function openSnoozeDialog(conv) {
+    const now = new Date();
+    now.setMinutes(now.getMinutes() + 60);
+    const pad = (n) => String(n).padStart(2, '0');
+    const defaultVal = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    const win = window.open('', '_blank', 'width=360,height=220,toolbar=no,menubar=no');
+    if (!win) {
+      const v = prompt('スヌーズ終了日時 (YYYY-MM-DDTHH:MM)', defaultVal);
+      if (v) snoozeConv(new Date(v).toISOString());
+      return;
+    }
+    win.document.write(`<!doctype html><meta charset="utf-8"><title>スヌーズ</title>
+      <style>body{font-family:sans-serif;padding:16px;}label{display:block;margin:8px 0 4px;font-size:12px;}
+      input{width:100%;padding:6px;border:1px solid #ccc;border-radius:4px;}button{margin-top:12px;padding:6px 12px;cursor:pointer;border:1px solid #2563eb;background:#2563eb;color:#fff;border-radius:4px;}</style>
+      <h3 style="margin:0">スヌーズ終了日時</h3>
+      <label>この時刻まで会話を「スヌーズ中」フィルタに隠します</label>
+      <input id="dt" type="datetime-local" value="${defaultVal}" />
+      <button onclick="(function(){const v=document.getElementById('dt').value;if(!v)return;window.opener.postMessage({snooze:new Date(v).toISOString()},'*');window.close();})()">設定</button>
+    `);
+    function onMsg(ev) {
+      if (ev.source !== win || !ev.data?.snooze) return;
+      window.removeEventListener('message', onMsg);
+      snoozeConv(ev.data.snooze);
+    }
+    window.addEventListener('message', onMsg);
+  }
+
   async function runSearch(q) {
     const results = $('#slo-search-results');
     results.innerHTML = '';
@@ -731,7 +773,7 @@
   async function onAuthenticated() {
     document.body.setAttribute('data-view', 'app');
     renderTop();
-    await Promise.all([loadConversations(), loadLabels(), loadTemplates()]);
+    await Promise.all([loadConversations(), loadLabels(), loadTemplates(), loadTeams()]);
     if (state.listTimer) clearInterval(state.listTimer);
     state.listTimer = setInterval(loadConversations, 10000);
   }

@@ -30,6 +30,13 @@ import { dashboardStats } from './handlers/dashboard.mjs';
 import { exportCsv } from './handlers/export.mjs';
 import { listAiLogs, getAiLog, deleteAiLog, submitFeedback, aiStats } from './handlers/ai-logs.mjs';
 import {
+  listTeams, createTeam, updateTeam, deleteTeam, addTeamMember, removeTeamMember,
+} from './handlers/teams.mjs';
+import {
+  listPrompts, createPrompt, updatePrompt, deletePrompt,
+} from './handlers/ai-prompts.mjs';
+import { handleScheduled } from './scheduled.mjs';
+import {
   sendMessage, listMessages,
 } from './handlers/messages-native.mjs';
 import {
@@ -85,6 +92,9 @@ function requireAdminRole(handler) {
 }
 
 export default {
+  async scheduled(event, env, ctx) {
+    return handleScheduled(event, env, ctx);
+  },
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
@@ -209,6 +219,32 @@ export default {
       {
         const m = path.match(/^\/api\/export\/([a-z_]+)\.csv$/);
         if (m && method === 'GET') return requireAdminRole(exportCsv)(request, env, corsHeaders, m[1]);
+      }
+
+      // Teams (admin-role)
+      if (path === '/api/teams' && method === 'GET') return requireAdmin(listTeams)(request, env, corsHeaders);
+      if (path === '/api/teams' && method === 'POST') return requireAdminRole(createTeam)(request, env, corsHeaders);
+      {
+        const m = path.match(/^\/api\/teams\/(\d+)$/);
+        if (m && method === 'PATCH')  return requireAdminRole(updateTeam)(request, env, corsHeaders, parseInt(m[1], 10));
+        if (m && method === 'DELETE') return requireAdminRole(deleteTeam)(request, env, corsHeaders, parseInt(m[1], 10));
+      }
+      {
+        const m = path.match(/^\/api\/teams\/(\d+)\/members$/);
+        if (m && method === 'POST') return requireAdminRole(addTeamMember)(request, env, corsHeaders, parseInt(m[1], 10));
+      }
+      {
+        const m = path.match(/^\/api\/teams\/(\d+)\/members\/(\d+)$/);
+        if (m && method === 'DELETE') return requireAdminRole(removeTeamMember)(request, env, corsHeaders, parseInt(m[1], 10), parseInt(m[2], 10));
+      }
+
+      // AI prompts (admin-role)
+      if (path === '/api/ai-prompts' && method === 'GET') return requireAdminRole(listPrompts)(request, env, corsHeaders);
+      if (path === '/api/ai-prompts' && method === 'POST') return requireAdminRole(createPrompt)(request, env, corsHeaders);
+      {
+        const m = path.match(/^\/api\/ai-prompts\/(\d+)$/);
+        if (m && method === 'PATCH')  return requireAdminRole(updatePrompt)(request, env, corsHeaders, parseInt(m[1], 10));
+        if (m && method === 'DELETE') return requireAdminRole(deletePrompt)(request, env, corsHeaders, parseInt(m[1], 10));
       }
 
       // AI logs + feedback (admin only)

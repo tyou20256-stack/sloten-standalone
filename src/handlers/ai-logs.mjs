@@ -100,8 +100,8 @@ export async function recordAiCall(env, entry) {
     await env.DB.prepare(
       `INSERT INTO ai_logs
         (tenant_id, conversation_id, message_id, provider, model, system_prompt, input, output,
-         tokens_in, tokens_out, latency_ms, status, error_message)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         tokens_in, tokens_out, latency_ms, status, error_message, prompt_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       entry.tenant_id || 'tenant_default',
       entry.conversation_id || null,
@@ -115,7 +115,8 @@ export async function recordAiCall(env, entry) {
       entry.tokens_out ?? null,
       entry.latency_ms ?? null,
       entry.status || 'ok',
-      entry.error_message || null
+      entry.error_message || null,
+      entry.prompt_id ?? null
     ).run();
   } catch (e) {
     console.warn('[ai-logs] record failed:', e.message);
