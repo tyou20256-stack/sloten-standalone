@@ -1,0 +1,11 @@
+node_modules/
+.wrangler/
+.dev.vars
+*.log
+*.secret
+.env
+.env.local
+dist/
+build/
+.DS_Store
+Thumbs.db
