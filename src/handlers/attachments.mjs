@@ -3,6 +3,7 @@
 
 import { uuid } from '../id.mjs';
 import { ok, err } from '../json.mjs';
+import { verifyAttachmentSignature } from '../auth/attachment-signature.mjs';
 
 const MAX_BYTES = 10 * 1024 * 1024;
 const ALLOWED_PREFIXES = ['image/', 'application/pdf'];
@@ -65,6 +66,17 @@ export async function uploadAttachment(request, env, corsHeaders, conversationId
 
   const row = await env.DB.prepare('SELECT * FROM attachments WHERE id = ?').bind(id).first();
   return ok({ success: true, attachment: row }, corsHeaders);
+}
+
+// Verify a signed URL and stream the file if valid. Used by webhook callers
+// (GAS, etc.) that don't carry a session cookie or contact token.
+export async function downloadAttachmentSigned(request, env, corsHeaders, id) {
+  const url = new URL(request.url);
+  const sig = url.searchParams.get('sig');
+  const exp = url.searchParams.get('exp');
+  const ok2 = await verifyAttachmentSignature(env, id, sig, exp);
+  if (!ok2) return err('Invalid or expired signature', 401, corsHeaders);
+  return downloadAttachment(request, env, corsHeaders, id);
 }
 
 // Stream the file. Caller ownership is verified by the router before entering.

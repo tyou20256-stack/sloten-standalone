@@ -39,7 +39,7 @@ import { handleScheduled } from './scheduled.mjs';
 import { verifyContactToken, extractContactToken } from './auth/contact-token.mjs';
 import { listBotMenus, createBotMenu, updateBotMenu, deleteBotMenu } from './handlers/bot-menus.mjs';
 import { listBotFlows, createBotFlow, updateBotFlow, deleteBotFlow } from './handlers/bot-flows.mjs';
-import { uploadAttachment, downloadAttachment } from './handlers/attachments.mjs';
+import { uploadAttachment, downloadAttachment, downloadAttachmentSigned } from './handlers/attachments.mjs';
 import {
   sendMessage, listMessages,
 } from './handlers/messages-native.mjs';
@@ -200,7 +200,14 @@ export default {
       }
       {
         const m = path.match(/^\/api\/attachments\/([^/]+)$/);
-        if (m && method === 'GET') return requireStaff(downloadAttachment)(request, env, corsHeaders, m[1]);
+        if (m && method === 'GET') {
+          // Signed URL (GAS/webhook caller) takes precedence over staff cookie.
+          const u = new URL(request.url);
+          if (u.searchParams.has('sig') && u.searchParams.has('exp')) {
+            return downloadAttachmentSigned(request, env, corsHeaders, m[1]);
+          }
+          return requireStaff(downloadAttachment)(request, env, corsHeaders, m[1]);
+        }
       }
 
       // --- WebSocket upgrade to ConversationRoom Durable Object ---

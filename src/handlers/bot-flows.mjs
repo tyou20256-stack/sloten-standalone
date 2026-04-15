@@ -22,6 +22,7 @@
 
 import { ok, created, err, parseJson } from '../json.mjs';
 import { resolveTenantId } from '../tenant-scope.mjs';
+import { signAttachmentUrl, baseUrlOf } from '../auth/attachment-signature.mjs';
 
 const VALID_TRIGGER_TYPES = new Set(['entry', 'manual']);
 const VALID_STEP_TYPES = new Set(['message', 'input', 'select', 'webhook', 'handoff']);
@@ -284,6 +285,24 @@ export async function executeFlow(env, conv, contact, inputText, ctx) {
       try {
         const url = renderTemplate(step.url, { vars: state.vars, contact, env });
         const bodyObj = renderTemplate(step.body || {}, { vars: state.vars, contact, env });
+        // If vars contain attachment_id, expand it into a signed URL so GAS
+        // can fetch the image/PDF without auth.
+        const attachments = {};
+        for (const k of Object.keys(state.vars || {})) {
+          if (!/attachment(?:_id)?$/i.test(k)) continue;
+          const aid = state.vars[k];
+          if (!aid) continue;
+          try {
+            const att = await env.DB.prepare('SELECT id, filename, content_type, size_bytes FROM attachments WHERE id = ?').bind(aid).first();
+            if (att) {
+              const base = env.PUBLIC_WORKER_URL || '';
+              attachments[k] = {
+                id: att.id, filename: att.filename, content_type: att.content_type, size_bytes: att.size_bytes,
+                url: base ? await signAttachmentUrl(env, att.id, base) : null,
+              };
+            }
+          } catch (_) {}
+        }
         const payload = {
           flow_id: flow.id,
           flow_name: flow.name,
@@ -291,6 +310,7 @@ export async function executeFlow(env, conv, contact, inputText, ctx) {
           conversation_id: conv.id,
           contact: { id: contact?.id, name: contact?.name, email: contact?.email, phone: contact?.phone },
           vars: state.vars,
+          attachments: Object.keys(attachments).length ? attachments : undefined,
           ...bodyObj,
         };
         const ac = new AbortController();

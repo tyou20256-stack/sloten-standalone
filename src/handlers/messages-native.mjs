@@ -9,6 +9,7 @@ import { broadcastToConversation } from '../broadcast.mjs';
 import { checkRateLimit, rateLimitResponse } from '../rate-limiter.mjs';
 import { runFlowForCustomerMessage } from './bot-flows.mjs';
 import { linkAttachmentToMessage, fetchAttachmentsForMessages } from './attachments.mjs';
+import { signAttachmentUrl, baseUrlOf } from '../auth/attachment-signature.mjs';
 
 const VALID_SENDER = new Set(['customer', 'bot', 'staff', 'system']);
 const VALID_CONTENT_TYPE = new Set(['text', 'input_select', 'file', 'system_event']);
@@ -104,6 +105,51 @@ export async function sendMessage(request, env, corsHeaders, conversationId, opt
     });
     if (attachmentId) {
       await linkAttachmentToMessage(env, attachmentId, msg.id, conversationId);
+    }
+
+    // Webhook dispatch: operator sends a non-private message with an
+    // attachment -> notify external system (GAS etc.) with a signed URL.
+    if (
+      !isWidget && senderType === 'staff' && attachmentId && !forcePrivate
+      && env.OPERATOR_ATTACHMENT_WEBHOOK_URL
+    ) {
+      const sendWebhook = async () => {
+        try {
+          const att = await env.DB.prepare('SELECT * FROM attachments WHERE id = ?').bind(attachmentId).first();
+          if (!att) return;
+          const contact = conv.contact_id
+            ? await env.DB.prepare('SELECT * FROM contacts WHERE id = ?').bind(conv.contact_id).first()
+            : null;
+          const staff = body.sender_id
+            ? await env.DB.prepare('SELECT id, email, name, role FROM staff_members WHERE id = ?').bind(body.sender_id).first()
+            : (request.__staff ? { id: request.__staff.id, email: request.__staff.email, name: request.__staff.name, role: request.__staff.role } : null);
+          const signedUrl = await signAttachmentUrl(env, attachmentId, baseUrlOf(request, env));
+          const payload = {
+            event: 'operator.attachment_sent',
+            conversation_id: conversationId,
+            contact: contact
+              ? { id: contact.id, name: contact.name, email: contact.email, phone: contact.phone, metadata: contact.metadata ? JSON.parse(contact.metadata) : null }
+              : null,
+            staff,
+            message: { id: msg.id, content: msg.content, created_at: msg.created_at, is_private: !!msg.is_private },
+            attachment: {
+              id: att.id, filename: att.filename, content_type: att.content_type,
+              size_bytes: att.size_bytes, checksum_sha256: att.checksum_sha256,
+              url: signedUrl,
+            },
+          };
+          const r = await fetch(env.OPERATOR_ATTACHMENT_WEBHOOK_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          if (!r.ok) console.warn('[attachment-webhook] non-2xx:', r.status);
+        } catch (e) {
+          console.warn('[attachment-webhook] failed:', e.message);
+        }
+      };
+      if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(sendWebhook());
+      else sendWebhook().catch(() => {});
     }
 
     // Auto bot reply: customer message on bot-handled conversation.
