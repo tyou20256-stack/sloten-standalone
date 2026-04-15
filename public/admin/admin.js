@@ -158,44 +158,316 @@
     table.appendChild(tbody);
     root.appendChild(table);
   }
+  // --- Flow visual editor ---
   function flowModal(row) {
+    // Local mutable model that the UI edits; on save it's serialized.
+    const model = {
+      name: row?.name || '',
+      description: row?.description || '',
+      trigger_value: row?.trigger_value || '',
+      start_step_id: row?.start_step_id || '',
+      priority: row?.priority ?? 0,
+      is_active: row?.is_active ?? 1,
+      steps: JSON.parse(JSON.stringify(row?.steps || [])),
+      jsonMode: false,
+      openStepIds: new Set([row?.start_step_id].filter(Boolean)),
+    };
+
     openModal(row ? 'フロー編集' : 'フロー新規', (form, actions) => {
-      form.appendChild(el('label', {}, '名前'));
-      const n = el('input', { value: row?.name || '' }); form.appendChild(n);
-      form.appendChild(el('label', {}, '説明'));
-      const d = el('input', { value: row?.description || '' }); form.appendChild(d);
-      form.appendChild(el('label', {}, 'trigger (JS 正規表現)'));
-      const tv = el('input', { value: row?.trigger_value || '', placeholder: '^(入金|deposit)' }); form.appendChild(tv);
-      form.appendChild(el('label', {}, '開始 step id'));
-      const ss = el('input', { value: row?.start_step_id || '' }); form.appendChild(ss);
-      form.appendChild(el('label', {}, 'steps (JSON 配列)'));
-      form.appendChild(el('div', { style: 'font-size:11px;color:#6b7280;margin-bottom:4px;' },
-        'step types: message / input / select / webhook / handoff。テンプレート構文: {{vars.X}}, {{contact.name}}'));
-      const steps = el('textarea', {
-        style: 'min-height:360px;font-family:ui-monospace,monospace;font-size:12px;',
-      }, JSON.stringify(row?.steps || [], null, 2));
-      form.appendChild(steps);
-      form.appendChild(el('label', {}, '優先度 (大きい順にチェック)'));
-      const pri = el('input', { type: 'number', value: String(row?.priority ?? 0) }); form.appendChild(pri);
-      form.appendChild(el('label', {}, '有効'));
-      const act = el('select', {},
+      form.style.maxWidth = '100%';
+      const body = form.parentElement;
+      if (body) body.style.maxWidth = '780px';
+
+      // --- Header fields ---
+      const headWrap = el('div', { style: 'display:grid;grid-template-columns:1fr 1fr;gap:8px;' });
+      const mk = (label, input) => el('div', {}, el('label', {}, label), input);
+      const nameI = el('input', { value: model.name, placeholder: 'deposit-paypay' });
+      const triggerI = el('input', { value: model.trigger_value, placeholder: '^(入金|deposit)' });
+      const descI = el('input', { value: model.description, placeholder: '説明 (任意)' });
+      const priI = el('input', { type: 'number', value: String(model.priority) });
+      const actS = el('select', {},
         el('option', { value: '1' }, '有効'),
         el('option', { value: '0' }, '無効'));
-      act.value = (row?.is_active ?? 1) ? '1' : '0';
-      form.appendChild(act);
+      actS.value = String(model.is_active);
+      const startS = el('select', {});  // populated in re-render
+      headWrap.appendChild(mk('名前', nameI));
+      headWrap.appendChild(mk('trigger (正規表現)', triggerI));
+      headWrap.appendChild(mk('説明', descI));
+      headWrap.appendChild(mk('開始 step', startS));
+      headWrap.appendChild(mk('優先度', priI));
+      headWrap.appendChild(mk('有効', actS));
+      form.appendChild(headWrap);
 
+      const validation = el('div', { class: 'slo-flow-validation' });
+      form.appendChild(validation);
+
+      // --- Step toolbar ---
+      const tb = el('div', { class: 'slo-flow-toolbar' });
+      const addSel = el('select', {},
+        el('option', { value: 'input' }, 'input (顧客入力待ち)'),
+        el('option', { value: 'select' }, 'select (ボタン選択)'),
+        el('option', { value: 'message' }, 'message (bot がテキスト送信)'),
+        el('option', { value: 'webhook' }, 'webhook (外部 POST)'),
+        el('option', { value: 'handoff' }, 'handoff (人間へ引継ぎ)'));
+      const addBtn = el('button', { type: 'button', class: 'slo-adm-btn', onclick: () => { addStep(addSel.value); } }, '+ ステップ追加');
+      const toggleMode = el('button', { type: 'button', class: 'slo-flow-mode-toggle', onclick: () => { model.jsonMode = !model.jsonMode; renderSteps(); } }, 'JSON モード');
+      tb.appendChild(addSel); tb.appendChild(addBtn); tb.appendChild(toggleMode);
+      form.appendChild(tb);
+
+      const stepsHost = el('div');
+      form.appendChild(stepsHost);
+
+      // --- Helpers ---
+      function genStepId(type) {
+        const base = type + '_' + (model.steps.filter((s) => s.type === type).length + 1);
+        let id = base; let n = 1;
+        while (model.steps.some((s) => s.id === id)) { id = base + '_' + (++n); }
+        return id;
+      }
+      function addStep(type) {
+        const id = genStepId(type);
+        const step = { id, type };
+        if (type === 'message') Object.assign(step, { content: '', next: null });
+        if (type === 'input')   Object.assign(step, { prompt: '', var: '', validate: '', validate_error: '', next: null });
+        if (type === 'select')  Object.assign(step, { prompt: 'ご選択ください', var: '', options: [{ title: '', value: '', next: null }] });
+        if (type === 'webhook') Object.assign(step, { url: '', method: 'POST', body: {}, timeout_ms: 8000, next: null, on_error: null, error_message: 'システム連携でエラーが発生しました' });
+        if (type === 'handoff') Object.assign(step, { note: '担当者にお繋ぎします' });
+        model.steps.push(step);
+        model.openStepIds.add(id);
+        if (!model.start_step_id) model.start_step_id = id;
+        renderSteps();
+      }
+      function moveStep(idx, delta) {
+        const j = idx + delta;
+        if (j < 0 || j >= model.steps.length) return;
+        const [s] = model.steps.splice(idx, 1);
+        model.steps.splice(j, 0, s);
+        renderSteps();
+      }
+      function removeStep(idx) {
+        const [removed] = model.steps.splice(idx, 1);
+        // Null out any references to this step's id
+        const stale = removed.id;
+        for (const s of model.steps) {
+          if (s.next === stale) s.next = null;
+          if (s.on_error === stale) s.on_error = null;
+          if (s.options) for (const o of s.options) if (o.next === stale) o.next = null;
+        }
+        if (model.start_step_id === stale) model.start_step_id = model.steps[0]?.id || '';
+        model.openStepIds.delete(stale);
+        renderSteps();
+      }
+
+      // --- Per-step renderer ---
+      function stepCard(step, idx) {
+        const openFlag = model.openStepIds.has(step.id);
+        const card = el('div', { class: 'slo-flow-step', 'data-open': openFlag ? '1' : '0' });
+        const preview = (() => {
+          if (step.type === 'message') return step.content || '(empty)';
+          if (step.type === 'input')   return step.prompt || '(prompt)';
+          if (step.type === 'select')  return step.prompt + ' → ' + (step.options || []).map((o) => o.title).join(' / ');
+          if (step.type === 'webhook') return (step.method || 'POST') + ' ' + (step.url || '');
+          if (step.type === 'handoff') return step.note || '引継ぎ';
+          return '';
+        })();
+        const head = el('div', { class: 'slo-flow-step-head', onclick: (ev) => {
+          if (ev.target.closest('.slo-flow-step-actions')) return;
+          if (model.openStepIds.has(step.id)) model.openStepIds.delete(step.id);
+          else model.openStepIds.add(step.id);
+          renderSteps();
+        } },
+          el('span', { class: 'slo-flow-step-type', 'data-t': step.type }, step.type),
+          el('span', { class: 'slo-flow-step-id' }, step.id),
+          el('span', { class: 'slo-flow-step-preview' }, preview),
+          el('div', { class: 'slo-flow-step-actions' },
+            el('button', { type: 'button', title: '上へ', disabled: idx === 0 ? '' : null, onclick: (ev) => { ev.stopPropagation(); moveStep(idx, -1); } }, '↑'),
+            el('button', { type: 'button', title: '下へ', disabled: idx === model.steps.length - 1 ? '' : null, onclick: (ev) => { ev.stopPropagation(); moveStep(idx, 1); } }, '↓'),
+            el('button', { type: 'button', class: 'danger', title: '削除', onclick: (ev) => { ev.stopPropagation(); removeStep(idx); } }, '×'))
+        );
+        card.appendChild(head);
+
+        const bodyDiv = el('div', { class: 'slo-flow-step-body' });
+        const stepIdsOptions = () => {
+          const opts = [el('option', { value: '' }, '(終了)')];
+          for (const s of model.steps) if (s.id !== step.id) opts.push(el('option', { value: s.id }, s.id));
+          return opts;
+        };
+        const nextSelect = (key) => {
+          const s = el('select', { onchange: () => { step[key] = s.value || null; refreshHeadPreview(head, step, card); } }, ...stepIdsOptions());
+          s.value = step[key] || '';
+          return s;
+        };
+
+        // Common: step id
+        bodyDiv.appendChild(el('label', {}, 'id'));
+        const idI = el('input', { value: step.id, onchange: () => {
+          const newId = idI.value.trim();
+          if (!newId || newId === step.id) { idI.value = step.id; return; }
+          if (model.steps.some((s) => s.id === newId)) { (window.Sloten?.toast || alert)('id が重複しています', { type: 'error' }); idI.value = step.id; return; }
+          const oldId = step.id;
+          for (const s of model.steps) {
+            if (s.next === oldId) s.next = newId;
+            if (s.on_error === oldId) s.on_error = newId;
+            if (s.options) for (const o of s.options) if (o.next === oldId) o.next = newId;
+          }
+          step.id = newId;
+          if (model.start_step_id === oldId) model.start_step_id = newId;
+          model.openStepIds.delete(oldId); model.openStepIds.add(newId);
+          renderSteps();
+        } });
+        bodyDiv.appendChild(idI);
+
+        if (step.type === 'message') {
+          bodyDiv.appendChild(el('label', {}, '本文 (テンプレ OK: {{vars.x}})'));
+          const c = el('textarea', { oninput: () => { step.content = c.value; } }, step.content || '');
+          bodyDiv.appendChild(c);
+          bodyDiv.appendChild(el('label', {}, '次のステップ')); bodyDiv.appendChild(nextSelect('next'));
+        }
+        if (step.type === 'input') {
+          bodyDiv.appendChild(el('label', {}, 'prompt (bot が表示)'));
+          const p = el('textarea', { oninput: () => { step.prompt = p.value; } }, step.prompt || '');
+          bodyDiv.appendChild(p);
+          bodyDiv.appendChild(el('label', {}, '保存先変数名 (vars.X)'));
+          const v = el('input', { value: step.var || '', oninput: () => { step.var = v.value; } }); bodyDiv.appendChild(v);
+          bodyDiv.appendChild(el('label', {}, 'validate (正規表現、空=検証なし)'));
+          const val = el('input', { value: step.validate || '', oninput: () => { step.validate = val.value || ''; } }); bodyDiv.appendChild(val);
+          bodyDiv.appendChild(el('label', {}, 'validate 失敗時メッセージ'));
+          const ve = el('input', { value: step.validate_error || '', oninput: () => { step.validate_error = ve.value || ''; } }); bodyDiv.appendChild(ve);
+          bodyDiv.appendChild(el('label', {}, '次のステップ')); bodyDiv.appendChild(nextSelect('next'));
+        }
+        if (step.type === 'select') {
+          bodyDiv.appendChild(el('label', {}, 'prompt (ボタン上の文)'));
+          const p = el('input', { value: step.prompt || '', oninput: () => { step.prompt = p.value; } }); bodyDiv.appendChild(p);
+          bodyDiv.appendChild(el('label', {}, '選択肢'));
+          const tbl = el('table', { class: 'slo-flow-options-table' });
+          tbl.appendChild(el('thead', {}, el('tr', {},
+            el('th', { style: 'width:28%' }, 'title (表示)'),
+            el('th', { style: 'width:28%' }, 'value (送信値)'),
+            el('th', {}, 'next'),
+            el('th', { style: 'width:30px' }, ''))));
+          const tbody = el('tbody');
+          const renderOptions = () => {
+            tbody.innerHTML = '';
+            (step.options || []).forEach((opt, oi) => {
+              const tInp = el('input', { value: opt.title || '', oninput: () => { opt.title = tInp.value; } });
+              const vInp = el('input', { value: opt.value || '', oninput: () => { opt.value = vInp.value; } });
+              const nextS = el('select', { onchange: () => { opt.next = nextS.value || null; } }, ...stepIdsOptions());
+              nextS.value = opt.next || '';
+              const del = el('button', { type: 'button', onclick: () => { step.options.splice(oi, 1); renderOptions(); } }, '×');
+              tbody.appendChild(el('tr', {}, el('td', {}, tInp), el('td', {}, vInp), el('td', {}, nextS), el('td', {}, del)));
+            });
+          };
+          tbl.appendChild(tbody); bodyDiv.appendChild(tbl);
+          bodyDiv.appendChild(el('button', { type: 'button', class: 'slo-adm-btn slo-adm-btn-secondary', style: 'margin-top:6px;', onclick: () => { (step.options ||= []).push({ title: '', value: '', next: null }); renderOptions(); } }, '+ 選択肢追加'));
+          bodyDiv.appendChild(el('label', {}, '保存先変数名 (vars.X、選択された value を保存)'));
+          const v = el('input', { value: step.var || '', oninput: () => { step.var = v.value; } }); bodyDiv.appendChild(v);
+          renderOptions();
+        }
+        if (step.type === 'webhook') {
+          bodyDiv.appendChild(el('label', {}, 'URL (テンプレ OK)'));
+          const u = el('input', { value: step.url || '', oninput: () => { step.url = u.value; } }); bodyDiv.appendChild(u);
+          bodyDiv.appendChild(el('label', {}, 'method'));
+          const m = el('select', { onchange: () => { step.method = m.value; } },
+            el('option', { value: 'POST' }, 'POST'),
+            el('option', { value: 'GET' }, 'GET'));
+          m.value = step.method || 'POST'; bodyDiv.appendChild(m);
+          bodyDiv.appendChild(el('label', {}, 'body (JSON、テンプレ OK)'));
+          const b = el('textarea', {
+            oninput: () => { try { step.body = JSON.parse(b.value); b.style.borderColor = ''; } catch { b.style.borderColor = '#dc2626'; } },
+          }, JSON.stringify(step.body || {}, null, 2));
+          bodyDiv.appendChild(b);
+          bodyDiv.appendChild(el('label', {}, 'timeout (ms)'));
+          const to = el('input', { type: 'number', value: String(step.timeout_ms ?? 8000), oninput: () => { step.timeout_ms = parseInt(to.value, 10) || 8000; } }); bodyDiv.appendChild(to);
+          bodyDiv.appendChild(el('label', {}, '成功時の next')); bodyDiv.appendChild(nextSelect('next'));
+          bodyDiv.appendChild(el('label', {}, 'エラー時の step (on_error)')); bodyDiv.appendChild(nextSelect('on_error'));
+          bodyDiv.appendChild(el('label', {}, 'エラー時メッセージ'));
+          const em = el('input', { value: step.error_message || '', oninput: () => { step.error_message = em.value || ''; } }); bodyDiv.appendChild(em);
+        }
+        if (step.type === 'handoff') {
+          bodyDiv.appendChild(el('label', {}, '引継ぎ時メッセージ (任意)'));
+          const t = el('textarea', { oninput: () => { step.note = t.value; } }, step.note || '');
+          bodyDiv.appendChild(t);
+        }
+        card.appendChild(bodyDiv);
+        return card;
+      }
+      function refreshHeadPreview() { renderSteps(); }
+
+      function refreshStartStepOptions() {
+        startS.innerHTML = '';
+        for (const s of model.steps) {
+          const opt = el('option', { value: s.id }, `${s.id} (${s.type})`);
+          startS.appendChild(opt);
+        }
+        startS.value = model.start_step_id || (model.steps[0]?.id || '');
+        model.start_step_id = startS.value;
+      }
+      startS.addEventListener('change', () => { model.start_step_id = startS.value; });
+
+      function validateAll() {
+        const errs = [];
+        const ids = new Set(model.steps.map((s) => s.id));
+        if (!model.name.trim()) errs.push('名前必須');
+        if (!model.start_step_id) errs.push('開始 step 必須');
+        else if (!ids.has(model.start_step_id)) errs.push('開始 step が存在しません');
+        if (model.trigger_value) { try { new RegExp(model.trigger_value); } catch { errs.push('trigger 正規表現が不正'); } }
+        for (const s of model.steps) {
+          if (s.next && !ids.has(s.next)) errs.push(`${s.id}.next=${s.next} が存在しません`);
+          if (s.on_error && !ids.has(s.on_error)) errs.push(`${s.id}.on_error=${s.on_error} が存在しません`);
+          if (s.type === 'input' && !s.var) errs.push(`${s.id}: var 必須`);
+          if (s.type === 'webhook' && !s.url) errs.push(`${s.id}: url 必須`);
+          if (s.type === 'select') {
+            for (const o of (s.options || [])) if (o.next && !ids.has(o.next)) errs.push(`${s.id}.options[${o.title}].next=${o.next} が存在しません`);
+          }
+          if (s.type === 'validate' || (s.type === 'input' && s.validate)) {
+            try { new RegExp(s.validate || ''); } catch { errs.push(`${s.id}: validate 正規表現が不正`); }
+          }
+        }
+        validation.textContent = errs.join(' / ');
+        validation.setAttribute('data-visible', errs.length ? '1' : '0');
+        return errs.length === 0;
+      }
+
+      function renderSteps() {
+        stepsHost.innerHTML = '';
+        if (model.jsonMode) {
+          const ta = el('textarea', {
+            style: 'min-height:360px;font-family:ui-monospace,monospace;font-size:12px;width:100%;',
+            oninput: () => {
+              try { model.steps = JSON.parse(ta.value); ta.style.borderColor = ''; } catch { ta.style.borderColor = '#dc2626'; }
+            },
+          }, JSON.stringify(model.steps, null, 2));
+          stepsHost.appendChild(ta);
+          toggleMode.textContent = 'ビジュアルモード';
+        } else {
+          const list = el('div', { class: 'slo-flow-steps' });
+          if (model.steps.length === 0) list.appendChild(el('div', { style: 'padding:20px;text-align:center;color:#9ca3af;font-size:13px;' }, 'ステップを追加してください'));
+          else model.steps.forEach((s, i) => list.appendChild(stepCard(s, i)));
+          stepsHost.appendChild(list);
+          toggleMode.textContent = 'JSON モード';
+        }
+        refreshStartStepOptions();
+        validateAll();
+      }
+
+      // --- Sync header inputs into model ---
+      nameI.addEventListener('input', () => { model.name = nameI.value; });
+      descI.addEventListener('input', () => { model.description = descI.value; });
+      triggerI.addEventListener('input', () => { model.trigger_value = triggerI.value; validateAll(); });
+      priI.addEventListener('input', () => { model.priority = parseInt(priI.value, 10) || 0; });
+      actS.addEventListener('change', () => { model.is_active = parseInt(actS.value, 10); });
+
+      // Actions
       actions.appendChild(el('button', { class: 'slo-adm-btn slo-adm-btn-secondary', onclick: closeModal }, 'キャンセル'));
       actions.appendChild(el('button', { class: 'slo-adm-btn', onclick: async () => {
-        let parsedSteps;
-        try { parsedSteps = JSON.parse(steps.value); }
-        catch (e) { (window.Sloten?.toast || alert)('steps JSON が不正です: ' + e.message, { type: 'error' }); return; }
+        if (!validateAll()) { (window.Sloten?.toast || alert)('フロー定義に不備があります', { type: 'error' }); return; }
         const body = {
-          name: n.value.trim(), description: d.value || null,
-          trigger_type: 'entry', trigger_value: tv.value || null,
-          start_step_id: ss.value.trim(),
-          steps: parsedSteps,
-          priority: parseInt(pri.value, 10) || 0,
-          is_active: act.value === '1' ? 1 : 0,
+          name: model.name.trim(), description: model.description || null,
+          trigger_type: 'entry', trigger_value: model.trigger_value || null,
+          start_step_id: model.start_step_id,
+          steps: model.steps,
+          priority: model.priority,
+          is_active: model.is_active,
         };
         try {
           if (row) await api('PATCH', `/api/bot-flows/${row.id}`, body);
@@ -203,6 +475,9 @@
           closeModal(); navigate('bot-flows');
         } catch (e) { (window.Sloten?.toast || alert)(e.message, { type: 'error' }); }
       } }, '保存'));
+
+      // Initial render
+      renderSteps();
     });
   }
   async function deleteFlow(id) {

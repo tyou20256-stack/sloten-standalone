@@ -220,3 +220,95 @@ body[data-view="forbidden"] .slo-adm-forbidden { display: flex; }
   word-break: break-all;
 }
 .slo-adm-password-box strong { display: block; margin-bottom: 6px; font-family: inherit; font-size: 12px; color: #78350f; }
+
+/* --- Flow step editor --- */
+.slo-flow-toolbar {
+  display: flex; gap: 8px; margin: 12px 0 8px; align-items: center; flex-wrap: wrap;
+}
+.slo-flow-toolbar select {
+  padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px;
+}
+.slo-flow-steps {
+  display: flex; flex-direction: column; gap: 8px;
+}
+.slo-flow-step {
+  border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; overflow: hidden;
+}
+.slo-flow-step-head {
+  display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+  background: #f9fafb; cursor: pointer; border-bottom: 1px solid #e5e7eb;
+}
+.slo-flow-step[data-open="0"] .slo-flow-step-head { border-bottom: none; }
+.slo-flow-step-type {
+  display: inline-block; font-size: 10px; padding: 2px 8px; border-radius: 10px;
+  font-weight: 600; text-transform: uppercase;
+}
+.slo-flow-step-type[data-t="message"] { background: #e0e7ff; color: #3730a3; }
+.slo-flow-step-type[data-t="input"]   { background: #dbeafe; color: #1e40af; }
+.slo-flow-step-type[data-t="select"]  { background: #dcfce7; color: #166534; }
+.slo-flow-step-type[data-t="webhook"] { background: #fef3c7; color: #92400e; }
+.slo-flow-step-type[data-t="handoff"] { background: #fee2e2; color: #991b1b; }
+.slo-flow-step-id {
+  font-family: ui-monospace, monospace; font-size: 13px; font-weight: 600;
+}
+.slo-flow-step-preview {
+  color: #6b7280; font-size: 12px; flex: 1;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.slo-flow-step-actions { display: flex; gap: 4px; margin-left: auto; }
+.slo-flow-step-actions button {
+  width: 28px; height: 26px; border: 1px solid #d1d5db; background: #fff;
+  border-radius: 4px; cursor: pointer; font-size: 12px; padding: 0;
+}
+.slo-flow-step-actions button.danger { color: #b91c1c; border-color: #fecaca; }
+.slo-flow-step-actions button:hover:not(:disabled) { background: #f3f4f6; }
+.slo-flow-step-actions button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.slo-flow-step-body {
+  padding: 12px; display: none;
+}
+.slo-flow-step[data-open="1"] .slo-flow-step-body { display: block; }
+.slo-flow-step-body label {
+  display: block; font-size: 11px; color: #6b7280; margin: 8px 0 4px;
+  text-transform: uppercase; letter-spacing: 0.03em; font-weight: 500;
+}
+.slo-flow-step-body label:first-child { margin-top: 0; }
+.slo-flow-step-body input, .slo-flow-step-body select, .slo-flow-step-body textarea {
+  width: 100%; padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 4px;
+  font: inherit; font-size: 13px; outline: none;
+}
+.slo-flow-step-body textarea { min-height: 60px; font-family: ui-monospace, monospace; font-size: 12px; }
+.slo-flow-step-body input:focus, .slo-flow-step-body select:focus, .slo-flow-step-body textarea:focus { border-color: #2563eb; }
+
+.slo-flow-options-table {
+  width: 100%; border-collapse: separate; border-spacing: 0;
+  border: 1px solid #e5e7eb; border-radius: 4px; overflow: hidden;
+}
+.slo-flow-options-table th, .slo-flow-options-table td {
+  padding: 4px 6px; font-size: 12px; border-bottom: 1px solid #f3f4f6;
+}
+.slo-flow-options-table th {
+  background: #f9fafb; color: #6b7280; font-weight: 500; text-align: left; font-size: 10px; text-transform: uppercase;
+}
+.slo-flow-options-table tr:last-child td { border-bottom: none; }
+.slo-flow-options-table input, .slo-flow-options-table select {
+  border: 1px solid #e5e7eb; padding: 3px 6px; font-size: 12px; border-radius: 3px;
+}
+.slo-flow-options-table button {
+  width: 22px; height: 20px; border: 1px solid #fecaca; background: #fff;
+  color: #b91c1c; border-radius: 3px; cursor: pointer; padding: 0; font-size: 11px;
+}
+
+.slo-flow-validation {
+  margin: 8px 0; padding: 8px 12px; border-radius: 6px;
+  background: #fee2e2; color: #991b1b; font-size: 12px;
+  display: none;
+}
+.slo-flow-validation[data-visible="1"] { display: block; }
+
+.slo-flow-mode-toggle {
+  margin-left: auto;
+  font-size: 11px; color: #6b7280;
+  background: transparent; border: 1px solid #d1d5db;
+  padding: 4px 8px; border-radius: 4px; cursor: pointer;
+}
