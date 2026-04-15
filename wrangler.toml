@@ -1,0 +1,56 @@
+name = "sloten-standalone"
+main = "src/index.mjs"
+compatibility_date = "2024-05-15"
+workers_dev = true
+
+[vars]
+ENVIRONMENT = "development"
+DEFAULT_TENANT_ID = "tenant_default"
+# AI_PROVIDER selects which secret to use at runtime:
+#   "gemini"    → uses GEMINI_API_KEY
+#   "anthropic" → uses ANTHROPIC_API_KEY
+# Override per environment.
+AI_PROVIDER = "gemini"
+
+# D1 — create with: wrangler d1 create sloten_standalone_db
+[[d1_databases]]
+binding = "DB"
+database_name = "sloten_standalone_db"
+database_id = "REPLACE_WITH_D1_ID"
+
+# KV — session cookies, rate limiter, jackpot cache
+[[kv_namespaces]]
+binding = "SESSION_KV"
+id = "REPLACE_WITH_SESSION_KV_ID"
+
+[[kv_namespaces]]
+binding = "RATE_LIMITER"
+id = "REPLACE_WITH_RATE_LIMITER_KV_ID"
+
+# Secrets (set via wrangler secret put):
+#   ADMIN_API_TOKEN        — admin bearer auth
+#   SESSION_SIGNING_KEY    — HMAC for session cookies (32+ bytes)
+#   GEMINI_API_KEY         — when AI_PROVIDER=gemini
+#   ANTHROPIC_API_KEY      — when AI_PROVIDER=anthropic
+
+# --- staging env ---
+[env.staging]
+name = "sloten-standalone-staging"
+
+[env.staging.vars]
+ENVIRONMENT = "staging"
+DEFAULT_TENANT_ID = "tenant_default"
+AI_PROVIDER = "gemini"
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "sloten_standalone_db_staging"
+database_id = "REPLACE_WITH_STAGING_D1_ID"
+
+[[env.staging.kv_namespaces]]
+binding = "SESSION_KV"
+id = "REPLACE_WITH_STAGING_SESSION_KV_ID"
+
+[[env.staging.kv_namespaces]]
+binding = "RATE_LIMITER"
+id = "REPLACE_WITH_STAGING_RATE_LIMITER_KV_ID"

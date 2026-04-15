@@ -1,0 +1,19 @@
+{
+  "name": "sloten-standalone",
+  "version": "0.1.0-phase1",
+  "private": true,
+  "type": "module",
+  "description": "Sloten AI Customer Support — Chatwoot-independent standalone.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "check": "node --check src/index.mjs",
+    "check:all": "node scripts/check-all.mjs",
+    "migrate:local": "node scripts/apply-migrations.mjs",
+    "migrate:remote": "node scripts/apply-migrations.mjs --remote",
+    "smoke": "node scripts/dev-smoke.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

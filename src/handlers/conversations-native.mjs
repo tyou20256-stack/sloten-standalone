@@ -1,0 +1,79 @@
+// Conversations — standalone (no Chatwoot).
+
+import { uuid } from '../id.mjs';
+import { ok, created, err, parseJson } from '../json.mjs';
+
+const VALID_STATUS = new Set(['bot', 'open', 'closed']);
+
+export async function createConversation(request, env, corsHeaders) {
+  const { body, response } = await parseJson(request, corsHeaders);
+  if (response) return response;
+  const tenantId = body.tenant_id || env.DEFAULT_TENANT_ID || 'tenant_default';
+  const contactId = body.contact_id;
+  if (!contactId) return err('contact_id required', 400, corsHeaders);
+
+  const contact = await env.DB.prepare('SELECT id FROM contacts WHERE id = ? AND tenant_id = ?')
+    .bind(contactId, tenantId).first();
+  if (!contact) return err('Contact not found', 404, corsHeaders);
+
+  const id = uuid();
+  const metadata = body.metadata ? JSON.stringify(body.metadata) : null;
+  try {
+    await env.DB.prepare(
+      `INSERT INTO conversations (id, tenant_id, contact_id, status, metadata)
+       VALUES (?, ?, ?, 'bot', ?)`
+    ).bind(id, tenantId, contactId, metadata).run();
+    const row = await env.DB.prepare('SELECT * FROM conversations WHERE id = ?').bind(id).first();
+    return created({ success: true, conversation: row }, corsHeaders);
+  } catch (e) {
+    console.error('createConversation:', e.message);
+    return err('Internal error', 500, corsHeaders);
+  }
+}
+
+export async function listConversations(request, env, corsHeaders) {
+  const url = new URL(request.url);
+  const tenantId = url.searchParams.get('tenant_id') || env.DEFAULT_TENANT_ID || 'tenant_default';
+  const status = url.searchParams.get('status');
+  const limit = Math.min(parseInt(url.searchParams.get('limit') || '50', 10), 200);
+  let q = 'SELECT * FROM conversations WHERE tenant_id = ?';
+  const vals = [tenantId];
+  if (status && VALID_STATUS.has(status)) { q += ' AND status = ?'; vals.push(status); }
+  q += ' ORDER BY COALESCE(last_message_at, created_at) DESC LIMIT ?';
+  vals.push(limit);
+  const { results } = await env.DB.prepare(q).bind(...vals).all();
+  return ok({ success: true, conversations: results || [] }, corsHeaders);
+}
+
+export async function getConversation(request, env, corsHeaders, id) {
+  const row = await env.DB.prepare('SELECT * FROM conversations WHERE id = ?').bind(id).first();
+  if (!row) return err('Conversation not found', 404, corsHeaders);
+  const contact = await env.DB.prepare('SELECT * FROM contacts WHERE id = ?').bind(row.contact_id).first();
+  return ok({ success: true, conversation: row, contact }, corsHeaders);
+}
+
+export async function updateConversation(request, env, corsHeaders, id) {
+  const { body, response } = await parseJson(request, corsHeaders);
+  if (response) return response;
+  const existing = await env.DB.prepare('SELECT * FROM conversations WHERE id = ?').bind(id).first();
+  if (!existing) return err('Conversation not found', 404, corsHeaders);
+
+  const updates = [];
+  const vals = [];
+  if (body.status !== undefined) {
+    if (!VALID_STATUS.has(body.status)) return err('Invalid status', 400, corsHeaders);
+    updates.push('status = ?');
+    vals.push(body.status);
+    if (body.status === 'closed') updates.push(`closed_at = datetime('now')`);
+  }
+  if (body.assignee_id !== undefined) {
+    updates.push('assignee_id = ?');
+    vals.push(body.assignee_id || null);
+  }
+  if (updates.length === 0) return err('No updatable fields', 400, corsHeaders);
+  updates.push(`updated_at = datetime('now')`);
+  vals.push(id);
+  await env.DB.prepare(`UPDATE conversations SET ${updates.join(', ')} WHERE id = ?`).bind(...vals).run();
+  const row = await env.DB.prepare('SELECT * FROM conversations WHERE id = ?').bind(id).first();
+  return ok({ success: true, conversation: row }, corsHeaders);
+}
