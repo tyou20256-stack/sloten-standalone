@@ -105,9 +105,110 @@
     if (state.section === 'staff') return renderStaff(content);
     if (state.section === 'ai-logs') return renderAiLogs(content);
     if (state.section === 'bot-menus') return renderBotMenus(content);
+    if (state.section === 'bot-flows') return renderBotFlows(content);
     if (state.section === 'prompts') return renderPrompts(content);
     if (state.section === 'teams') return renderTeams(content);
     if (state.section === 'export') return renderExport(content);
+  }
+
+  // --- Bot flows ---
+  async function renderBotFlows(root) {
+    root.appendChild(el('h2', {}, 'ボットフロー'));
+    root.appendChild(el('p', { style: 'color:#6b7280;margin:0 0 16px;' },
+      '多段階対話ワークフロー。顧客メッセージが trigger_value (正規表現) にマッチしたときに開始され、各 step を順に実行します。webhook ステップで GAS 等へ POST して外部連携できます。'));
+    root.appendChild(el('div', { class: 'slo-adm-sect-toolbar' },
+      el('button', { class: 'slo-adm-btn', onclick: () => flowModal() }, '+ 新規')));
+    const listDiv = el('div');
+    root.appendChild(listDiv);
+    try {
+      const r = await api('GET', '/api/bot-flows');
+      state.data.flows = r.flows || [];
+      renderFlowsTable(listDiv);
+    } catch (e) { listDiv.innerHTML = '<div class="slo-adm-empty">エラー: ' + esc(e.message) + '</div>'; }
+  }
+  function renderFlowsTable(root) {
+    root.innerHTML = '';
+    const rows = state.data.flows || [];
+    if (rows.length === 0) { root.appendChild(el('div', { class: 'slo-adm-empty' }, 'フローはありません')); return; }
+    const table = el('table', { class: 'slo-adm-table' });
+    table.appendChild(el('thead', {}, el('tr', {},
+      el('th', { style: 'width:22%' }, '名前'),
+      el('th', {}, '説明 / trigger'),
+      el('th', { style: 'width:80px' }, '開始'),
+      el('th', { style: 'width:80px' }, 'steps'),
+      el('th', { style: 'width:70px' }, '優先度'),
+      el('th', { style: 'width:70px' }, '有効'),
+      el('th', { style: 'width:140px' }, ''))));
+    const tbody = el('tbody');
+    for (const r of rows) {
+      tbody.appendChild(el('tr', {},
+        el('td', {}, r.name),
+        el('td', {},
+          el('div', {}, r.description || '—'),
+          el('div', { style: 'font-family:ui-monospace,monospace;font-size:11px;color:#6b7280;margin-top:2px;' }, r.trigger_value || '(manual)')),
+        el('td', {}, r.start_step_id),
+        el('td', {}, String((r.steps || []).length)),
+        el('td', {}, String(r.priority)),
+        el('td', {}, el('span', { class: 'slo-adm-badge', 'data-active': String(r.is_active ?? 0) }, r.is_active ? '有効' : '無効')),
+        el('td', {}, el('div', { class: 'slo-adm-row-actions' },
+          el('button', { onclick: () => flowModal(r) }, '編集'),
+          el('button', { class: 'danger', onclick: () => deleteFlow(r.id) }, '削除')))
+      ));
+    }
+    table.appendChild(tbody);
+    root.appendChild(table);
+  }
+  function flowModal(row) {
+    openModal(row ? 'フロー編集' : 'フロー新規', (form, actions) => {
+      form.appendChild(el('label', {}, '名前'));
+      const n = el('input', { value: row?.name || '' }); form.appendChild(n);
+      form.appendChild(el('label', {}, '説明'));
+      const d = el('input', { value: row?.description || '' }); form.appendChild(d);
+      form.appendChild(el('label', {}, 'trigger (JS 正規表現)'));
+      const tv = el('input', { value: row?.trigger_value || '', placeholder: '^(入金|deposit)' }); form.appendChild(tv);
+      form.appendChild(el('label', {}, '開始 step id'));
+      const ss = el('input', { value: row?.start_step_id || '' }); form.appendChild(ss);
+      form.appendChild(el('label', {}, 'steps (JSON 配列)'));
+      form.appendChild(el('div', { style: 'font-size:11px;color:#6b7280;margin-bottom:4px;' },
+        'step types: message / input / select / webhook / handoff。テンプレート構文: {{vars.X}}, {{contact.name}}'));
+      const steps = el('textarea', {
+        style: 'min-height:360px;font-family:ui-monospace,monospace;font-size:12px;',
+      }, JSON.stringify(row?.steps || [], null, 2));
+      form.appendChild(steps);
+      form.appendChild(el('label', {}, '優先度 (大きい順にチェック)'));
+      const pri = el('input', { type: 'number', value: String(row?.priority ?? 0) }); form.appendChild(pri);
+      form.appendChild(el('label', {}, '有効'));
+      const act = el('select', {},
+        el('option', { value: '1' }, '有効'),
+        el('option', { value: '0' }, '無効'));
+      act.value = (row?.is_active ?? 1) ? '1' : '0';
+      form.appendChild(act);
+
+      actions.appendChild(el('button', { class: 'slo-adm-btn slo-adm-btn-secondary', onclick: closeModal }, 'キャンセル'));
+      actions.appendChild(el('button', { class: 'slo-adm-btn', onclick: async () => {
+        let parsedSteps;
+        try { parsedSteps = JSON.parse(steps.value); }
+        catch (e) { (window.Sloten?.toast || alert)('steps JSON が不正です: ' + e.message, { type: 'error' }); return; }
+        const body = {
+          name: n.value.trim(), description: d.value || null,
+          trigger_type: 'entry', trigger_value: tv.value || null,
+          start_step_id: ss.value.trim(),
+          steps: parsedSteps,
+          priority: parseInt(pri.value, 10) || 0,
+          is_active: act.value === '1' ? 1 : 0,
+        };
+        try {
+          if (row) await api('PATCH', `/api/bot-flows/${row.id}`, body);
+          else     await api('POST', '/api/bot-flows', body);
+          closeModal(); navigate('bot-flows');
+        } catch (e) { (window.Sloten?.toast || alert)(e.message, { type: 'error' }); }
+      } }, '保存'));
+    });
+  }
+  async function deleteFlow(id) {
+    if (!(await confirmDialog('このフローを削除しますか？'))) return;
+    try { await api('DELETE', `/api/bot-flows/${id}`); navigate('bot-flows'); }
+    catch (e) { (window.Sloten?.toast || alert)(e.message, { type: 'error' }); }
   }
 
   // --- Bot menus ---

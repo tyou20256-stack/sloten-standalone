@@ -7,6 +7,7 @@ import { ok, created, err, parseJson } from '../json.mjs';
 import { generateBotReply } from '../ai-chat-adapter.mjs';
 import { broadcastToConversation } from '../broadcast.mjs';
 import { checkRateLimit, rateLimitResponse } from '../rate-limiter.mjs';
+import { runFlowForCustomerMessage } from './bot-flows.mjs';
 
 const VALID_SENDER = new Set(['customer', 'bot', 'staff', 'system']);
 const VALID_CONTENT_TYPE = new Set(['text', 'input_select', 'file', 'system_event']);
@@ -86,34 +87,60 @@ export async function sendMessage(request, env, corsHeaders, conversationId, opt
       isPrivate: forcePrivate,
     });
 
-    // Auto bot reply: customer message on bot-handled conversation
+    // Auto bot reply: customer message on bot-handled conversation.
+    // Priority:
+    //   1. Active multi-step flow (or a new flow triggered by the message)
+    //   2. Static keyword menu (in ai-chat-adapter)
+    //   3. LLM reply
     let botReply = null;
+    const botReplies = [];
     if (senderType === 'customer' && conv.status === 'bot') {
       try {
-        const reply = await generateBotReply(env, {
-          conversationId,
-          tenantId: conv.tenant_id,
-          customerMessage: content,
-          ctx,
-        });
-        if (reply && reply.content) {
-          botReply = await insertMessage(env, {
+        // Reload conv with flow_state column after our UPDATE above.
+        const fresh = await env.DB.prepare('SELECT * FROM conversations WHERE id = ?').bind(conversationId).first();
+        const contact = fresh?.contact_id ? await env.DB.prepare('SELECT * FROM contacts WHERE id = ?').bind(fresh.contact_id).first() : null;
+        const flowResult = await runFlowForCustomerMessage(env, fresh, contact, content, ctx);
+        if (flowResult.messages && flowResult.messages.length) {
+          for (const m of flowResult.messages) {
+            const botMsg = await insertMessage(env, {
+              conversationId,
+              tenantId: conv.tenant_id,
+              senderType: 'bot', senderId: null,
+              content: m.content,
+              contentType: m.content_type || 'text',
+              contentAttributes: m.content_attributes || null,
+              isPrivate: false,
+            });
+            botReplies.push(botMsg);
+          }
+          botReply = botReplies[botReplies.length - 1] || null;
+        } else {
+          // No flow active — fall back to AI chat.
+          const reply = await generateBotReply(env, {
             conversationId,
             tenantId: conv.tenant_id,
-            senderType: 'bot',
-            senderId: null,
-            content: reply.content,
-            contentType: reply.content_type || 'text',
-            contentAttributes: reply.content_attributes,
-            isPrivate: false,
+            customerMessage: content,
+            ctx,
           });
+          if (reply && reply.content) {
+            botReply = await insertMessage(env, {
+              conversationId,
+              tenantId: conv.tenant_id,
+              senderType: 'bot', senderId: null,
+              content: reply.content,
+              contentType: reply.content_type || 'text',
+              contentAttributes: reply.content_attributes,
+              isPrivate: false,
+            });
+            botReplies.push(botReply);
+          }
         }
       } catch (e) {
         console.warn('[sendMessage] bot reply failed:', e.message, e.stack);
       }
     }
 
-    return created({ success: true, message: msg, bot_reply: botReply }, corsHeaders);
+    return created({ success: true, message: msg, bot_reply: botReply, bot_replies: botReplies }, corsHeaders);
   } catch (e) {
     console.error('sendMessage:', e.message);
     return err('Internal error', 500, corsHeaders);

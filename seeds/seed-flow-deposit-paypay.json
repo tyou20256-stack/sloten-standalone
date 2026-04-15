@@ -1,0 +1,20 @@
+{
+  "name": "deposit-paypay",
+  "description": "PayPay deposit flow (GAS integration demo)",
+  "trigger_type": "entry",
+  "trigger_value": "^(deposit|入金|PayPay)",
+  "start_step_id": "ask_method",
+  "priority": 100,
+  "is_active": 1,
+  "steps": [
+    {"id":"ask_method","type":"select","prompt":"入金方法をお選びください","var":"method","options":[{"title":"PayPay","value":"paypay","next":"ask_account_id"},{"title":"銀行振込","value":"bank","next":"ask_bank_name"}]},
+    {"id":"ask_account_id","type":"input","prompt":"PayPayのアカウントID(電話番号)をご入力ください","var":"account_id","validate":"^[0-9]{10,11}$","validate_error":"10-11桁の数字でご入力ください","next":"ask_amount"},
+    {"id":"ask_amount","type":"input","prompt":"入金希望額を半角数字で入力してください","var":"amount","validate":"^[0-9]{3,7}$","validate_error":"3-7桁の半角数字でご入力ください","next":"request_dest"},
+    {"id":"request_dest","type":"webhook","url":"https://httpbin.org/anything","method":"POST","body":{"action":"request_deposit_destination","method":"{{vars.method}}","account_id":"{{vars.account_id}}","amount":"{{vars.amount}}"},"on_error":"error_handoff","error_message":"入金先情報の取得に失敗しました","next":"ask_proof"},
+    {"id":"ask_proof","type":"input","prompt":"入金が完了しましたら、取引番号または振込名義を送信してください","var":"proof","next":"submit_proof"},
+    {"id":"submit_proof","type":"webhook","url":"https://httpbin.org/anything","method":"POST","body":{"action":"record_deposit","method":"{{vars.method}}","account_id":"{{vars.account_id}}","amount":"{{vars.amount}}","proof":"{{vars.proof}}"},"on_error":"error_handoff","error_message":"確認登録に失敗しました","next":"complete"},
+    {"id":"complete","type":"message","content":"入金確認を受け付けました。反映までしばらくお待ちください。"},
+    {"id":"ask_bank_name","type":"input","prompt":"振込名義(カナ)を入力してください","var":"bank_name","next":"ask_amount"},
+    {"id":"error_handoff","type":"handoff","note":"フロー失敗のため引き継ぎます"}
+  ]
+}

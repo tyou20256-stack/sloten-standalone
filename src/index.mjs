@@ -38,6 +38,7 @@ import {
 import { handleScheduled } from './scheduled.mjs';
 import { verifyContactToken, extractContactToken } from './auth/contact-token.mjs';
 import { listBotMenus, createBotMenu, updateBotMenu, deleteBotMenu } from './handlers/bot-menus.mjs';
+import { listBotFlows, createBotFlow, updateBotFlow, deleteBotFlow } from './handlers/bot-flows.mjs';
 import {
   sendMessage, listMessages,
 } from './handlers/messages-native.mjs';
@@ -308,6 +309,15 @@ export default {
       {
         const m = path.match(/^\/api\/teams\/(\d+)\/members\/(\d+)$/);
         if (m && method === 'DELETE') return requireAdminRole(removeTeamMember)(request, env, corsHeaders, parseInt(m[1], 10), parseInt(m[2], 10));
+      }
+
+      // Bot flows (multi-step workflows; admin-role writes)
+      if (path === '/api/bot-flows' && method === 'GET') return requireStaff(listBotFlows)(request, env, corsHeaders);
+      if (path === '/api/bot-flows' && method === 'POST') return requireAdminRole(createBotFlow)(request, env, corsHeaders);
+      {
+        const m = path.match(/^\/api\/bot-flows\/(\d+)$/);
+        if (m && method === 'PATCH')  return requireAdminRole(updateBotFlow)(request, env, corsHeaders, parseInt(m[1], 10));
+        if (m && method === 'DELETE') return requireAdminRole(deleteBotFlow)(request, env, corsHeaders, parseInt(m[1], 10));
       }
 
       // Bot menus (admin-role)
