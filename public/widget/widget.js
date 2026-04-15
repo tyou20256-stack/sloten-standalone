@@ -162,10 +162,10 @@
         el('div', { class: 'sloten-chat-welcome-title' }, cfg.welcomeTitle),
         el('div', { class: 'sloten-chat-welcome-body' }, cfg.welcomeBody),
       ),
-      el('button', {
+      dom.menuBtn = el('button', {
         class: 'sloten-chat-menu-btn', type: 'button',
         'aria-label': 'メニューを表示',
-        onclick: onMenuClick,
+        onclick: (ev) => { ev.preventDefault(); ev.stopPropagation(); onMenuClick(); },
       }, cfg.menuButtonLabel),
     );
     dom.dreampot = el('div', {
@@ -419,31 +419,38 @@
   }
 
   // --- Menu button ---
+  // Dedicated in-flight guard so it is NOT blocked by the unrelated `sending`
+  // state used for text/attachment sends. Always renders bot_replies from the
+  // HTTP response so the new menu appears even when the WS channel is mid-
+  // reconnect. dedupe in renderMessage handles any duplicates from WS.
+  let menuClickInFlight = false;
   async function onMenuClick() {
-    if (sending) return;
-    const btn = document.querySelector('.sloten-chat-menu-btn');
-    if (btn) btn.disabled = true;
-    sending = true;
+    if (menuClickInFlight) return;
+    menuClickInFlight = true;
+    if (dom.menuBtn) dom.menuBtn.disabled = true;
     setTyping(true);
     try {
       await ensureConversation();
-      // reset_flow:true clears any active flow_state server-side so the main
-      // menu is displayed again even mid-flow.
-      await api('POST', `/api/widget/conversations/${state.conversationId}/messages`, {
+      const r = await api('POST', `/api/widget/conversations/${state.conversationId}/messages`, {
         sender_type: 'customer',
         content: cfg.menuButtonLabel,
         reset_flow: true,
       });
+      if (r && Array.isArray(r.bot_replies)) {
+        for (const m of r.bot_replies) renderMessage(m);
+      } else if (r && r.bot_reply) {
+        renderMessage(r.bot_reply);
+      }
     } catch (e) {
       renderMessage({
         id: 'err-' + Date.now(), sender_type: 'system',
-        content: 'メニュー表示に失敗しました: ' + e.message,
+        content: 'メニュー表示に失敗しました: ' + (e && e.message ? e.message : e),
         created_at: new Date().toISOString(),
       });
     } finally {
-      sending = false;
+      menuClickInFlight = false;
       setTyping(false);
-      if (btn) btn.disabled = false;
+      if (dom.menuBtn) dom.menuBtn.disabled = false;
     }
   }
 
