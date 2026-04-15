@@ -12,7 +12,8 @@
 // Example:
 //   node scripts/dev-smoke-ws.mjs http://127.0.0.1:8787
 
-import { WebSocket } from 'undici';
+// Node 22+ exposes WebSocket globally; fall back to undici if not.
+const WS = globalThis.WebSocket || (await import('undici')).WebSocket;
 
 const BASE = process.argv[2] || 'http://127.0.0.1:8787';
 const WS_BASE = BASE.replace(/^http/, 'ws');
@@ -63,7 +64,7 @@ async function main() {
   assert(cv.status === 201, 'conversation created');
   const convId = cv.data.conversation.id;
 
-  const ws = new WebSocket(`${WS_BASE}/ws/widget/conversations/${convId}`);
+  const ws = new WS(`${WS_BASE}/ws/widget/conversations/${convId}`);
   await new Promise((resolve, reject) => {
     ws.addEventListener('open', resolve, { once: true });
     ws.addEventListener('error', (e) => reject(new Error(`ws error: ${e.message || e}`)), { once: true });

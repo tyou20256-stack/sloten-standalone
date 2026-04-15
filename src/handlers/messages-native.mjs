@@ -66,12 +66,14 @@ export async function sendMessage(request, env, corsHeaders, conversationId) {
     // Auto bot reply: customer message on bot-handled conversation
     let botReply = null;
     if (senderType === 'customer' && conv.status === 'bot') {
+      console.log('[sendMessage] invoking bot reply, provider=', env.AI_PROVIDER, 'hasKey=', !!env.GEMINI_API_KEY);
       try {
         const reply = await generateBotReply(env, {
           conversationId,
           tenantId: conv.tenant_id,
           customerMessage: content,
         });
+        console.log('[sendMessage] bot reply returned, len=', (reply?.content || '').length);
         if (reply && reply.content) {
           botReply = await insertMessage(env, {
             conversationId,
@@ -85,7 +87,7 @@ export async function sendMessage(request, env, corsHeaders, conversationId) {
           });
         }
       } catch (e) {
-        console.warn('[sendMessage] bot reply failed:', e.message);
+        console.warn('[sendMessage] bot reply failed:', e.message, e.stack);
       }
     }
 
