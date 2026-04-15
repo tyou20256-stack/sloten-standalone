@@ -6,6 +6,7 @@
 
 import { recordAiCall } from './handlers/ai-logs.mjs';
 import { pickActivePrompt } from './handlers/ai-prompts.mjs';
+import { findKeywordMenu, findFallbackMenu, menuToMessagePayload } from './handlers/bot-menus.mjs';
 import { maskPII } from './pii-masker.mjs';
 
 const MAX_CONTEXT_FAQ = 8;
@@ -86,6 +87,17 @@ async function callAnthropic(apiKey, system, userMessage, model = 'claude-haiku-
 }
 
 export async function generateBotReply(env, { conversationId, tenantId, customerMessage, ctx }) {
+  // 1) Keyword menu short-circuit — if the user's message matches a configured
+  //    regex, skip the LLM entirely and return a menu instead. Much faster and
+  //    zero AI cost for well-known intents.
+  try {
+    const kwMenu = await findKeywordMenu(env, tenantId, customerMessage);
+    if (kwMenu) {
+      const payload = menuToMessagePayload(kwMenu);
+      if (payload) return payload;
+    }
+  } catch (_) { /* fall through to LLM */ }
+
   const provider = (env.AI_PROVIDER || 'gemini').toLowerCase();
   const model = provider === 'anthropic'
     ? (env.ANTHROPIC_MODEL || 'claude-haiku-4-5')
@@ -144,6 +156,12 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
 
   if (status === 'error') throw new Error(errorMessage);
   if (!text) {
+    // 2) Empty AI response — try fallback menu, otherwise plain handoff text.
+    try {
+      const fb = await findFallbackMenu(env, tenantId);
+      const payload = menuToMessagePayload(fb);
+      if (payload) return payload;
+    } catch (_) {}
     return { content: 'ただいま担当者におつなぎします。少々お待ちください。', content_type: 'text' };
   }
   return { content: text, content_type: 'text' };

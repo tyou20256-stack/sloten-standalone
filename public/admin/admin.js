@@ -104,9 +104,128 @@
     if (state.section === 'labels') return renderLabels(content);
     if (state.section === 'staff') return renderStaff(content);
     if (state.section === 'ai-logs') return renderAiLogs(content);
+    if (state.section === 'bot-menus') return renderBotMenus(content);
     if (state.section === 'prompts') return renderPrompts(content);
     if (state.section === 'teams') return renderTeams(content);
     if (state.section === 'export') return renderExport(content);
+  }
+
+  // --- Bot menus ---
+  async function renderBotMenus(root) {
+    root.appendChild(el('h2', {}, 'ボットメニュー'));
+    root.appendChild(el('p', { style: 'color:#6b7280;margin:0 0 16px;' },
+      '顧客チャットに表示するボタン付きメニュー。default=会話開始時に自動表示 / keyword=顧客メッセージの正規表現マッチ / fallback=AI が応答できない時。'));
+    const tb = el('div', { class: 'slo-adm-sect-toolbar' },
+      el('button', { class: 'slo-adm-btn', onclick: () => botMenuModal() }, '+ 新規'));
+    root.appendChild(tb);
+    const listDiv = el('div');
+    root.appendChild(listDiv);
+    try {
+      const r = await api('GET', '/api/bot-menus');
+      state.data.botMenus = r.menus || [];
+      renderBotMenusTable(listDiv);
+    } catch (e) { listDiv.innerHTML = '<div class="slo-adm-empty">エラー: ' + esc(e.message) + '</div>'; }
+  }
+  function renderBotMenusTable(root) {
+    root.innerHTML = '';
+    const rows = state.data.botMenus || [];
+    if (rows.length === 0) { root.appendChild(el('div', { class: 'slo-adm-empty' }, 'メニューはありません')); return; }
+    const table = el('table', { class: 'slo-adm-table' });
+    table.appendChild(el('thead', {}, el('tr', {},
+      el('th', { style: 'width:20%' }, '名前'),
+      el('th', { style: 'width:90px' }, '種別'),
+      el('th', { style: 'width:30%' }, 'トリガー (regex)'),
+      el('th', {}, '項目数 / プロンプト'),
+      el('th', { style: 'width:70px' }, 'priority'),
+      el('th', { style: 'width:70px' }, '有効'),
+      el('th', { style: 'width:140px' }, ''))));
+    const tbody = el('tbody');
+    for (const r of rows) {
+      tbody.appendChild(el('tr', {},
+        el('td', {}, r.name),
+        el('td', {}, el('span', { class: 'slo-adm-badge', 'data-role': r.trigger_type === 'default' ? 'admin' : r.trigger_type === 'keyword' ? 'agent' : 'viewer' }, r.trigger_type)),
+        el('td', { style: 'font-family:ui-monospace,monospace;font-size:11px;' }, r.trigger_value || '—'),
+        el('td', {}, `${r.items?.length || 0} 項目 · ${(r.prompt || '').slice(0, 40)}`),
+        el('td', {}, String(r.priority)),
+        el('td', {}, el('span', { class: 'slo-adm-badge', 'data-active': String(r.is_active ?? 0) }, r.is_active ? '有効' : '無効')),
+        el('td', {}, el('div', { class: 'slo-adm-row-actions' },
+          el('button', { onclick: () => botMenuModal(r) }, '編集'),
+          el('button', { class: 'danger', onclick: () => deleteBotMenu(r.id) }, '削除')))
+      ));
+    }
+    table.appendChild(tbody);
+    root.appendChild(table);
+  }
+  function botMenuModal(row) {
+    openModal(row ? 'ボットメニュー編集' : 'ボットメニュー新規', (form, actions) => {
+      form.appendChild(el('label', {}, '名前'));
+      const n = el('input', { value: row?.name || '' }); form.appendChild(n);
+      form.appendChild(el('label', {}, '種別'));
+      const t = el('select', {},
+        el('option', { value: 'default' }, 'default (会話開始時に自動表示)'),
+        el('option', { value: 'keyword' }, 'keyword (顧客メッセージにマッチ)'),
+        el('option', { value: 'fallback' }, 'fallback (AI 応答不能時)'));
+      t.value = row?.trigger_type || 'keyword';
+      form.appendChild(t);
+      const trigWrap = el('div', {});
+      trigWrap.appendChild(el('label', {}, 'トリガー正規表現 (keyword 時のみ)'));
+      const tv = el('input', { value: row?.trigger_value || '', placeholder: '例: ^入金$|^deposit$' });
+      trigWrap.appendChild(tv);
+      form.appendChild(trigWrap);
+      function refreshTriggerVisibility() { trigWrap.style.display = t.value === 'keyword' ? '' : 'none'; }
+      t.addEventListener('change', refreshTriggerVisibility);
+      refreshTriggerVisibility();
+
+      form.appendChild(el('label', {}, 'プロンプト (ボタンの上に表示するテキスト)'));
+      const p = el('input', { value: row?.prompt || 'ご用件をお選びください。' }); form.appendChild(p);
+
+      form.appendChild(el('label', {}, '項目 (title と value)'));
+      const itemsWrap = el('div', { style: 'display:flex;flex-direction:column;gap:4px;' });
+      const rowsDiv = el('div', { style: 'display:flex;flex-direction:column;gap:4px;' });
+      function makeRow(title, value) {
+        const tInp = el('input', { placeholder: 'title (表示名)', value: title || '', style: 'flex:2' });
+        const vInp = el('input', { placeholder: 'value (送信値)', value: value || '', style: 'flex:2' });
+        const del = el('button', { type: 'button', style: 'width:30px;border:1px solid #fecaca;background:#fff;color:#b91c1c;border-radius:4px;', onclick: () => line.remove() }, '×');
+        const line = el('div', { style: 'display:flex;gap:4px;' }, tInp, vInp, del);
+        line.__get = () => ({ title: tInp.value, value: vInp.value || tInp.value });
+        return line;
+      }
+      const seedItems = row?.items?.length ? row.items : [{ title: '', value: '' }];
+      for (const it of seedItems) rowsDiv.appendChild(makeRow(it.title, it.value));
+      itemsWrap.appendChild(rowsDiv);
+      itemsWrap.appendChild(el('button', { type: 'button', class: 'slo-adm-btn slo-adm-btn-secondary', style: 'align-self:flex-start;margin-top:4px;', onclick: () => rowsDiv.appendChild(makeRow()) }, '+ 項目追加'));
+      form.appendChild(itemsWrap);
+
+      form.appendChild(el('label', {}, '優先度 (大きい順にチェック)'));
+      const pri = el('input', { type: 'number', value: String(row?.priority ?? 0) }); form.appendChild(pri);
+      form.appendChild(el('label', {}, '有効'));
+      const act = el('select', {},
+        el('option', { value: '1' }, '有効'),
+        el('option', { value: '0' }, '無効'));
+      act.value = (row?.is_active ?? 1) ? '1' : '0';
+      form.appendChild(act);
+
+      actions.appendChild(el('button', { class: 'slo-adm-btn slo-adm-btn-secondary', onclick: closeModal }, 'キャンセル'));
+      actions.appendChild(el('button', { class: 'slo-adm-btn', onclick: async () => {
+        const items = [...rowsDiv.querySelectorAll(':scope > div')].map((d) => d.__get()).filter((it) => it.title.trim());
+        const body = {
+          name: n.value.trim(), trigger_type: t.value,
+          trigger_value: t.value === 'keyword' ? tv.value : null,
+          prompt: p.value, items,
+          priority: parseInt(pri.value, 10) || 0, is_active: act.value === '1' ? 1 : 0,
+        };
+        try {
+          if (row) await api('PATCH', `/api/bot-menus/${row.id}`, body);
+          else     await api('POST', '/api/bot-menus', body);
+          closeModal(); navigate('bot-menus');
+        } catch (e) { (window.Sloten?.toast || alert)(e.message, { type: 'error' }); }
+      } }, '保存'));
+    });
+  }
+  async function deleteBotMenu(id) {
+    if (!(await confirmDialog('このメニューを削除しますか？'))) return;
+    try { await api('DELETE', `/api/bot-menus/${id}`); navigate('bot-menus'); }
+    catch (e) { (window.Sloten?.toast || alert)(e.message, { type: 'error' }); }
   }
 
   // --- Prompts (A/B) ---

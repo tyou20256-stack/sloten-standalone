@@ -202,10 +202,15 @@
         if (items.length) {
           const group = el('div', { class: 'sloten-chat-selects' });
           for (const it of items) {
+            // Display the human-readable title, but send the machine-friendly
+            // value (if provided) so keyword regex rules can match predictably.
+            const displayText = it.title || it.value || '';
+            const sendValue = it.value || it.title || '';
             const btn = el('button', {
               class: 'sloten-chat-select-btn',
-              onclick: () => sendText(it.title || it.value),
-            }, it.title || it.value);
+              type: 'button',
+              onclick: () => sendText(sendValue),
+            }, displayText);
             group.appendChild(btn);
           }
           bubble.appendChild(group);

@@ -37,6 +37,7 @@ import {
 } from './handlers/ai-prompts.mjs';
 import { handleScheduled } from './scheduled.mjs';
 import { verifyContactToken, extractContactToken } from './auth/contact-token.mjs';
+import { listBotMenus, createBotMenu, updateBotMenu, deleteBotMenu } from './handlers/bot-menus.mjs';
 import {
   sendMessage, listMessages,
 } from './handlers/messages-native.mjs';
@@ -307,6 +308,15 @@ export default {
       {
         const m = path.match(/^\/api\/teams\/(\d+)\/members\/(\d+)$/);
         if (m && method === 'DELETE') return requireAdminRole(removeTeamMember)(request, env, corsHeaders, parseInt(m[1], 10), parseInt(m[2], 10));
+      }
+
+      // Bot menus (admin-role)
+      if (path === '/api/bot-menus' && method === 'GET') return requireStaff(listBotMenus)(request, env, corsHeaders);
+      if (path === '/api/bot-menus' && method === 'POST') return requireAdminRole(createBotMenu)(request, env, corsHeaders);
+      {
+        const m = path.match(/^\/api\/bot-menus\/(\d+)$/);
+        if (m && method === 'PATCH')  return requireAdminRole(updateBotMenu)(request, env, corsHeaders, parseInt(m[1], 10));
+        if (m && method === 'DELETE') return requireAdminRole(deleteBotMenu)(request, env, corsHeaders, parseInt(m[1], 10));
       }
 
       // AI prompts (admin-role)

@@ -4,6 +4,7 @@ import { uuid } from '../id.mjs';
 import { ok, created, err, parseJson } from '../json.mjs';
 import { broadcastToConversation } from '../broadcast.mjs';
 import { resolveTenantId } from '../tenant-scope.mjs';
+import { findDefaultMenu, menuToMessagePayload } from './bot-menus.mjs';
 
 const VALID_STATUS = new Set(['bot', 'open', 'closed']);
 const VALID_PRIORITY = new Set(['low', 'normal', 'high', 'urgent']);
@@ -38,7 +39,32 @@ export async function createConversation(request, env, corsHeaders) {
        VALUES (?, ?, ?, 'bot', ?)`
     ).bind(id, tenantId, contactId, metadata).run();
     const row = await env.DB.prepare('SELECT * FROM conversations WHERE id = ?').bind(id).first();
-    return created({ success: true, conversation: row }, corsHeaders);
+
+    // Auto-send welcome/default menu as the first bot message (best-effort).
+    try {
+      const menu = await findDefaultMenu(env, tenantId);
+      const payload = menuToMessagePayload(menu);
+      if (payload) {
+        const msgId = uuid();
+        await env.DB.prepare(
+          `INSERT INTO messages (id, conversation_id, tenant_id, sender_type, content, content_type, content_attributes)
+           VALUES (?, ?, ?, 'bot', ?, ?, ?)`
+        ).bind(
+          msgId, id, tenantId,
+          payload.content, payload.content_type,
+          JSON.stringify(payload.content_attributes),
+        ).run();
+        await env.DB.prepare(
+          `UPDATE conversations SET last_message_at = datetime('now'), last_message_preview = ? WHERE id = ?`
+        ).bind(payload.content.slice(0, 200), id).run();
+      }
+    } catch (e) {
+      console.warn('[createConversation] welcome menu failed:', e.message);
+    }
+
+    // Return the (possibly updated) conversation row.
+    const fresh = await env.DB.prepare('SELECT * FROM conversations WHERE id = ?').bind(id).first();
+    return created({ success: true, conversation: fresh }, corsHeaders);
   } catch (e) {
     console.error('createConversation:', e.message);
     return err('Internal error', 500, corsHeaders);
