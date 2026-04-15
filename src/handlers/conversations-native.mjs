@@ -2,6 +2,7 @@
 
 import { uuid } from '../id.mjs';
 import { ok, created, err, parseJson } from '../json.mjs';
+import { broadcastToConversation } from '../broadcast.mjs';
 
 const VALID_STATUS = new Set(['bot', 'open', 'closed']);
 
@@ -75,5 +76,8 @@ export async function updateConversation(request, env, corsHeaders, id) {
   vals.push(id);
   await env.DB.prepare(`UPDATE conversations SET ${updates.join(', ')} WHERE id = ?`).bind(...vals).run();
   const row = await env.DB.prepare('SELECT * FROM conversations WHERE id = ?').bind(id).first();
+  try {
+    await broadcastToConversation(env, id, { type: 'conversation.updated', conversation: row });
+  } catch (_) { /* swallow */ }
   return ok({ success: true, conversation: row }, corsHeaders);
 }

@@ -25,6 +25,16 @@ import {
   sendMessage, listMessages,
 } from './handlers/messages-native.mjs';
 
+export { ConversationRoom } from './durable/conversation-room.mjs';
+
+function forwardToConversationRoom(env, conversationId, role, request) {
+  if (!env.CONVERSATION_ROOM) return new Response('DO binding missing', { status: 503 });
+  const id = env.CONVERSATION_ROOM.idFromName(conversationId);
+  const stub = env.CONVERSATION_ROOM.get(id);
+  const u = new URL(`https://do/ws?conversation_id=${encodeURIComponent(conversationId)}&role=${role}`);
+  return stub.fetch(u.toString(), request);
+}
+
 function bearerAuth(request, env) {
   const h = request.headers.get('Authorization') || '';
   const m = h.match(/^Bearer\s+(.+)$/);
@@ -52,6 +62,21 @@ export default {
       // --- Public ---
       if (path === '/health' && method === 'GET') {
         return ok({ status: 'ok', environment: env.ENVIRONMENT, provider: env.AI_PROVIDER }, corsHeaders);
+      }
+
+      // --- WebSocket upgrade to ConversationRoom Durable Object ---
+      {
+        const upgrade = request.headers.get('Upgrade');
+        let m;
+        if ((m = path.match(/^\/ws\/widget\/conversations\/([^/]+)$/))) {
+          if (upgrade !== 'websocket') return err('Expected WebSocket upgrade', 426, corsHeaders);
+          return forwardToConversationRoom(env, m[1], 'customer', request);
+        }
+        if ((m = path.match(/^\/ws\/operator\/conversations\/([^/]+)$/))) {
+          if (upgrade !== 'websocket') return err('Expected WebSocket upgrade', 426, corsHeaders);
+          if (!bearerAuth(request, env)) return err('Unauthorized', 401, corsHeaders);
+          return forwardToConversationRoom(env, m[1], 'operator', request);
+        }
       }
 
       // --- Widget-facing (public: contact create, conversation create, message send) ---

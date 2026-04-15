@@ -27,6 +27,15 @@ id = "REPLACE_WITH_SESSION_KV_ID"
 binding = "RATE_LIMITER"
 id = "REPLACE_WITH_RATE_LIMITER_KV_ID"
 
+# Durable Object — one per conversation for real-time fan-out.
+[[durable_objects.bindings]]
+name = "CONVERSATION_ROOM"
+class_name = "ConversationRoom"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["ConversationRoom"]
+
 # Secrets (set via wrangler secret put):
 #   ADMIN_API_TOKEN        — admin bearer auth
 #   SESSION_SIGNING_KEY    — HMAC for session cookies (32+ bytes)
@@ -54,3 +63,7 @@ id = "REPLACE_WITH_STAGING_SESSION_KV_ID"
 [[env.staging.kv_namespaces]]
 binding = "RATE_LIMITER"
 id = "REPLACE_WITH_STAGING_RATE_LIMITER_KV_ID"
+
+[[env.staging.durable_objects.bindings]]
+name = "CONVERSATION_ROOM"
+class_name = "ConversationRoom"

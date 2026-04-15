@@ -5,6 +5,7 @@
 import { uuid } from '../id.mjs';
 import { ok, created, err, parseJson } from '../json.mjs';
 import { generateBotReply } from '../ai-chat-adapter.mjs';
+import { broadcastToConversation } from '../broadcast.mjs';
 
 const VALID_SENDER = new Set(['customer', 'bot', 'staff', 'system']);
 const VALID_CONTENT_TYPE = new Set(['text', 'input_select', 'file', 'system_event']);
@@ -23,7 +24,17 @@ async function insertMessage(env, { conversationId, tenantId, senderType, sender
     `UPDATE conversations SET last_message_at = datetime('now'), last_message_preview = ?, updated_at = datetime('now') WHERE id = ?`
   ).bind(preview, conversationId).run();
 
-  return env.DB.prepare('SELECT * FROM messages WHERE id = ?').bind(id).first();
+  const row = await env.DB.prepare('SELECT * FROM messages WHERE id = ?').bind(id).first();
+
+  // Best-effort broadcast to connected WebSocket peers.
+  try {
+    await broadcastToConversation(env, conversationId, {
+      type: 'message.created',
+      message: row,
+    });
+  } catch (_) { /* swallow */ }
+
+  return row;
 }
 
 export async function sendMessage(request, env, corsHeaders, conversationId) {
