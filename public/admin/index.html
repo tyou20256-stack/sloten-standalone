@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex" />
+  <title>Sloten Admin Console</title>
+  <link rel="stylesheet" href="./admin.css" />
+</head>
+<body data-view="login">
+  <!-- Login -->
+  <div class="slo-adm-login">
+    <form class="slo-adm-login-card" id="slo-adm-login-form" autocomplete="on">
+      <h1>管理者ログイン</h1>
+      <label for="slo-adm-login-email">メールアドレス</label>
+      <input id="slo-adm-login-email" type="email" autocomplete="username" required />
+      <label for="slo-adm-login-password">パスワード</label>
+      <input id="slo-adm-login-password" type="password" autocomplete="current-password" required />
+      <div class="slo-adm-login-err" id="slo-adm-login-err"></div>
+      <button type="submit">ログイン</button>
+    </form>
+  </div>
+
+  <!-- Forbidden -->
+  <div class="slo-adm-forbidden">
+    <div class="slo-adm-forbidden-card">
+      <h1>アクセス権限がありません</h1>
+      <p>管理画面は admin ロールを持つスタッフのみアクセス可能です。</p>
+      <button onclick="window.location.href='/operator/'">オペレーター画面へ</button>
+      <button onclick="SlotenAdmin && SlotenAdmin.logout()">ログアウト</button>
+    </div>
+  </div>
+
+  <!-- App -->
+  <div class="slo-adm-app">
+    <div class="slo-adm-top">
+      <div class="slo-adm-top-brand">Sloten Admin</div>
+      <div>
+        <a href="/operator/">オペレーター画面 →</a>
+      </div>
+      <div class="slo-adm-top-user">
+        <span id="slo-adm-top-user"></span>
+        <button id="slo-adm-logout">ログアウト</button>
+      </div>
+    </div>
+
+    <nav class="slo-adm-nav">
+      <div class="slo-adm-nav-item" data-section="dashboard" data-active="1">ダッシュボード</div>
+      <div class="slo-adm-nav-item" data-section="faq">FAQ</div>
+      <div class="slo-adm-nav-item" data-section="templates">テンプレート</div>
+      <div class="slo-adm-nav-item" data-section="knowledge">ナレッジ</div>
+      <div class="slo-adm-nav-item" data-section="labels">ラベル</div>
+      <div class="slo-adm-nav-item" data-section="staff">スタッフ</div>
+    </nav>
+
+    <main class="slo-adm-content" id="slo-adm-content">
+      <div style="color:#9ca3af;">読み込み中…</div>
+    </main>
+  </div>
+
+  <!-- Modal overlay -->
+  <div class="slo-adm-modal-overlay" id="slo-adm-modal">
+    <div class="slo-adm-modal" id="slo-adm-modal-body"></div>
+  </div>
+
+  <script src="./admin.js"></script>
+</body>
+</html>

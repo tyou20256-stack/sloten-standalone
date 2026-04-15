@@ -24,6 +24,10 @@ import {
 import { searchHandler } from './handlers/search.mjs';
 import { listLabels, createLabel, updateLabel, deleteLabel } from './handlers/labels.mjs';
 import {
+  listStaff, createStaff, updateStaff, deleteStaff, resetStaffPassword,
+} from './handlers/staff-admin.mjs';
+import { dashboardStats } from './handlers/dashboard.mjs';
+import {
   sendMessage, listMessages,
 } from './handlers/messages-native.mjs';
 import {
@@ -63,6 +67,21 @@ function requireStaffOrAdmin(handler) {
 }
 const requireAdmin = requireStaffOrAdmin; // alias for existing handler wiring
 
+// admin-role-only: Bearer (super-admin) OR cookie staff with role='admin'.
+function requireAdminRole(handler) {
+  return async (request, env, corsHeaders, ...rest) => {
+    if (bearerAuth(request, env)) {
+      return handler(request, env, corsHeaders, ...rest);
+    }
+    const staff = await resolveStaffFromCookie(request, env);
+    if (staff && staff.role === 'admin') {
+      request.__staff = staff;
+      return handler(request, env, corsHeaders, ...rest);
+    }
+    return err(staff ? 'Forbidden (admin only)' : 'Unauthorized', staff ? 403 : 401, corsHeaders);
+  };
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -85,8 +104,11 @@ export default {
       if (path === '/operator' && method === 'GET') {
         return Response.redirect(new URL('/operator/', request.url).toString(), 302);
       }
+      if (path === '/admin' && method === 'GET') {
+        return Response.redirect(new URL('/admin/', request.url).toString(), 302);
+      }
       // Static assets — serve from ASSETS binding.
-      if (env.ASSETS && (path.startsWith('/widget/') || path.startsWith('/operator/')) && method === 'GET') {
+      if (env.ASSETS && (path.startsWith('/widget/') || path.startsWith('/operator/') || path.startsWith('/admin/')) && method === 'GET') {
         return env.ASSETS.fetch(request);
       }
 
@@ -163,6 +185,22 @@ export default {
 
       // Search
       if (path === '/api/search' && method === 'GET') return requireAdmin(searchHandler)(request, env, corsHeaders);
+
+      // Dashboard
+      if (path === '/api/dashboard/stats' && method === 'GET') return requireAdmin(dashboardStats)(request, env, corsHeaders);
+
+      // Staff admin (admin role only, except self via /api/staff/me above)
+      if (path === '/api/staff' && method === 'GET') return requireAdminRole(listStaff)(request, env, corsHeaders);
+      if (path === '/api/staff' && method === 'POST') return requireAdminRole(createStaff)(request, env, corsHeaders);
+      {
+        const m = path.match(/^\/api\/staff\/(\d+)$/);
+        if (m && method === 'PATCH') return requireAdminRole(updateStaff)(request, env, corsHeaders, parseInt(m[1], 10));
+        if (m && method === 'DELETE') return requireAdminRole(deleteStaff)(request, env, corsHeaders, parseInt(m[1], 10));
+      }
+      {
+        const m = path.match(/^\/api\/staff\/(\d+)\/reset_password$/);
+        if (m && method === 'POST') return requireAdminRole(resetStaffPassword)(request, env, corsHeaders, parseInt(m[1], 10));
+      }
 
       // Labels
       if (path === '/api/labels' && method === 'GET') return requireAdmin(listLabels)(request, env, corsHeaders);
