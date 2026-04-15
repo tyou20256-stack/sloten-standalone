@@ -22,6 +22,16 @@
   const defaults = { tenantId: 'tenant_default', title: 'サポート', subtitle: 'AI オペレーター', autoOpen: false };
 
   const apiBase = (ds.api || userCfg.api || (script ? new URL(script.src).origin : window.location.origin)).replace(/\/$/, '');
+
+  // Host-provided user info (optional). Populated from:
+  //   data-user-name / data-user-email / data-user-phone / data-user-external-id
+  //   window.SlotenChatConfig.user = { name, email, phone, external_id, metadata }
+  const hostUser = Object.assign({}, (userCfg.user || {}));
+  if (ds.userName)       hostUser.name = ds.userName;
+  if (ds.userEmail)      hostUser.email = ds.userEmail;
+  if (ds.userPhone)      hostUser.phone = ds.userPhone;
+  if (ds.userExternalId) hostUser.external_id = ds.userExternalId;
+
   const cfg = {
     apiBase,
     wsBase: apiBase.replace(/^http/, 'ws'),
@@ -30,6 +40,7 @@
     subtitle: ds.subtitle || userCfg.subtitle || defaults.subtitle,
     autoOpen: (ds.autoOpen || userCfg.autoOpen || '').toString() === '1' || userCfg.autoOpen === true,
     cssUrl: ds.cssUrl || userCfg.cssUrl || (script ? new URL('./widget.css', script.src).toString() : null),
+    user: hostUser,
   };
 
   const STORAGE_KEY = 'sloten_chat:v1';
@@ -196,7 +207,18 @@
   // --- Bootstrap conversation ---
   async function ensureContact() {
     if (state.contactId) return state.contactId;
-    const r = await api('POST', '/api/widget/contacts', { tenant_id: cfg.tenantId });
+    // Collect host-provided user info. external_id goes into metadata,
+    // additional metadata (if any) is merged.
+    const payload = { tenant_id: cfg.tenantId };
+    const u = cfg.user || {};
+    if (u.name)  payload.name  = u.name;
+    if (u.email) payload.email = u.email;
+    if (u.phone) payload.phone = u.phone;
+    const meta = Object.assign({}, u.metadata || {});
+    if (u.external_id) meta.external_id = u.external_id;
+    if (Object.keys(meta).length) payload.metadata = meta;
+
+    const r = await api('POST', '/api/widget/contacts', payload);
     state.contactId = r.contact.id;
     saveState();
     return state.contactId;

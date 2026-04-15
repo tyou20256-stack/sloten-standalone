@@ -56,12 +56,12 @@ body {
 
 .slo-op-app {
   display: none;
-  grid-template-columns: 320px 1fr;
+  grid-template-columns: 320px 1fr 280px;
   grid-template-rows: 56px 1fr;
   height: 100vh;
   grid-template-areas:
-    "top top"
-    "list detail";
+    "top top top"
+    "list detail info";
 }
 body[data-view="app"] .slo-op-login { display: none; }
 body[data-view="app"] .slo-op-app { display: grid; }
@@ -234,3 +234,101 @@ body[data-view="app"] .slo-op-app { display: grid; }
   font-size: 13px;
 }
 .slo-op-compose button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Right info sidebar (contact profile + history) */
+.slo-op-info {
+  grid-area: info;
+  background: #fff;
+  border-left: 1px solid #e5e7eb;
+  overflow-y: auto;
+  padding: 0;
+}
+.slo-op-info-empty {
+  padding: 20px;
+  color: #9ca3af;
+  font-size: 12px;
+}
+.slo-op-info-header {
+  padding: 20px 16px 12px;
+  text-align: center;
+  border-bottom: 1px solid #f3f4f6;
+}
+.slo-op-info-avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: #2563eb;
+  color: #fff;
+  font-size: 24px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 10px;
+}
+.slo-op-info-name {
+  font-size: 15px;
+  font-weight: 600;
+  word-wrap: break-word;
+}
+.slo-op-info-id {
+  font-size: 11px;
+  color: #9ca3af;
+  margin-top: 2px;
+  font-family: ui-monospace, monospace;
+}
+.slo-op-info-section {
+  border-bottom: 1px solid #f3f4f6;
+  padding: 12px 16px;
+}
+.slo-op-info-section h4 {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.slo-op-info-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.slo-op-info-row > span:first-child {
+  color: #6b7280;
+  flex-shrink: 0;
+}
+.slo-op-info-row > span:last-child {
+  color: #111827;
+  text-align: right;
+  word-break: break-all;
+}
+.slo-op-info-history {
+  padding: 8px 0;
+}
+.slo-op-info-history-item {
+  padding: 8px 16px;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+}
+.slo-op-info-history-item:hover { background: #f9fafb; }
+.slo-op-info-history-item[data-current="1"] {
+  background: #eff6ff;
+  border-left-color: #2563eb;
+}
+.slo-op-info-history-preview {
+  font-size: 12px;
+  color: #374151;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.slo-op-info-history-meta {
+  font-size: 10px;
+  color: #9ca3af;
+  margin-top: 2px;
+  display: flex;
+  justify-content: space-between;
+}

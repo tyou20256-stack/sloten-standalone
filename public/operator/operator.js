@@ -13,6 +13,7 @@
     messagesByConv: {},
     contactsByConv: {},
     detailsById: {}, // cached full conversation rows (survives list filter changes)
+    historyByContact: {}, // contact_id -> conversations[]
     filter: 'open',
     ws: null,
     wsConvId: null,
@@ -91,8 +92,20 @@
     state.selectedId = id;
     renderList();
     renderDetail();
+    renderInfo();
     await loadMessages(id);
     openWS(id);
+    // Contact history is fetched once per contact; lazy.
+    const contactId = state.detailsById[id]?.contact_id;
+    if (contactId && !state.historyByContact[contactId]) await loadContactHistory(contactId);
+    renderInfo();
+  }
+
+  async function loadContactHistory(contactId) {
+    try {
+      const r = await api('GET', `/api/contacts/${contactId}/conversations`);
+      state.historyByContact[contactId] = r.conversations || [];
+    } catch (e) { console.warn('loadContactHistory', e.message); }
   }
 
   async function loadMessages(id) {
@@ -160,6 +173,7 @@
         if (!arr.some((m) => m.id === f.message.id)) arr.push(f.message);
         state.messagesByConv[convId] = arr;
         renderDetail();
+        renderInfo();
         // Bump list entry
         const conv = state.conversations.find((c) => c.id === convId);
         if (conv) {
@@ -178,6 +192,7 @@
         state.detailsById[f.conversation.id] = f.conversation;
         renderList();
         renderDetail();
+        renderInfo();
       }
     });
     state.ws.addEventListener('close', () => {
@@ -300,6 +315,108 @@
 
   function renderTop() {
     $('#slo-top-user').textContent = state.staff ? `${state.staff.name || state.staff.email}` : '';
+  }
+
+  function parseMetadata(meta) {
+    if (!meta) return null;
+    if (typeof meta === 'object') return meta;
+    try { return JSON.parse(meta); } catch { return null; }
+  }
+  function initials(name, fallback) {
+    const s = (name || fallback || '?').trim();
+    if (!s) return '?';
+    // Use first two alpha chars or fallback to first char
+    const ch = s.match(/[\p{L}\p{N}]/u);
+    return (ch ? ch[0] : s[0]).toUpperCase();
+  }
+  function formatDate(iso) {
+    if (!iso) return '—';
+    try {
+      const s = iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z';
+      return new Date(s).toLocaleString([], { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    } catch { return iso; }
+  }
+
+  function renderInfo() {
+    const info = $('#slo-info');
+    info.innerHTML = '';
+    if (!state.selectedId) {
+      info.appendChild(el('div', { class: 'slo-op-info-empty' }, '会話を選択するとユーザー情報が表示されます'));
+      return;
+    }
+    const conv = state.detailsById[state.selectedId];
+    const contact = state.contactsByConv[state.selectedId];
+    if (!conv || !contact) {
+      info.appendChild(el('div', { class: 'slo-op-info-empty' }, '読み込み中…'));
+      return;
+    }
+
+    // Header (avatar + name + id)
+    const displayName = contact.name || contact.email || contact.phone || 'ゲスト';
+    info.appendChild(el('div', { class: 'slo-op-info-header' },
+      el('div', { class: 'slo-op-info-avatar' }, initials(contact.name, contact.email || contact.phone || 'G')),
+      el('div', { class: 'slo-op-info-name' }, displayName),
+      el('div', { class: 'slo-op-info-id' }, contact.id)
+    ));
+
+    // Contact fields
+    const fields = el('div', { class: 'slo-op-info-section' });
+    fields.appendChild(el('h4', {}, 'ユーザー情報'));
+    const addRow = (label, value) => {
+      if (value == null || value === '') return;
+      fields.appendChild(el('div', { class: 'slo-op-info-row' },
+        el('span', {}, label),
+        el('span', {}, String(value))
+      ));
+    };
+    addRow('名前', contact.name);
+    addRow('メール', contact.email);
+    addRow('電話', contact.phone);
+    addRow('識別済', contact.is_identified ? 'はい' : 'いいえ');
+    addRow('登録日時', formatDate(contact.created_at));
+    addRow('最終更新', formatDate(contact.updated_at));
+    info.appendChild(fields);
+
+    // Metadata (including external_id, custom attrs)
+    const meta = parseMetadata(contact.metadata);
+    if (meta && typeof meta === 'object' && Object.keys(meta).length > 0) {
+      const metaSec = el('div', { class: 'slo-op-info-section' });
+      metaSec.appendChild(el('h4', {}, 'カスタム属性'));
+      for (const k of Object.keys(meta)) {
+        let v = meta[k];
+        if (typeof v === 'object') v = JSON.stringify(v);
+        metaSec.appendChild(el('div', { class: 'slo-op-info-row' },
+          el('span', {}, k),
+          el('span', {}, String(v))
+        ));
+      }
+      info.appendChild(metaSec);
+    }
+
+    // Past conversations
+    const history = state.historyByContact[contact.id] || [];
+    const histSec = el('div', { class: 'slo-op-info-section', style: 'padding:12px 0;' });
+    histSec.appendChild(el('h4', { style: 'padding:0 16px;' }, `過去の会話 (${history.length})`));
+    if (history.length === 0) {
+      histSec.appendChild(el('div', { style: 'padding:0 16px;font-size:12px;color:#9ca3af;' }, 'なし'));
+    } else {
+      for (const h of history) {
+        histSec.appendChild(el('div', {
+          class: 'slo-op-info-history-item',
+          'data-current': h.id === state.selectedId ? '1' : '0',
+          onclick: () => { if (h.id !== state.selectedId) selectConversation(h.id); },
+        },
+          el('div', { class: 'slo-op-info-history-preview' }, h.last_message_preview || '(メッセージなし)'),
+          el('div', { class: 'slo-op-info-history-meta' },
+            el('span', {},
+              el('span', { class: 'slo-op-conv-status', 'data-s': h.status }, h.status)
+            ),
+            el('span', {}, formatTime(h.last_message_at || h.created_at))
+          )
+        ));
+      }
+    }
+    info.appendChild(histSec);
   }
 
   // --- Boot ---

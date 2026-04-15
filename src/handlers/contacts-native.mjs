@@ -45,3 +45,23 @@ export async function listContacts(request, env, corsHeaders) {
   ).bind(tenantId, limit).all();
   return ok({ success: true, contacts: (results || []).map(decorate) }, corsHeaders);
 }
+
+// Past conversations for the same contact — Chatwoot-style "Previous conversations".
+export async function listContactConversations(request, env, corsHeaders, contactId) {
+  const url = new URL(request.url);
+  const limit = Math.min(parseInt(url.searchParams.get('limit') || '30', 10), 100);
+  const contact = await env.DB.prepare('SELECT * FROM contacts WHERE id = ?').bind(contactId).first();
+  if (!contact) return err('Contact not found', 404, corsHeaders);
+  const { results } = await env.DB.prepare(
+    `SELECT id, status, assignee_id, last_message_at, last_message_preview, created_at, closed_at
+       FROM conversations
+      WHERE contact_id = ?
+   ORDER BY COALESCE(last_message_at, created_at) DESC
+      LIMIT ?`
+  ).bind(contactId, limit).all();
+  return ok({
+    success: true,
+    contact: decorate(contact),
+    conversations: results || [],
+  }, corsHeaders);
+}

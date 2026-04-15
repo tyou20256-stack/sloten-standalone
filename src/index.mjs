@@ -16,7 +16,7 @@ import {
   handleKnowledgeSourcesPost, handleKnowledgeSourcesPut, handleKnowledgeSourcesDelete,
 } from './handlers/knowledge-sources.mjs';
 import {
-  createContact, getContact, listContacts,
+  createContact, getContact, listContacts, listContactConversations,
 } from './handlers/contacts-native.mjs';
 import {
   createConversation, listConversations, getConversation, updateConversation,
@@ -133,6 +133,10 @@ export default {
       // --- Admin (Bearer auth) ---
       // Contacts
       if (path === '/api/contacts' && method === 'GET') return requireAdmin(listContacts)(request, env, corsHeaders);
+      {
+        const m = path.match(/^\/api\/contacts\/([^/]+)\/conversations$/);
+        if (m && method === 'GET') return requireAdmin(listContactConversations)(request, env, corsHeaders, m[1]);
+      }
       {
         const m = path.match(/^\/api\/contacts\/([^/]+)$/);
         if (m && method === 'GET') return requireAdmin(getContact)(request, env, corsHeaders, m[1]);

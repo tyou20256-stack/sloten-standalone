@@ -54,6 +54,18 @@
     </div>
 
     <div class="hint">
+      <strong>ユーザー情報を渡す場合 (推奨):</strong><br/>
+      <code>&lt;script src=".../widget.js"<br/>
+      &nbsp;&nbsp;data-api=".../"<br/>
+      &nbsp;&nbsp;data-user-name="山田太郎"<br/>
+      &nbsp;&nbsp;data-user-email="taro@example.com"<br/>
+      &nbsp;&nbsp;data-user-external-id="sloten_user_12345"<br/>
+      &nbsp;&nbsp;async&gt;&lt;/script&gt;</code><br/><br/>
+      または JavaScript で:<br/>
+      <code>window.SlotenChatConfig = { user: { name: "...", email: "...", external_id: "...", metadata: { vip_rank: "gold" } } };</code>
+    </div>
+
+    <div class="hint">
       <strong>API:</strong> <span id="api-base"></span>
     </div>
 
