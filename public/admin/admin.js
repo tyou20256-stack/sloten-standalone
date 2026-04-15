@@ -99,6 +99,155 @@
     if (state.section === 'knowledge') return renderKnowledge(content);
     if (state.section === 'labels') return renderLabels(content);
     if (state.section === 'staff') return renderStaff(content);
+    if (state.section === 'ai-logs') return renderAiLogs(content);
+    if (state.section === 'export') return renderExport(content);
+  }
+
+  // --- Helpers for new sections ---
+  function downloadCsv(resource) {
+    const a = document.createElement('a');
+    a.href = API + `/api/export/${resource}.csv`;
+    a.rel = 'noopener';
+    a.download = `${resource}-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+
+  // --- AI logs ---
+  async function renderAiLogs(root) {
+    root.appendChild(el('h2', {}, 'AI ログ'));
+    // Stats tiles
+    const tileWrap = el('div', { class: 'slo-adm-tiles', id: 'slo-ai-stats' });
+    root.appendChild(tileWrap);
+    api('GET', '/api/ai-logs/stats').then((r) => {
+      const s = r.stats;
+      tileWrap.innerHTML = '';
+      const tile = (label, val, sub) => el('div', { class: 'slo-adm-tile' },
+        el('div', { class: 'slo-adm-tile-label' }, label),
+        el('div', { class: 'slo-adm-tile-value' }, String(val)),
+        sub ? el('div', { class: 'slo-adm-tile-sub' }, sub) : null);
+      tileWrap.appendChild(tile('呼出数 (24h)', s.calls_24h, `7 日: ${s.calls_7d}`));
+      tileWrap.appendChild(tile('エラー率 (24h)', s.calls_24h ? `${Math.round(s.errors_24h / s.calls_24h * 100)}%` : '—', `エラー ${s.errors_24h}`));
+      tileWrap.appendChild(tile('平均レイテンシ (24h)', `${s.avg_latency_ms_24h}ms`));
+      tileWrap.appendChild(tile('フィードバック', `👍 ${s.thumbs_up} / 👎 ${s.thumbs_down}`));
+    }).catch(() => { tileWrap.innerHTML = '<div class="slo-adm-empty">統計読込失敗</div>'; });
+
+    // Filter toolbar
+    const tb = el('div', { class: 'slo-adm-sect-toolbar', style: 'margin-top:16px;' });
+    const statusSel = el('select', { onchange: () => reload() },
+      el('option', { value: '' }, '全ステータス'),
+      el('option', { value: 'ok' }, 'ok'),
+      el('option', { value: 'error' }, 'error'),
+      el('option', { value: 'empty' }, 'empty'));
+    tb.appendChild(statusSel);
+    tb.appendChild(el('button', { class: 'slo-adm-btn slo-adm-btn-secondary', onclick: () => downloadCsv('ai_logs') }, '📥 CSV'));
+    root.appendChild(tb);
+
+    const listDiv = el('div');
+    root.appendChild(listDiv);
+
+    async function reload() {
+      listDiv.innerHTML = '<div style="color:#9ca3af;">読み込み中…</div>';
+      try {
+        const qs = statusSel.value ? `?status=${statusSel.value}` : '';
+        const r = await api('GET', '/api/ai-logs' + qs);
+        renderAiLogsTable(listDiv, r.logs || []);
+      } catch (e) { listDiv.innerHTML = '<div class="slo-adm-empty">エラー: ' + esc(e.message) + '</div>'; }
+    }
+    reload();
+  }
+  function renderAiLogsTable(root, logs) {
+    root.innerHTML = '';
+    if (logs.length === 0) { root.appendChild(el('div', { class: 'slo-adm-empty' }, 'AI ログはありません')); return; }
+    const table = el('table', { class: 'slo-adm-table' });
+    table.appendChild(el('thead', {}, el('tr', {},
+      el('th', { style: 'width:140px' }, '日時'),
+      el('th', { style: 'width:80px' }, 'ステータス'),
+      el('th', { style: 'width:80px' }, 'ms'),
+      el('th', {}, 'input'),
+      el('th', { style: 'width:120px' }, 'feedback'),
+      el('th', { style: 'width:100px' }, ''))));
+    const tbody = el('tbody');
+    for (const log of logs) {
+      tbody.appendChild(el('tr', {},
+        el('td', { style: 'font-size:11px;font-family:ui-monospace,monospace;' }, log.created_at),
+        el('td', {}, el('span', { class: 'slo-adm-badge', 'data-role': log.status === 'ok' ? 'agent' : 'admin' }, log.status)),
+        el('td', {}, String(log.latency_ms || '—')),
+        el('td', { style: 'max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' }, (log.input || '').slice(0, 80)),
+        el('td', {}, `👍${log.feedback?.up || 0} / 👎${log.feedback?.down || 0}`),
+        el('td', {}, el('div', { class: 'slo-adm-row-actions' },
+          el('button', { onclick: () => aiLogModal(log.id) }, '詳細'),
+          el('button', { class: 'danger', onclick: () => deleteAiLog(log.id) }, '削除')))
+      ));
+    }
+    table.appendChild(tbody);
+    root.appendChild(table);
+  }
+  async function aiLogModal(id) {
+    try {
+      const r = await api('GET', `/api/ai-logs/${id}`);
+      const log = r.log;
+      openModal(`AI ログ #${id}`, (form, actions) => {
+        form.appendChild(el('div', { style: 'font-size:11px;color:#6b7280;margin-bottom:8px;' },
+          `${log.provider} / ${log.model} · ${log.status} · ${log.latency_ms}ms · ${log.created_at}`));
+        form.appendChild(el('label', {}, 'ユーザー入力'));
+        form.appendChild(el('textarea', { readonly: '', style: 'min-height:60px;' }, log.input || ''));
+        form.appendChild(el('label', {}, 'システムプロンプト (先頭 2KB)'));
+        form.appendChild(el('textarea', { readonly: '', style: 'min-height:100px;font-family:ui-monospace,monospace;font-size:11px;' }, log.system_prompt || ''));
+        form.appendChild(el('label', {}, 'AI 応答'));
+        form.appendChild(el('textarea', { readonly: '', style: 'min-height:100px;' }, log.output || ''));
+        if (log.error_message) {
+          form.appendChild(el('label', {}, 'エラー'));
+          form.appendChild(el('div', { style: 'background:#fee2e2;padding:8px;border-radius:6px;color:#991b1b;' }, log.error_message));
+        }
+        form.appendChild(el('label', {}, 'フィードバック'));
+        const note = el('textarea', { placeholder: '自由記述 (任意)' });
+        form.appendChild(note);
+        const ratingRow = el('div', { style: 'display:flex;gap:8px;margin-top:8px;' },
+          el('button', { class: 'slo-adm-btn', onclick: async () => { await api('POST', `/api/ai-logs/${id}/feedback`, { rating: 1, note: note.value }); closeModal(); navigate('ai-logs'); } }, '👍 良い'),
+          el('button', { class: 'slo-adm-btn slo-adm-btn-danger', onclick: async () => { await api('POST', `/api/ai-logs/${id}/feedback`, { rating: -1, note: note.value }); closeModal(); navigate('ai-logs'); } }, '👎 悪い'));
+        form.appendChild(ratingRow);
+
+        if ((r.feedback || []).length) {
+          form.appendChild(el('label', {}, '既存フィードバック'));
+          for (const fb of r.feedback) {
+            form.appendChild(el('div', { style: 'background:#f9fafb;padding:8px;border-radius:6px;margin-top:4px;font-size:12px;' },
+              `${fb.rating === 1 ? '👍' : '👎'} staff:${fb.staff_id || '—'} · ${fb.created_at}`,
+              fb.note ? el('div', { style: 'color:#374151;margin-top:4px;' }, fb.note) : null));
+          }
+        }
+
+        actions.appendChild(el('button', { class: 'slo-adm-btn slo-adm-btn-secondary', onclick: closeModal }, '閉じる'));
+      });
+    } catch (e) { alert(e.message); }
+  }
+  async function deleteAiLog(id) {
+    if (!(await confirmDialog('この AI ログを削除しますか？'))) return;
+    try { await api('DELETE', `/api/ai-logs/${id}`); navigate('ai-logs'); } catch (e) { alert(e.message); }
+  }
+
+  // --- Export section ---
+  function renderExport(root) {
+    root.appendChild(el('h2', {}, 'エクスポート'));
+    root.appendChild(el('p', { style: 'color:#6b7280;margin-bottom:16px;' },
+      'UTF-8 (BOM 付き) CSV で出力します。Excel で直接開けます。'));
+    const tiles = el('div', { class: 'slo-adm-tiles' });
+    const entries = [
+      ['conversations', '会話'],
+      ['messages', 'メッセージ'],
+      ['contacts', 'コンタクト'],
+      ['faq', 'FAQ'],
+      ['templates', 'テンプレート'],
+      ['knowledge', 'ナレッジ'],
+      ['staff', 'スタッフ'],
+      ['ai_logs', 'AI ログ'],
+    ];
+    for (const [res, label] of entries) {
+      const tile = el('div', { class: 'slo-adm-tile', style: 'cursor:pointer;', onclick: () => downloadCsv(res) },
+        el('div', { class: 'slo-adm-tile-label' }, label),
+        el('div', { class: 'slo-adm-tile-value', style: 'font-size:14px;color:#2563eb;' }, '📥 ダウンロード'));
+      tiles.appendChild(tile);
+    }
+    root.appendChild(tiles);
   }
 
   // --- Dashboard ---
@@ -141,7 +290,10 @@
   // --- FAQ ---
   async function renderFaq(root) {
     root.appendChild(el('h2', {}, 'FAQ'));
-    root.appendChild(toolbar('質問・回答・カテゴリで絞り込み…', (q) => { state.searchFilter.faq = q; renderFaqTable(listDiv); }, () => faqModal()));
+    const tb = toolbar('質問・回答・カテゴリで絞り込み…', (q) => { state.searchFilter.faq = q; renderFaqTable(listDiv); }, () => faqModal());
+    tb.appendChild(el('button', { class: 'slo-adm-btn slo-adm-btn-secondary', onclick: () => downloadCsv('faq') }, '📥 CSV'));
+    root.appendChild(tb);
+    // (moved above the list div, see pre-existing block)
     const listDiv = el('div');
     root.appendChild(listDiv);
     try {
@@ -217,7 +369,9 @@
   // --- Templates ---
   async function renderTemplates(root) {
     root.appendChild(el('h2', {}, 'テンプレート'));
-    root.appendChild(toolbar('名前・本文・カテゴリで絞り込み…', (q) => { state.searchFilter.tpl = q; renderTplTable(listDiv); }, () => tplModal()));
+    const tb = toolbar('名前・本文・カテゴリで絞り込み…', (q) => { state.searchFilter.tpl = q; renderTplTable(listDiv); }, () => tplModal());
+    tb.appendChild(el('button', { class: 'slo-adm-btn slo-adm-btn-secondary', onclick: () => downloadCsv('templates') }, '📥 CSV'));
+    root.appendChild(tb);
     const listDiv = el('div');
     root.appendChild(listDiv);
     try {
@@ -283,7 +437,9 @@
   // --- Knowledge sources ---
   async function renderKnowledge(root) {
     root.appendChild(el('h2', {}, 'ナレッジベース'));
-    root.appendChild(toolbar('タイトル・内容で絞り込み…', (q) => { state.searchFilter.kb = q; renderKbTable(listDiv); }, () => kbModal()));
+    const tb = toolbar('タイトル・内容で絞り込み…', (q) => { state.searchFilter.kb = q; renderKbTable(listDiv); }, () => kbModal());
+    tb.appendChild(el('button', { class: 'slo-adm-btn slo-adm-btn-secondary', onclick: () => downloadCsv('knowledge') }, '📥 CSV'));
+    root.appendChild(tb);
     const listDiv = el('div');
     root.appendChild(listDiv);
     try {
@@ -352,6 +508,7 @@
   async function renderLabels(root) {
     root.appendChild(el('h2', {}, 'ラベル'));
     root.appendChild(toolbar('名前で絞り込み…', (q) => { state.searchFilter.lb = q; renderLabelsTable(listDiv); }, () => labelModal()));
+    // labels don't export for now — small scale, no export button needed
     const listDiv = el('div');
     root.appendChild(listDiv);
     try {
@@ -412,7 +569,10 @@
   // --- Staff ---
   async function renderStaff(root) {
     root.appendChild(el('h2', {}, 'スタッフ'));
-    root.appendChild(toolbar('メール・名前で絞り込み…', (q) => { state.searchFilter.st = q; renderStaffTable(listDiv); }, () => staffModal()));
+    const tb = toolbar('メール・名前で絞り込み…', (q) => { state.searchFilter.st = q; renderStaffTable(listDiv); }, () => staffModal());
+    tb.appendChild(el('button', { class: 'slo-adm-btn slo-adm-btn-secondary', onclick: bulkImportStaff }, 'Chatwoot 担当者を一括インポート'));
+    tb.appendChild(el('button', { class: 'slo-adm-btn slo-adm-btn-secondary', onclick: () => downloadCsv('staff') }, '📥 CSV'));
+    root.appendChild(tb);
     const listDiv = el('div');
     root.appendChild(listDiv);
     try {
@@ -510,6 +670,30 @@
     if (!(await confirmDialog(`${row.email} を削除しますか？担当していた会話は未割当になります。`))) return;
     try { await api('DELETE', `/api/staff/${row.id}`); navigate('staff'); } catch (e) { alert(e.message); }
   }
+  async function bulkImportStaff() {
+    if (!(await confirmDialog('Chatwoot の担当者 email から未登録スタッフを一括作成し、会話の assignee_id を復元します。続行しますか？'))) return;
+    try {
+      const r = await api('POST', '/api/staff/import_from_chatwoot');
+      openModal('一括インポート結果', (form, actions) => {
+        form.appendChild(el('p', {}, `対象 email: ${r.total_emails} / 新規作成: ${r.created_count} / 既存スキップ: ${r.skipped_count} / 会話 backfill: ${r.backfilled_conversations}`));
+        if (r.created.length) {
+          form.appendChild(el('p', { style: 'color:#b91c1c;font-weight:600;' }, '⚠️ パスワードは 1 回のみ表示されます。必ずコピーしてください。'));
+          const table = el('table', { class: 'slo-adm-table', style: 'margin-top:8px;' });
+          table.appendChild(el('thead', {}, el('tr', {}, el('th', {}, 'Email'), el('th', {}, 'Password'))));
+          const tb = el('tbody');
+          for (const c of r.created) {
+            tb.appendChild(el('tr', {},
+              el('td', { style: 'font-family:ui-monospace,monospace;font-size:12px;' }, c.email),
+              el('td', { style: 'font-family:ui-monospace,monospace;font-size:12px;' }, c.password)));
+          }
+          table.appendChild(tb);
+          form.appendChild(table);
+        }
+        actions.appendChild(el('button', { class: 'slo-adm-btn', onclick: () => { closeModal(); navigate('staff'); } }, '閉じる'));
+      });
+    } catch (e) { alert(e.message); }
+  }
+
   function showGeneratedPassword(email, password, onClose) {
     openModal('パスワード発行', (form, actions) => {
       form.appendChild(el('p', { style: 'margin:0 0 8px;color:#374151;' }, `${email} の新しいパスワード:`));

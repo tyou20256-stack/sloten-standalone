@@ -4,6 +4,9 @@
 //
 // Phase 1: plain prompt concatenation. Embeddings / RAG ranking comes later.
 
+import { recordAiCall } from './handlers/ai-logs.mjs';
+import { maskPII } from './pii-masker.mjs';
+
 const MAX_CONTEXT_FAQ = 8;
 const MAX_CONTEXT_KB = 3;
 
@@ -80,18 +83,45 @@ async function callAnthropic(apiKey, system, userMessage) {
 
 export async function generateBotReply(env, { conversationId, tenantId, customerMessage }) {
   const provider = (env.AI_PROVIDER || 'gemini').toLowerCase();
+  const model = provider === 'anthropic' ? 'claude-haiku-4-5-20251001' : 'gemini-2.5-flash-lite';
   const { faqRows, kbRows } = await loadContext(env, tenantId);
   const system = buildSystemPrompt(faqRows, kbRows);
 
+  const maskedInput = maskPII(customerMessage || '');
+  const started = Date.now();
   let text = '';
-  if (provider === 'anthropic') {
-    if (!env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY not set');
-    text = await callAnthropic(env.ANTHROPIC_API_KEY, system, customerMessage);
-  } else {
-    if (!env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not set');
-    text = await callGemini(env.GEMINI_API_KEY, system, customerMessage);
+  let status = 'ok';
+  let errorMessage = null;
+
+  try {
+    if (provider === 'anthropic') {
+      if (!env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY not set');
+      text = await callAnthropic(env.ANTHROPIC_API_KEY, system, customerMessage);
+    } else {
+      if (!env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not set');
+      text = await callGemini(env.GEMINI_API_KEY, system, customerMessage);
+    }
+    if (!text) status = 'empty';
+  } catch (e) {
+    status = 'error';
+    errorMessage = e.message;
   }
 
+  // Log (best-effort — never block reply on log failure)
+  recordAiCall(env, {
+    tenant_id: tenantId,
+    conversation_id: conversationId,
+    provider,
+    model,
+    system_prompt: system,
+    input: maskedInput,
+    output: text,
+    latency_ms: Date.now() - started,
+    status,
+    error_message: errorMessage,
+  });
+
+  if (status === 'error') throw new Error(errorMessage);
   if (!text) {
     return { content: 'ただいま担当者におつなぎします。少々お待ちください。', content_type: 'text' };
   }

@@ -86,6 +86,72 @@ export async function deleteStaff(request, env, corsHeaders, id) {
   return ok({ success: true }, corsHeaders);
 }
 
+// Bulk-create staff from conversations.metadata.chatwoot_assignee_email values.
+// For each unique email not already in staff_members, create with generated
+// password. Then backfill conversations.assignee_id where the email matches.
+export async function importStaffFromChatwoot(request, env, corsHeaders) {
+  // 1) Collect unique chatwoot_assignee_email values from imported conversations.
+  const { results: convs } = await env.DB.prepare(
+    `SELECT id, metadata FROM conversations
+      WHERE metadata IS NOT NULL AND metadata LIKE '%chatwoot_assignee_email%'`
+  ).all();
+  const emailToConvs = new Map();
+  for (const c of (convs || [])) {
+    try {
+      const m = JSON.parse(c.metadata);
+      const email = (m?.chatwoot_assignee_email || '').toLowerCase().trim();
+      if (!email) continue;
+      if (!emailToConvs.has(email)) emailToConvs.set(email, []);
+      emailToConvs.get(email).push(c.id);
+    } catch (_) { /* bad JSON, skip */ }
+  }
+
+  // 2) Fetch existing staff by email
+  const existingRes = await env.DB.prepare('SELECT id, email FROM staff_members').all();
+  const existingByEmail = new Map((existingRes.results || []).map((s) => [s.email.toLowerCase(), s.id]));
+
+  const created = [];
+  const skipped = [];
+  let backfilled = 0;
+
+  for (const [email, convIds] of emailToConvs) {
+    let staffId;
+    if (existingByEmail.has(email)) {
+      staffId = existingByEmail.get(email);
+      skipped.push(email);
+    } else {
+      const password = randomPassword();
+      const { password_hash, password_salt } = await hashPassword(password);
+      const name = email.split('@')[0];
+      const r = await env.DB.prepare(
+        `INSERT INTO staff_members (email, name, role, password_hash, password_salt, is_active)
+         VALUES (?, ?, 'agent', ?, ?, 1)`
+      ).bind(email, name, password_hash, password_salt).run();
+      staffId = r.meta.last_row_id;
+      created.push({ id: staffId, email, password });
+      existingByEmail.set(email, staffId);
+    }
+    // Backfill assignee_id for this email's conversations
+    for (const convId of convIds) {
+      const u = await env.DB.prepare(
+        `UPDATE conversations SET assignee_id = ?, updated_at = datetime('now')
+          WHERE id = ? AND assignee_id IS NULL`
+      ).bind(staffId, convId).run();
+      if (u.meta?.changes) backfilled += u.meta.changes;
+    }
+  }
+
+  return ok({
+    success: true,
+    total_emails: emailToConvs.size,
+    created_count: created.length,
+    skipped_count: skipped.length,
+    backfilled_conversations: backfilled,
+    created,
+    skipped,
+  }, corsHeaders);
+}
+
 export async function resetStaffPassword(request, env, corsHeaders, id) {
   const existing = await env.DB.prepare('SELECT id, email FROM staff_members WHERE id = ?').bind(id).first();
   if (!existing) return err('Staff not found', 404, corsHeaders);

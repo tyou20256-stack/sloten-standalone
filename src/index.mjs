@@ -24,9 +24,11 @@ import {
 import { searchHandler } from './handlers/search.mjs';
 import { listLabels, createLabel, updateLabel, deleteLabel } from './handlers/labels.mjs';
 import {
-  listStaff, createStaff, updateStaff, deleteStaff, resetStaffPassword,
+  listStaff, createStaff, updateStaff, deleteStaff, resetStaffPassword, importStaffFromChatwoot,
 } from './handlers/staff-admin.mjs';
 import { dashboardStats } from './handlers/dashboard.mjs';
+import { exportCsv } from './handlers/export.mjs';
+import { listAiLogs, getAiLog, deleteAiLog, submitFeedback, aiStats } from './handlers/ai-logs.mjs';
 import {
   sendMessage, listMessages,
 } from './handlers/messages-native.mjs';
@@ -192,6 +194,7 @@ export default {
       // Staff admin (admin role only, except self via /api/staff/me above)
       if (path === '/api/staff' && method === 'GET') return requireAdminRole(listStaff)(request, env, corsHeaders);
       if (path === '/api/staff' && method === 'POST') return requireAdminRole(createStaff)(request, env, corsHeaders);
+      if (path === '/api/staff/import_from_chatwoot' && method === 'POST') return requireAdminRole(importStaffFromChatwoot)(request, env, corsHeaders);
       {
         const m = path.match(/^\/api\/staff\/(\d+)$/);
         if (m && method === 'PATCH') return requireAdminRole(updateStaff)(request, env, corsHeaders, parseInt(m[1], 10));
@@ -200,6 +203,25 @@ export default {
       {
         const m = path.match(/^\/api\/staff\/(\d+)\/reset_password$/);
         if (m && method === 'POST') return requireAdminRole(resetStaffPassword)(request, env, corsHeaders, parseInt(m[1], 10));
+      }
+
+      // Export CSV (admin only)
+      {
+        const m = path.match(/^\/api\/export\/([a-z_]+)\.csv$/);
+        if (m && method === 'GET') return requireAdminRole(exportCsv)(request, env, corsHeaders, m[1]);
+      }
+
+      // AI logs + feedback (admin only)
+      if (path === '/api/ai-logs' && method === 'GET') return requireAdminRole(listAiLogs)(request, env, corsHeaders);
+      if (path === '/api/ai-logs/stats' && method === 'GET') return requireAdminRole(aiStats)(request, env, corsHeaders);
+      {
+        const m = path.match(/^\/api\/ai-logs\/(\d+)$/);
+        if (m && method === 'GET') return requireAdminRole(getAiLog)(request, env, corsHeaders, parseInt(m[1], 10));
+        if (m && method === 'DELETE') return requireAdminRole(deleteAiLog)(request, env, corsHeaders, parseInt(m[1], 10));
+      }
+      {
+        const m = path.match(/^\/api\/ai-logs\/(\d+)\/feedback$/);
+        if (m && method === 'POST') return requireAdminRole(submitFeedback)(request, env, corsHeaders, parseInt(m[1], 10));
       }
 
       // Labels
