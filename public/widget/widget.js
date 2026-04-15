@@ -56,10 +56,13 @@
     dreampotUrl: ds.dreampotUrl || userCfg.dreampotUrl || defaults.dreampotUrl,
     inputPlaceholder: ds.inputPlaceholder || userCfg.inputPlaceholder || defaults.inputPlaceholder,
     autoOpen: (ds.autoOpen || userCfg.autoOpen || '').toString() === '1' || userCfg.autoOpen === true,
-    cssUrl: ds.cssUrl || userCfg.cssUrl || (script ? new URL('./widget.css', script.src).toString() : null),
+    cssUrl: ds.cssUrl || userCfg.cssUrl || (script ? new URL('./widget.css?v=' + encodeURIComponent(WIDGET_VERSION), script.src).toString() : null),
     user: hostUser,
   };
 
+  // Append cache-busting version to CSS URL the same way the host HTML does
+  // for widget.js, so stylesheet fixes also propagate quickly.
+  const WIDGET_VERSION = 'v20260416.b';
   const STORAGE_KEY = 'sloten_chat:v1';
   const state = Object.assign(
     { contactId: null, conversationId: null, contactToken: null, status: null, history: [] },

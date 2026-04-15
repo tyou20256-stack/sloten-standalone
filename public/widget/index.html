@@ -74,7 +74,17 @@
 
   <script>
     document.getElementById('api-base').textContent = window.location.origin;
+    // Cache-bust widget.js / widget.css with a per-minute version — guarantees
+    // that any fix deployed within the last 60 seconds is picked up on the
+    // next page load without requiring Ctrl+Shift+R. Browsers still cache
+    // within the minute bucket.
+    (function () {
+      var v = Math.floor(Date.now() / 60000);
+      var s = document.createElement('script');
+      s.src = './widget.js?v=' + v;
+      s.async = true;
+      document.body.appendChild(s);
+    })();
   </script>
-  <script src="./widget.js" async></script>
 </body>
 </html>
