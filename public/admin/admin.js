@@ -104,11 +104,138 @@
     if (state.section === 'labels') return renderLabels(content);
     if (state.section === 'staff') return renderStaff(content);
     if (state.section === 'ai-logs') return renderAiLogs(content);
+    if (state.section === 'faq-candidates') return renderFaqCandidates(content);
     if (state.section === 'bot-menus') return renderBotMenus(content);
     if (state.section === 'bot-flows') return renderBotFlows(content);
     if (state.section === 'prompts') return renderPrompts(content);
     if (state.section === 'teams') return renderTeams(content);
     if (state.section === 'export') return renderExport(content);
+  }
+
+  // --- FAQ candidates ---
+  async function renderFaqCandidates(root) {
+    root.appendChild(el('h2', {}, 'FAQ 候補'));
+    root.appendChild(el('p', { style: 'color:#6b7280;margin:0 0 16px;' },
+      '過去会話から週次 Cron で抽出される候補。内容を確認し、良質なものは承認で FAQ に追加、不要なものは却下してください。入金関連は自動で除外されます。'));
+
+    const tb = el('div', { class: 'slo-adm-sect-toolbar' });
+    const statusSel = el('select', { onchange: () => reload() },
+      el('option', { value: 'pending' }, '未レビュー'),
+      el('option', { value: 'approved' }, '承認済'),
+      el('option', { value: 'rejected' }, '却下済'));
+    tb.appendChild(statusSel);
+    tb.appendChild(el('button', { class: 'slo-adm-btn', onclick: runNow }, '今すぐ抽出実行'));
+    tb.appendChild(el('button', { class: 'slo-adm-btn slo-adm-btn-secondary', onclick: () => bulkApply('approve') }, '✅ 表示中全て承認'));
+    tb.appendChild(el('button', { class: 'slo-adm-btn slo-adm-btn-danger', onclick: () => bulkApply('reject') }, '✗ 表示中全て却下'));
+    root.appendChild(tb);
+    const countsEl = el('div', { style: 'font-size:12px;color:#6b7280;margin-bottom:8px;' });
+    root.appendChild(countsEl);
+    const listDiv = el('div');
+    root.appendChild(listDiv);
+
+    async function reload() {
+      listDiv.innerHTML = '<div style="color:#9ca3af;">読み込み中…</div>';
+      try {
+        const r = await api('GET', '/api/faq-candidates?status=' + statusSel.value + '&limit=200');
+        state.data.faqCandidates = r.candidates || [];
+        countsEl.textContent = `件数  未レビュー: ${r.counts.pending} / 承認済: ${r.counts.approved} / 却下済: ${r.counts.rejected}`;
+        renderTable(listDiv, r.candidates || [], statusSel.value);
+        updateBadge(r.counts.pending);
+      } catch (e) { listDiv.innerHTML = '<div class="slo-adm-empty">エラー: ' + esc(e.message) + '</div>'; }
+    }
+    async function runNow() {
+      try {
+        const r = await api('POST', '/api/faq-candidates/run?days=7');
+        (window.Sloten?.toast || alert)(
+          `抽出完了: 新規 ${r.stats.inserted} / 更新 ${r.stats.updated} / 入金除外 ${r.stats.deposit_filtered}`,
+          { type: 'success' });
+        reload();
+      } catch (e) { (window.Sloten?.toast || alert)(e.message, { type: 'error' }); }
+    }
+    async function bulkApply(action) {
+      const ids = (state.data.faqCandidates || []).map((c) => c.id);
+      if (ids.length === 0) return;
+      if (!(await confirmDialog(`表示中の ${ids.length} 件を ${action === 'approve' ? '承認' : '却下'} しますか？`))) return;
+      try {
+        const r = await api('POST', '/api/faq-candidates/bulk', { action, ids });
+        (window.Sloten?.toast || alert)(`処理件数: ${r.processed}`, { type: 'success' });
+        reload();
+      } catch (e) { (window.Sloten?.toast || alert)(e.message, { type: 'error' }); }
+    }
+
+    reload();
+  }
+
+  function renderTable(root, rows, status) {
+    root.innerHTML = '';
+    if (rows.length === 0) { root.appendChild(el('div', { class: 'slo-adm-empty' }, '該当する候補はありません')); return; }
+    const table = el('table', { class: 'slo-adm-table' });
+    table.appendChild(el('thead', {}, el('tr', {},
+      el('th', { style: 'width:30%' }, '質問'),
+      el('th', {}, '回答 (先頭)'),
+      el('th', { style: 'width:90px' }, 'カテゴリ'),
+      el('th', { style: 'width:70px' }, '出現数'),
+      el('th', { style: 'width:110px' }, '最終検出'),
+      el('th', { style: 'width:180px' }, ''))));
+    const tbody = el('tbody');
+    for (const r of rows) {
+      const actions = el('div', { class: 'slo-adm-row-actions' });
+      if (status === 'pending') {
+        actions.appendChild(el('button', { onclick: () => editModal(r) }, '編集'));
+        actions.appendChild(el('button', { onclick: () => approveOne(r) }, '✅ 承認'));
+        actions.appendChild(el('button', { class: 'danger', onclick: () => rejectOne(r) }, '✗ 却下'));
+      } else if (status === 'approved') {
+        actions.appendChild(el('span', { style: 'color:#059669;font-size:11px;' }, 'FAQ #' + (r.approved_faq_id || '?')));
+      }
+      tbody.appendChild(el('tr', {},
+        el('td', {}, (r.question || '').slice(0, 90)),
+        el('td', {}, (r.answer || '').slice(0, 120)),
+        el('td', {}, r.category || '—'),
+        el('td', {}, String(r.source_count)),
+        el('td', { style: 'font-size:11px;' }, (r.last_seen_at || '').slice(0, 16)),
+        el('td', {}, actions)
+      ));
+    }
+    table.appendChild(tbody);
+    root.appendChild(table);
+  }
+
+  async function approveOne(r) {
+    try { await api('POST', `/api/faq-candidates/${r.id}/approve`); (window.Sloten?.toast || alert)('承認して FAQ に追加しました', { type: 'success' }); navigate('faq-candidates'); }
+    catch (e) { (window.Sloten?.toast || alert)(e.message, { type: 'error' }); }
+  }
+  async function rejectOne(r) {
+    try { await api('POST', `/api/faq-candidates/${r.id}/reject`); navigate('faq-candidates'); }
+    catch (e) { (window.Sloten?.toast || alert)(e.message, { type: 'error' }); }
+  }
+  function editModal(r) {
+    openModal('候補を編集して承認', (form, actions) => {
+      form.appendChild(el('label', {}, '質問'));
+      const q = el('textarea', { style: 'min-height:60px;' }, r.question || ''); form.appendChild(q);
+      form.appendChild(el('label', {}, '回答'));
+      const a = el('textarea', { style: 'min-height:120px;' }, r.answer || ''); form.appendChild(a);
+      form.appendChild(el('label', {}, 'カテゴリ'));
+      const cat = el('input', { value: r.category || '' }); form.appendChild(cat);
+      actions.appendChild(el('button', { class: 'slo-adm-btn slo-adm-btn-secondary', onclick: closeModal }, 'キャンセル'));
+      actions.appendChild(el('button', { class: 'slo-adm-btn slo-adm-btn-danger', onclick: async () => {
+        try { await api('POST', `/api/faq-candidates/${r.id}/reject`); closeModal(); navigate('faq-candidates'); }
+        catch (e) { (window.Sloten?.toast || alert)(e.message, { type: 'error' }); }
+      } }, '却下'));
+      actions.appendChild(el('button', { class: 'slo-adm-btn', onclick: async () => {
+        try {
+          await api('POST', `/api/faq-candidates/${r.id}/approve`, { question: q.value, answer: a.value, category: cat.value });
+          closeModal(); navigate('faq-candidates');
+          (window.Sloten?.toast || alert)('編集して承認しました', { type: 'success' });
+        } catch (e) { (window.Sloten?.toast || alert)(e.message, { type: 'error' }); }
+      } }, '編集して承認'));
+    });
+  }
+
+  function updateBadge(n) {
+    const b = document.getElementById('slo-adm-fq-badge');
+    if (!b) return;
+    if (n > 0) { b.textContent = n; b.style.display = 'inline-block'; }
+    else { b.style.display = 'none'; }
   }
 
   // --- Bot flows ---
@@ -1424,6 +1551,8 @@
     }
     document.body.setAttribute('data-view', 'app');
     $('#slo-adm-top-user').textContent = `${state.staff.name || state.staff.email}`;
+    // Prime the pending-count badge
+    api('GET', '/api/faq-candidates?status=pending&limit=1').then((r) => updateBadge(r.counts?.pending || 0)).catch(() => {});
     navigate('dashboard');
   }
 

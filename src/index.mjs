@@ -41,6 +41,9 @@ import { listBotMenus, createBotMenu, updateBotMenu, deleteBotMenu } from './han
 import { listBotFlows, createBotFlow, updateBotFlow, deleteBotFlow } from './handlers/bot-flows.mjs';
 import { uploadAttachment, downloadAttachment, downloadAttachmentSigned } from './handlers/attachments.mjs';
 import {
+  listCandidates, updateCandidate, approveCandidate, rejectCandidate, bulkAction, runExtractionNow,
+} from './handlers/faq-candidates.mjs';
+import {
   sendMessage, listMessages,
 } from './handlers/messages-native.mjs';
 import {
@@ -355,6 +358,23 @@ export default {
       {
         const m = path.match(/^\/api\/teams\/(\d+)\/members\/(\d+)$/);
         if (m && method === 'DELETE') return requireAdminRole(removeTeamMember)(request, env, corsHeaders, parseInt(m[1], 10), parseInt(m[2], 10));
+      }
+
+      // FAQ candidates (weekly extraction review) — staff can read, admin acts
+      if (path === '/api/faq-candidates' && method === 'GET') return requireStaff(listCandidates)(request, env, corsHeaders);
+      if (path === '/api/faq-candidates/run' && method === 'POST') return requireAdminRole(runExtractionNow)(request, env, corsHeaders);
+      if (path === '/api/faq-candidates/bulk' && method === 'POST') return requireAdminRole(bulkAction)(request, env, corsHeaders);
+      {
+        const m = path.match(/^\/api\/faq-candidates\/(\d+)$/);
+        if (m && method === 'PATCH') return requireAdminRole(updateCandidate)(request, env, corsHeaders, parseInt(m[1], 10));
+      }
+      {
+        const m = path.match(/^\/api\/faq-candidates\/(\d+)\/approve$/);
+        if (m && method === 'POST') return requireAdminRole(approveCandidate)(request, env, corsHeaders, parseInt(m[1], 10));
+      }
+      {
+        const m = path.match(/^\/api\/faq-candidates\/(\d+)\/reject$/);
+        if (m && method === 'POST') return requireAdminRole(rejectCandidate)(request, env, corsHeaders, parseInt(m[1], 10));
       }
 
       // Bot flows (multi-step workflows; admin-role writes)
