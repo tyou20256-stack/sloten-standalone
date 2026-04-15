@@ -124,7 +124,7 @@
       onclick: open,
       html: ICON_CHAT,
     });
-    dom.panel = el('div', { class: 'sloten-chat-panel', role: 'dialog', 'aria-label': 'サポートチャット' });
+    dom.panel = el('div', { class: 'sloten-chat-panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'サポートチャット' });
     const header = el('div', { class: 'sloten-chat-header' },
       el('div', {},
         el('div', { class: 'sloten-chat-title' }, cfg.title),
@@ -142,7 +142,7 @@
       onkeydown: onKeyDown,
       oninput: () => autoResize(dom.input),
     });
-    dom.send = el('button', { class: 'sloten-chat-send', onclick: onSend }, '送信');
+    dom.send = el('button', { class: 'sloten-chat-send', type: 'button', 'aria-label': 'メッセージを送信', onclick: onSend }, '送信');
     const inputWrap = el('div', { class: 'sloten-chat-input-wrap' }, dom.input, dom.send);
     dom.status = el('div', { class: 'sloten-chat-status' }, '接続準備中');
 

@@ -1,3 +1,4 @@
+import { resolveTenantId } from '../tenant-scope.mjs';
 // CSV exporter. UTF-8 BOM prefix for Excel compatibility.
 
 const BOM = '\uFEFF';
@@ -65,7 +66,7 @@ export async function exportCsv(request, env, corsHeaders, resource) {
     });
   }
   const url = new URL(request.url);
-  const tenantId = url.searchParams.get('tenant_id') || env.DEFAULT_TENANT_ID || 'tenant_default';
+  const tenantId = resolveTenantId(request, env);
   const since = url.searchParams.get('since');
   const until = url.searchParams.get('until');
   // Must be ISO-like (YYYY-MM-DD... or YYYY-MM-DDTHH:MM...). Reject garbage

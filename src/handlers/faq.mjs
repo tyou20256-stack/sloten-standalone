@@ -1,5 +1,6 @@
 // 弊社側暫定実装 — tking510 納品版で置き換え予定
 import { detectInputThreat } from '../responseFilter.mjs';
+import { resolveTenantId } from '../tenant-scope.mjs';
 
 const json = (obj, status, corsHeaders) =>
   new Response(JSON.stringify(obj), {
@@ -35,7 +36,7 @@ function decorateFaq(row) {
 export async function handleFaqGet(request, env, corsHeaders) {
   try {
     const url = new URL(request.url);
-    const tenantId = url.searchParams.get('tenant_id') || 'tenant_default';
+    const tenantId = resolveTenantId(request, env);
     const language = url.searchParams.get('language');
     const isActive = url.searchParams.get('is_active');
     let q = 'SELECT * FROM faq WHERE tenant_id = ?';
@@ -47,7 +48,7 @@ export async function handleFaqGet(request, env, corsHeaders) {
     q += ' ORDER BY priority DESC, id DESC';
     const { results } = await env.DB.prepare(q).bind(...vals).all();
     const rows = (results || []).map(decorateFaq);
-    return ok({ success: true, faqs: rows, faq: rows }, corsHeaders);
+    return ok({ success: true, faqs: rows }, corsHeaders);
   } catch (e) {
     console.error('handleFaqGet:', e.message);
     return err('Internal error', 500, corsHeaders);
@@ -159,16 +160,18 @@ export async function handleFaqSearch(request, env, corsHeaders) {
   try {
     const url = new URL(request.url);
     const q = url.searchParams.get('q') || '';
-    const tenantId = url.searchParams.get('tenant_id') || 'tenant_default';
-    if (!q.trim()) return ok({ success: true, results: [], faq: [] }, corsHeaders);
-    const like = `%${q}%`;
+    const tenantId = resolveTenantId(request, env);
+    if (!q.trim()) return ok({ success: true, results: [] }, corsHeaders);
+    // LIKE-escape to prevent metacharacter DoS and unexpected matches.
+    const escaped = q.replace(/[\\%_]/g, (c) => '\\' + c);
+    const like = `%${escaped}%`;
     const { results } = await env.DB.prepare(
       `SELECT * FROM faq WHERE tenant_id = ? AND is_active = 1
-         AND (question LIKE ? OR answer LIKE ? OR category LIKE ?)
+         AND (question LIKE ? ESCAPE '\\' OR answer LIKE ? ESCAPE '\\' OR category LIKE ? ESCAPE '\\')
        ORDER BY priority DESC, usage_count DESC LIMIT 50`
     ).bind(tenantId, like, like, like).all();
     const rows = (results || []).map(decorateFaq);
-    return ok({ success: true, results: rows, faq: rows }, corsHeaders);
+    return ok({ success: true, results: rows }, corsHeaders);
   } catch (e) {
     console.error('handleFaqSearch:', e.message);
     return err('Internal error', 500, corsHeaders);

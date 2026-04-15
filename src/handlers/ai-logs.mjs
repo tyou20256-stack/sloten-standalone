@@ -1,12 +1,13 @@
 // AI call logs + feedback. Admin-only.
 
 import { ok, err, parseJson } from '../json.mjs';
+import { resolveTenantId } from '../tenant-scope.mjs';
 
 const MAX_LIMIT = 200;
 
 export async function listAiLogs(request, env, corsHeaders) {
   const url = new URL(request.url);
-  const tenantId = url.searchParams.get('tenant_id') || env.DEFAULT_TENANT_ID || 'tenant_default';
+  const tenantId = resolveTenantId(request, env);
   const status = url.searchParams.get('status'); // ok | error | empty
   const conversationId = url.searchParams.get('conversation_id');
   const since = url.searchParams.get('since');
@@ -80,7 +81,7 @@ export async function submitFeedback(request, env, corsHeaders, logId) {
 
 export async function aiStats(request, env, corsHeaders) {
   const url = new URL(request.url);
-  const tenantId = url.searchParams.get('tenant_id') || env.DEFAULT_TENANT_ID || 'tenant_default';
+  const tenantId = resolveTenantId(request, env);
   const [total24, total7d, errors24, avgLat, thumbs] = await Promise.all([
     env.DB.prepare(`SELECT COUNT(*) n FROM ai_logs WHERE tenant_id = ? AND created_at >= datetime('now','-1 day')`).bind(tenantId).first(),
     env.DB.prepare(`SELECT COUNT(*) n FROM ai_logs WHERE tenant_id = ? AND created_at >= datetime('now','-7 day')`).bind(tenantId).first(),

@@ -1,6 +1,7 @@
 // Labels catalog — per-tenant named tags with optional color.
 
 import { ok, created, err, parseJson } from '../json.mjs';
+import { resolveTenantId } from '../tenant-scope.mjs';
 
 function validColor(c) {
   return typeof c === 'string' && /^#[0-9a-fA-F]{6}$/.test(c);
@@ -8,7 +9,7 @@ function validColor(c) {
 
 export async function listLabels(request, env, corsHeaders) {
   const url = new URL(request.url);
-  const tenantId = url.searchParams.get('tenant_id') || env.DEFAULT_TENANT_ID || 'tenant_default';
+  const tenantId = resolveTenantId(request, env);
   const { results } = await env.DB.prepare(
     'SELECT * FROM labels WHERE tenant_id = ? ORDER BY name ASC'
   ).bind(tenantId).all();

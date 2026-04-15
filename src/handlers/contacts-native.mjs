@@ -3,6 +3,7 @@
 import { uuid } from '../id.mjs';
 import { ok, created, err, parseJson } from '../json.mjs';
 import { issueContactToken } from '../auth/contact-token.mjs';
+import { resolveTenantId } from '../tenant-scope.mjs';
 
 function decorate(row) {
   if (!row) return row;
@@ -42,7 +43,7 @@ export async function getContact(request, env, corsHeaders, id) {
 
 export async function listContacts(request, env, corsHeaders) {
   const url = new URL(request.url);
-  const tenantId = url.searchParams.get('tenant_id') || env.DEFAULT_TENANT_ID || 'tenant_default';
+  const tenantId = resolveTenantId(request, env);
   const limit = Math.min(parseInt(url.searchParams.get('limit') || '50', 10), 200);
   const { results } = await env.DB.prepare(
     'SELECT * FROM contacts WHERE tenant_id = ? ORDER BY created_at DESC LIMIT ?'

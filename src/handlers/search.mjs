@@ -1,11 +1,12 @@
 // Global search across conversations, messages, contacts (LIKE-based).
 
 import { ok, err } from '../json.mjs';
+import { resolveTenantId } from '../tenant-scope.mjs';
 
 export async function searchHandler(request, env, corsHeaders) {
   const url = new URL(request.url);
   const q = (url.searchParams.get('q') || '').trim();
-  const tenantId = url.searchParams.get('tenant_id') || env.DEFAULT_TENANT_ID || 'tenant_default';
+  const tenantId = resolveTenantId(request, env);
   const limit = Math.min(parseInt(url.searchParams.get('limit') || '30', 10), 100);
   if (q.length < 1) return ok({ success: true, query: q, conversations: [], messages: [], contacts: [] }, corsHeaders);
 

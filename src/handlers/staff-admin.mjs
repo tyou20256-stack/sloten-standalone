@@ -52,8 +52,22 @@ export async function createStaff(request, env, corsHeaders) {
 }
 
 export async function updateStaff(request, env, corsHeaders, id) {
+  const existing = await env.DB.prepare('SELECT * FROM staff_members WHERE id = ?').bind(id).first();
+  if (!existing) return err('Staff not found', 404, corsHeaders);
   const { body, response } = await parseJson(request, corsHeaders);
   if (response) return response;
+
+  // Last-admin guard: prevent demoting / deactivating the final admin.
+  if ((body.role && body.role !== 'admin' && existing.role === 'admin')
+      || (body.is_active === 0 && existing.role === 'admin')) {
+    const adminCount = await env.DB.prepare(
+      `SELECT COUNT(*) n FROM staff_members WHERE role = 'admin' AND is_active = 1`
+    ).first();
+    if ((adminCount?.n || 0) <= 1) {
+      return err('Cannot demote/deactivate the last active admin', 400, corsHeaders);
+    }
+  }
+
   const updates = [];
   const vals = [];
   if (body.name !== undefined)      { updates.push('name = ?');      vals.push(String(body.name).trim()); }
@@ -75,11 +89,20 @@ export async function updateStaff(request, env, corsHeaders, id) {
 }
 
 export async function deleteStaff(request, env, corsHeaders, id) {
-  const existing = await env.DB.prepare('SELECT id FROM staff_members WHERE id = ?').bind(id).first();
+  const existing = await env.DB.prepare('SELECT id, role FROM staff_members WHERE id = ?').bind(id).first();
   if (!existing) return err('Staff not found', 404, corsHeaders);
-  // Self-delete guard
+  // Self-delete guard (cookie sessions only — Bearer admin has no __staff).
   const self = request.__staff;
   if (self && self.id === id) return err('Cannot delete your own account', 400, corsHeaders);
+  // Last-admin guard — even Bearer callers can't delete the final admin.
+  if (existing.role === 'admin') {
+    const adminCount = await env.DB.prepare(
+      `SELECT COUNT(*) n FROM staff_members WHERE role = 'admin' AND is_active = 1`
+    ).first();
+    if ((adminCount?.n || 0) <= 1) {
+      return err('Cannot delete the last active admin', 400, corsHeaders);
+    }
+  }
   // Null out assignee on their conversations (soft cascade)
   await env.DB.prepare('UPDATE conversations SET assignee_id = NULL, updated_at = datetime(\'now\') WHERE assignee_id = ?').bind(id).run();
   await env.DB.prepare('DELETE FROM staff_members WHERE id = ?').bind(id).run();

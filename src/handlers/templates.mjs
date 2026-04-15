@@ -1,5 +1,6 @@
 // 弊社側暫定実装 — tking510 納品版で置き換え予定
 import { detectInputThreat } from '../responseFilter.mjs';
+import { resolveTenantId } from '../tenant-scope.mjs';
 
 const json = (obj, status, corsHeaders) =>
   new Response(JSON.stringify(obj), {
@@ -19,7 +20,7 @@ const TPL_COLS = ['tenant_id', 'name', 'category', 'content', 'language', 'short
 export async function handleTemplatesGet(request, env, corsHeaders) {
   try {
     const url = new URL(request.url);
-    const tenantId = url.searchParams.get('tenant_id') || 'tenant_default';
+    const tenantId = resolveTenantId(request, env);
     const { results } = await env.DB.prepare(
       'SELECT *, usage_count AS use_count FROM templates WHERE tenant_id = ? ORDER BY id DESC'
     ).bind(tenantId).all();

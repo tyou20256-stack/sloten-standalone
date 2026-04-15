@@ -1,10 +1,11 @@
 // Dashboard summary counts.
 
 import { ok } from '../json.mjs';
+import { resolveTenantId } from '../tenant-scope.mjs';
 
 export async function dashboardStats(request, env, corsHeaders) {
   const url = new URL(request.url);
-  const tenantId = url.searchParams.get('tenant_id') || env.DEFAULT_TENANT_ID || 'tenant_default';
+  const tenantId = resolveTenantId(request, env);
 
   // Run aggregates in parallel for speed on D1.
   const queries = await Promise.all([

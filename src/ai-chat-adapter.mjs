@@ -64,7 +64,7 @@ async function callGemini(apiKey, system, userMessage, model = 'gemini-2.5-flash
   return text.trim();
 }
 
-async function callAnthropic(apiKey, system, userMessage) {
+async function callAnthropic(apiKey, system, userMessage, model = 'claude-haiku-4-5') {
   const r = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -73,7 +73,7 @@ async function callAnthropic(apiKey, system, userMessage) {
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: 'claude-haiku-4-5-20251001',
+      model,
       max_tokens: 800,
       system,
       messages: [{ role: 'user', content: userMessage }],
@@ -87,7 +87,9 @@ async function callAnthropic(apiKey, system, userMessage) {
 
 export async function generateBotReply(env, { conversationId, tenantId, customerMessage, ctx }) {
   const provider = (env.AI_PROVIDER || 'gemini').toLowerCase();
-  const model = provider === 'anthropic' ? 'claude-haiku-4-5-20251001' : 'gemini-2.5-flash-lite';
+  const model = provider === 'anthropic'
+    ? (env.ANTHROPIC_MODEL || 'claude-haiku-4-5')
+    : (env.GEMINI_MODEL || 'gemini-2.5-flash-lite');
   const { faqRows, kbRows } = await loadContext(env, tenantId);
 
   // Choose active prompt via weighted random (A/B testing). Fall back to hard-coded.
@@ -107,10 +109,10 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
     // phone numbers / account IDs to third-party providers.
     if (provider === 'anthropic') {
       if (!env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY not set');
-      text = await callAnthropic(env.ANTHROPIC_API_KEY, system, maskedInput);
+      text = await callAnthropic(env.ANTHROPIC_API_KEY, system, maskedInput, model);
     } else {
       if (!env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not set');
-      text = await callGemini(env.GEMINI_API_KEY, system, maskedInput);
+      text = await callGemini(env.GEMINI_API_KEY, system, maskedInput, model);
     }
     if (!text) status = 'empty';
   } catch (e) {

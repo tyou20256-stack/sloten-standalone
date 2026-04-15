@@ -181,13 +181,13 @@
           if (row) await api('PATCH', `/api/ai-prompts/${row.id}`, body);
           else     await api('POST', '/api/ai-prompts', body);
           closeModal(); navigate('prompts');
-        } catch (e) { alert(e.message); }
+        } catch (e) { (window.Sloten?.toast || alert)(e.message, { type: 'error' }); }
       } }, '保存'));
     });
   }
   async function deletePrompt(id) {
     if (!(await confirmDialog('このプロンプトを削除しますか？'))) return;
-    try { await api('DELETE', `/api/ai-prompts/${id}`); navigate('prompts'); } catch (e) { alert(e.message); }
+    try { await api('DELETE', `/api/ai-prompts/${id}`); navigate('prompts'); } catch (e) { (window.Sloten?.toast||alert)(e.message, { type: 'error' }); }
   }
 
   // --- Teams ---
@@ -241,7 +241,7 @@
       select.addEventListener('change', async () => {
         if (!select.value) return;
         try { await api('POST', `/api/teams/${t.id}/members`, { staff_id: parseInt(select.value, 10) }); navigate('teams'); }
-        catch (e) { alert(e.message); }
+        catch (e) { (window.Sloten?.toast||alert)(e.message, { type: 'error' }); }
       });
       memRow.appendChild(select);
       card.appendChild(memRow);
@@ -261,17 +261,17 @@
           if (row) await api('PATCH', `/api/teams/${row.id}`, body);
           else     await api('POST', '/api/teams', body);
           closeModal(); navigate('teams');
-        } catch (e) { alert(e.message); }
+        } catch (e) { (window.Sloten?.toast || alert)(e.message, { type: 'error' }); }
       } }, '保存'));
     });
   }
   async function removeTeamMember(teamId, staffId) {
     if (!(await confirmDialog('このメンバーをチームから外しますか？'))) return;
-    try { await api('DELETE', `/api/teams/${teamId}/members/${staffId}`); navigate('teams'); } catch (e) { alert(e.message); }
+    try { await api('DELETE', `/api/teams/${teamId}/members/${staffId}`); navigate('teams'); } catch (e) { (window.Sloten?.toast||alert)(e.message, { type: 'error' }); }
   }
   async function deleteTeam(id) {
     if (!(await confirmDialog('このチームを削除しますか？'))) return;
-    try { await api('DELETE', `/api/teams/${id}`); navigate('teams'); } catch (e) { alert(e.message); }
+    try { await api('DELETE', `/api/teams/${id}`); navigate('teams'); } catch (e) { (window.Sloten?.toast||alert)(e.message, { type: 'error' }); }
   }
 
   // --- Helpers for new sections ---
@@ -389,11 +389,11 @@
 
         actions.appendChild(el('button', { class: 'slo-adm-btn slo-adm-btn-secondary', onclick: closeModal }, '閉じる'));
       });
-    } catch (e) { alert(e.message); }
+    } catch (e) { (window.Sloten?.toast||alert)(e.message, { type: 'error' }); }
   }
   async function deleteAiLog(id) {
     if (!(await confirmDialog('この AI ログを削除しますか？'))) return;
-    try { await api('DELETE', `/api/ai-logs/${id}`); navigate('ai-logs'); } catch (e) { alert(e.message); }
+    try { await api('DELETE', `/api/ai-logs/${id}`); navigate('ai-logs'); } catch (e) { (window.Sloten?.toast||alert)(e.message, { type: 'error' }); }
   }
 
   // --- Export section ---
@@ -528,13 +528,13 @@
           if (row) await api('PUT', `/api/faq/${row.id}`, body);
           else     await api('POST', '/api/faq', Object.assign({ tenant_id: 'tenant_default' }, body));
           closeModal(); navigate('faq');
-        } catch (e) { alert(e.message); }
+        } catch (e) { (window.Sloten?.toast || alert)(e.message, { type: 'error' }); }
       } }, '保存'));
     });
   }
   async function deleteFaq(id) {
     if (!(await confirmDialog('この FAQ を削除しますか？'))) return;
-    try { await api('DELETE', `/api/faq/${id}`); navigate('faq'); } catch (e) { alert(e.message); }
+    try { await api('DELETE', `/api/faq/${id}`); navigate('faq'); } catch (e) { (window.Sloten?.toast||alert)(e.message, { type: 'error' }); }
   }
 
   // --- Templates ---
@@ -596,13 +596,13 @@
           if (row) await api('PUT', `/api/templates/${row.id}`, body);
           else     await api('POST', '/api/templates', body);
           closeModal(); navigate('templates');
-        } catch (e) { alert(e.message); }
+        } catch (e) { (window.Sloten?.toast || alert)(e.message, { type: 'error' }); }
       } }, '保存'));
     });
   }
   async function deleteTpl(id) {
     if (!(await confirmDialog('このテンプレートを削除しますか？'))) return;
-    try { await api('DELETE', `/api/templates/${id}`); navigate('templates'); } catch (e) { alert(e.message); }
+    try { await api('DELETE', `/api/templates/${id}`); navigate('templates'); } catch (e) { (window.Sloten?.toast||alert)(e.message, { type: 'error' }); }
   }
 
   // --- Knowledge sources ---
@@ -666,13 +666,13 @@
           if (row) await api('PUT', `/api/knowledge-sources/${row.id}`, body);
           else     await api('POST', '/api/knowledge-sources', body);
           closeModal(); navigate('knowledge');
-        } catch (e) { alert(e.message); }
+        } catch (e) { (window.Sloten?.toast || alert)(e.message, { type: 'error' }); }
       } }, '保存'));
     });
   }
   async function deleteKb(id) {
     if (!(await confirmDialog('このナレッジを削除しますか？'))) return;
-    try { await api('DELETE', `/api/knowledge-sources/${id}`); navigate('knowledge'); } catch (e) { alert(e.message); }
+    try { await api('DELETE', `/api/knowledge-sources/${id}`); navigate('knowledge'); } catch (e) { (window.Sloten?.toast||alert)(e.message, { type: 'error' }); }
   }
 
   // --- Labels ---
@@ -728,13 +728,13 @@
           if (row) await api('PUT', `/api/labels/${row.id}`, body);
           else     await api('POST', '/api/labels', body);
           closeModal(); navigate('labels');
-        } catch (e) { alert(e.message); }
+        } catch (e) { (window.Sloten?.toast || alert)(e.message, { type: 'error' }); }
       } }, '保存'));
     });
   }
   async function deleteLabel(id) {
     if (!(await confirmDialog('このラベルを削除しますか？ 会話のラベル参照も削除されます。'))) return;
-    try { await api('DELETE', `/api/labels/${id}`); navigate('labels'); } catch (e) { alert(e.message); }
+    try { await api('DELETE', `/api/labels/${id}`); navigate('labels'); } catch (e) { (window.Sloten?.toast||alert)(e.message, { type: 'error' }); }
   }
 
   // --- Staff ---
@@ -825,7 +825,7 @@
             const r = await api('POST', '/api/staff', { email: em.value.trim(), name: nm.value.trim(), role: role.value });
             showGeneratedPassword(r.staff.email, r.password, () => { closeModal(); navigate('staff'); });
           }
-        } catch (e) { alert(e.message); }
+        } catch (e) { (window.Sloten?.toast || alert)(e.message, { type: 'error' }); }
       } }, row ? '保存' : '追加'));
     });
   }
@@ -834,12 +834,12 @@
     try {
       const r = await api('POST', `/api/staff/${row.id}/reset_password`);
       showGeneratedPassword(r.email, r.password);
-    } catch (e) { alert(e.message); }
+    } catch (e) { (window.Sloten?.toast||alert)(e.message, { type: 'error' }); }
   }
   async function deleteStaff(row) {
-    if (row.id === state.staff?.id) { alert('自分自身は削除できません。'); return; }
+    if (row.id === state.staff?.id) { (window.Sloten?.toast||alert)('自分自身は削除できません', { type: 'warning' }); return; }
     if (!(await confirmDialog(`${row.email} を削除しますか？担当していた会話は未割当になります。`))) return;
-    try { await api('DELETE', `/api/staff/${row.id}`); navigate('staff'); } catch (e) { alert(e.message); }
+    try { await api('DELETE', `/api/staff/${row.id}`); navigate('staff'); } catch (e) { (window.Sloten?.toast||alert)(e.message, { type: 'error' }); }
   }
   async function bulkImportStaff() {
     if (!(await confirmDialog('Chatwoot の担当者 email から未登録スタッフを一括作成し、会話の assignee_id を復元します。続行しますか？'))) return;
@@ -881,7 +881,7 @@
           }, '📥 CSV ダウンロード'), actions.firstChild);
         }
       });
-    } catch (e) { loading.remove(); alert(e.message); }
+    } catch (e) { loading.remove(); (window.Sloten?.toast||alert)(e.message, { type: 'error' }); }
   }
 
   function showGeneratedPassword(email, password, onClose) {

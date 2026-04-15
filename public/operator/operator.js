@@ -173,7 +173,7 @@
         content: text.trim(),
         is_private: state.privateMode,
       });
-    } catch (e) { alert('送信失敗: ' + e.message); }
+    } catch (e) { (window.Sloten?.toast || alert)('送信失敗: ' + e.message, { type: 'error' }); }
   }
 
   async function markRead(convId) {
@@ -367,10 +367,19 @@
       actions.appendChild(el('button', { class: 'primary', onclick: reopenConv }, '再オープン'));
     }
     // Snooze button — schedules a future wake via datetime-local picker.
-    const snoozeBtn = el('button', { onclick: () => openSnoozeDialog(conv) },
-      conv.snoozed_until ? `⏰ ${formatTime(conv.snoozed_until)}` : '⏰ スヌーズ');
+    const snoozeBtn = el('button', {
+      type: 'button',
+      'aria-label': 'スヌーズ期限を設定',
+      onclick: () => openSnoozeDialog(conv),
+    }, conv.snoozed_until ? `⏰ ${formatTime(conv.snoozed_until)}` : '⏰ スヌーズ');
     actions.appendChild(snoozeBtn);
-    if (conv.snoozed_until) actions.appendChild(el('button', { onclick: unsnoozeConv }, '解除'));
+    if (conv.snoozed_until) {
+      actions.appendChild(el('button', {
+        type: 'button',
+        'aria-label': 'スヌーズを解除',
+        onclick: unsnoozeConv,
+      }, '解除'));
+    }
     // Priority selector
     const prioritySelect = el('select', {
       onchange: (ev) => setPriority(ev.target.value),

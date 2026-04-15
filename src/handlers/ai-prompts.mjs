@@ -1,10 +1,11 @@
 // AI prompt CRUD + weighted random selection for A/B testing.
 
 import { ok, created, err, parseJson } from '../json.mjs';
+import { resolveTenantId } from '../tenant-scope.mjs';
 
 export async function listPrompts(request, env, corsHeaders) {
   const url = new URL(request.url);
-  const tenantId = url.searchParams.get('tenant_id') || env.DEFAULT_TENANT_ID || 'tenant_default';
+  const tenantId = resolveTenantId(request, env);
   const rows = (await env.DB.prepare(
     'SELECT * FROM ai_prompts WHERE tenant_id = ? ORDER BY is_active DESC, weight DESC, id ASC'
   ).bind(tenantId).all()).results || [];

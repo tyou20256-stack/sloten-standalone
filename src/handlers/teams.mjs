@@ -1,10 +1,11 @@
 // Teams + team membership CRUD. Admin only.
 
 import { ok, created, err, parseJson } from '../json.mjs';
+import { resolveTenantId } from '../tenant-scope.mjs';
 
 export async function listTeams(request, env, corsHeaders) {
   const url = new URL(request.url);
-  const tenantId = url.searchParams.get('tenant_id') || env.DEFAULT_TENANT_ID || 'tenant_default';
+  const tenantId = resolveTenantId(request, env);
   const teams = (await env.DB.prepare(
     'SELECT * FROM teams WHERE tenant_id = ? ORDER BY name ASC'
   ).bind(tenantId).all()).results || [];

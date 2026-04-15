@@ -3,6 +3,7 @@
 import { uuid } from '../id.mjs';
 import { ok, created, err, parseJson } from '../json.mjs';
 import { broadcastToConversation } from '../broadcast.mjs';
+import { resolveTenantId } from '../tenant-scope.mjs';
 
 const VALID_STATUS = new Set(['bot', 'open', 'closed']);
 const VALID_PRIORITY = new Set(['low', 'normal', 'high', 'urgent']);
@@ -21,7 +22,7 @@ function normalizeLabels(input) {
 export async function createConversation(request, env, corsHeaders) {
   const { body, response } = await parseJson(request, corsHeaders);
   if (response) return response;
-  const tenantId = body.tenant_id || env.DEFAULT_TENANT_ID || 'tenant_default';
+  const tenantId = resolveTenantId(request, env);
   const contactId = body.contact_id;
   if (!contactId) return err('contact_id required', 400, corsHeaders);
 
@@ -46,7 +47,7 @@ export async function createConversation(request, env, corsHeaders) {
 
 export async function listConversations(request, env, corsHeaders) {
   const url = new URL(request.url);
-  const tenantId = url.searchParams.get('tenant_id') || env.DEFAULT_TENANT_ID || 'tenant_default';
+  const tenantId = resolveTenantId(request, env);
   const status = url.searchParams.get('status');
   const priority = url.searchParams.get('priority');
   const label = url.searchParams.get('label');
