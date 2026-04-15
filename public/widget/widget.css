@@ -122,7 +122,32 @@
   padding: 12px 14px;
   position: relative;
   overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
+.sloten-chat-welcome-text { flex: 1; min-width: 0; position: relative; }
+.sloten-chat-menu-btn {
+  position: relative;
+  background: var(--slc-brand-gold);
+  color: var(--slc-header-bg);
+  border: none;
+  border-radius: 20px;
+  padding: 8px 14px;
+  font-weight: 700;
+  font-size: 12.5px;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(245,197,24,0.35);
+  transition: transform 0.12s, box-shadow 0.12s;
+  flex-shrink: 0;
+  font-family: inherit;
+}
+.sloten-chat-menu-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(245,197,24,0.5);
+}
+.sloten-chat-menu-btn:active { transform: translateY(0); }
+.sloten-chat-menu-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
 .sloten-chat-welcome::before {
   /* subtle radial glow */
   content: ""; position: absolute; inset: -20%;

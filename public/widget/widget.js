@@ -26,6 +26,7 @@
     brandInitials: 'ST',
     welcomeTitle: 'こんばんは、スロット天国サポートです',
     welcomeBody: 'ご用件をお選びいただくか、自由にご質問ください。',
+    menuButtonLabel: 'メニュー',
     dreampotUrl: 'https://sloten.io/lottery',
     inputPlaceholder: 'ご質問を入力…',
     autoOpen: false,
@@ -51,6 +52,7 @@
     brandInitials: ds.brandInitials || userCfg.brandInitials || defaults.brandInitials,
     welcomeTitle: ds.welcomeTitle || userCfg.welcomeTitle || defaults.welcomeTitle,
     welcomeBody: ds.welcomeBody || userCfg.welcomeBody || defaults.welcomeBody,
+    menuButtonLabel: ds.menuButtonLabel || userCfg.menuButtonLabel || defaults.menuButtonLabel,
     dreampotUrl: ds.dreampotUrl || userCfg.dreampotUrl || defaults.dreampotUrl,
     inputPlaceholder: ds.inputPlaceholder || userCfg.inputPlaceholder || defaults.inputPlaceholder,
     autoOpen: (ds.autoOpen || userCfg.autoOpen || '').toString() === '1' || userCfg.autoOpen === true,
@@ -156,8 +158,15 @@
     // Pinned welcome + dreampot (always above the message stream)
     dom.pinned = el('div', { class: 'sloten-chat-pinned' });
     dom.welcome = el('div', { class: 'sloten-chat-welcome' },
-      el('div', { class: 'sloten-chat-welcome-title' }, cfg.welcomeTitle),
-      el('div', { class: 'sloten-chat-welcome-body' }, cfg.welcomeBody),
+      el('div', { class: 'sloten-chat-welcome-text' },
+        el('div', { class: 'sloten-chat-welcome-title' }, cfg.welcomeTitle),
+        el('div', { class: 'sloten-chat-welcome-body' }, cfg.welcomeBody),
+      ),
+      el('button', {
+        class: 'sloten-chat-menu-btn', type: 'button',
+        'aria-label': 'メニューを表示',
+        onclick: onMenuClick,
+      }, cfg.menuButtonLabel),
     );
     dom.dreampot = el('div', {
       class: 'sloten-chat-dreampot',
@@ -407,6 +416,35 @@
         setBanner('');
       }
     } catch (_) { /* ignore */ }
+  }
+
+  // --- Menu button ---
+  async function onMenuClick() {
+    if (sending) return;
+    const btn = document.querySelector('.sloten-chat-menu-btn');
+    if (btn) btn.disabled = true;
+    sending = true;
+    setTyping(true);
+    try {
+      await ensureConversation();
+      // reset_flow:true clears any active flow_state server-side so the main
+      // menu is displayed again even mid-flow.
+      await api('POST', `/api/widget/conversations/${state.conversationId}/messages`, {
+        sender_type: 'customer',
+        content: cfg.menuButtonLabel,
+        reset_flow: true,
+      });
+    } catch (e) {
+      renderMessage({
+        id: 'err-' + Date.now(), sender_type: 'system',
+        content: 'メニュー表示に失敗しました: ' + e.message,
+        created_at: new Date().toISOString(),
+      });
+    } finally {
+      sending = false;
+      setTyping(false);
+      if (btn) btn.disabled = false;
+    }
   }
 
   // --- Sending ---

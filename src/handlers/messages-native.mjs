@@ -152,6 +152,13 @@ export async function sendMessage(request, env, corsHeaders, conversationId, opt
       else sendWebhook().catch(() => {});
     }
 
+    // Widget-initiated flow reset: the 'メニュー' button sends {reset_flow:true}
+    // to clear any active flow_state and re-enter the main menu.
+    if (isWidget && body.reset_flow === true) {
+      await env.DB.prepare(`UPDATE conversations SET flow_state = NULL, updated_at = datetime('now') WHERE id = ?`)
+        .bind(conversationId).run();
+    }
+
     // Auto bot reply: customer message on bot-handled conversation.
     // Priority:
     //   1. Active multi-step flow (or a new flow triggered by the message)
