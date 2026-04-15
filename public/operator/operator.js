@@ -24,6 +24,7 @@
     tplOpen: false,
     searchDebounce: null,
     notifyGranted: false,
+    pendingAttachment: null, // {id, filename, content_type, size_bytes}
   };
 
   const PRIORITIES = [
@@ -165,15 +166,43 @@
   }
 
   async function sendMessage(text) {
-    if (!state.selectedId || !text.trim()) return;
+    if (!state.selectedId) return;
+    const trimmed = (text || '').trim();
+    if (!trimmed && !state.pendingAttachment) return;
     try {
-      await api('POST', `/api/conversations/${state.selectedId}/messages`, {
+      const body = {
         sender_type: 'staff',
         sender_id: String(state.staff.id),
-        content: text.trim(),
+        content: trimmed || (state.pendingAttachment ? state.pendingAttachment.filename : ''),
         is_private: state.privateMode,
-      });
+      };
+      if (state.pendingAttachment) {
+        body.content_attributes = { attachment_id: state.pendingAttachment.id };
+      }
+      await api('POST', `/api/conversations/${state.selectedId}/messages`, body);
+      if (state.pendingAttachment) { state.pendingAttachment = null; renderDetail(); }
     } catch (e) { (window.Sloten?.toast || alert)('送信失敗: ' + e.message, { type: 'error' }); }
+  }
+
+  async function uploadStaffAttachment(file) {
+    if (!state.selectedId || !file) return;
+    if (file.size > 10 * 1024 * 1024) {
+      (window.Sloten?.toast || alert)('ファイルが大きすぎます (最大10MB)', { type: 'error' });
+      return;
+    }
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const r = await fetch(API + `/api/conversations/${state.selectedId}/attachments`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Sec-Fetch-Site': 'same-origin' },
+        body: form,
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      state.pendingAttachment = data.attachment;
+      renderDetail();
+    } catch (e) { (window.Sloten?.toast || alert)('アップロード失敗: ' + e.message, { type: 'error' }); }
   }
 
   async function markRead(convId) {
@@ -415,9 +444,46 @@
         body,
         el('div', { class: 'slo-op-msg-meta' }, `${m.sender_type} · ${formatTime(m.created_at)}`)
       );
+      // Attachment render (decorated server-side in listMessages)
+      if (m.attachment) {
+        const a = m.attachment;
+        const url = API + `/api/attachments/${a.id}`;
+        const box = el('div', { class: 'slo-op-msg-attachment' });
+        const isImg = (a.content_type || '').startsWith('image/');
+        if (isImg) {
+          const img = el('img', { alt: a.filename });
+          fetch(url, { credentials: 'include' })
+            .then((r) => r.ok ? r.blob() : Promise.reject(new Error('download failed')))
+            .then((blb) => { img.src = URL.createObjectURL(blb); })
+            .catch(() => { img.alt = '読込失敗'; });
+          img.addEventListener('click', () => { if (img.src) window.open(img.src, '_blank', 'noopener'); });
+          box.appendChild(img);
+        } else {
+          box.appendChild(el('a', {
+            href: '#', onclick: async (ev) => {
+              ev.preventDefault();
+              try {
+                const r = await fetch(url, { credentials: 'include' });
+                if (!r.ok) throw new Error('download failed');
+                const b = await r.blob();
+                window.open(URL.createObjectURL(b), '_blank', 'noopener');
+              } catch (e) { (window.Sloten?.toast || alert)(e.message, { type: 'error' }); }
+            },
+          }, '📎 ' + (a.filename || 'file') + ' · ' + Math.round((a.size_bytes || 0) / 1024) + ' KB'));
+        }
+        b.appendChild(box);
+      }
       msgsEl.appendChild(b);
     }
     detail.appendChild(msgsEl);
+
+    if (state.pendingAttachment) {
+      const a = state.pendingAttachment;
+      const pending = el('div', { class: 'slo-op-attach-pending' },
+        `📎 ${a.filename} (${Math.round(a.size_bytes / 1024)} KB)`,
+        el('button', { type: 'button', onclick: () => { state.pendingAttachment = null; renderDetail(); } }, '×'));
+      detail.appendChild(pending);
+    }
 
     // Composer (toggle bar + input)
     const toggleBar = el('div', { class: 'slo-op-compose-toggle' },
@@ -445,6 +511,12 @@
     const btn = el('button', {
       onclick: () => { const v = input.value; input.value = ''; sendMessage(v); },
     }, state.privateMode ? 'メモ保存' : '送信');
+    const fileInp = el('input', { type: 'file', accept: 'image/*,application/pdf', style: 'display:none', onchange: (ev) => { if (ev.target.files && ev.target.files[0]) uploadStaffAttachment(ev.target.files[0]); ev.target.value = ''; } });
+    const attachBtn = el('button', {
+      class: 'slo-op-attach-btn', type: 'button', 'aria-label': 'ファイル添付',
+      title: '添付 (画像/PDF, 最大10MB)',
+      onclick: () => fileInp.click(),
+    }, '📎');
     if (conv.status === 'closed') {
       input.setAttribute('disabled', '');
       btn.setAttribute('disabled', '');
@@ -458,7 +530,7 @@
     });
     const composeWrap = el('div', {
       class: 'slo-op-compose' + (state.privateMode ? ' slo-op-compose-private' : ''),
-    }, input, btn);
+    }, attachBtn, input, btn, fileInp);
 
     // Templates dropdown
     const tplPanel = el('div', { class: 'slo-op-tpl-panel', 'data-open': state.tplOpen ? '1' : '0' });

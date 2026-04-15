@@ -143,18 +143,59 @@
       oninput: () => autoResize(dom.input),
     });
     dom.send = el('button', { class: 'sloten-chat-send', type: 'button', 'aria-label': 'メッセージを送信', onclick: onSend }, '送信');
-    const inputWrap = el('div', { class: 'sloten-chat-input-wrap' }, dom.input, dom.send);
+    dom.attach = el('button', { class: 'sloten-chat-attach', type: 'button', 'aria-label': 'ファイルを添付', title: 'ファイル添付 (画像/PDF, 最大10MB)', onclick: () => dom.file.click() }, '📎');
+    dom.file = el('input', { type: 'file', accept: 'image/*,application/pdf', style: 'display:none', onchange: onFilePicked });
+    dom.pending = el('div', { class: 'sloten-chat-pending', style: 'display:none' });
+    const inputWrap = el('div', { class: 'sloten-chat-input-wrap' }, dom.attach, dom.input, dom.send);
     dom.status = el('div', { class: 'sloten-chat-status' }, '接続準備中');
 
     dom.panel.appendChild(header);
     dom.panel.appendChild(dom.banner);
     dom.panel.appendChild(dom.messages);
     dom.messages.appendChild(dom.typing);
+    dom.panel.appendChild(dom.pending);
     dom.panel.appendChild(inputWrap);
+    dom.panel.appendChild(dom.file);
     dom.panel.appendChild(dom.status);
     dom.root.appendChild(dom.launcher);
     dom.root.appendChild(dom.panel);
     (document.body || document.documentElement).appendChild(dom.root);
+  }
+
+  // --- Attachments ---
+  let pendingAttachment = null; // { id, filename, content_type, size_bytes }
+
+  function showPending(att) {
+    pendingAttachment = att;
+    if (!att) { dom.pending.style.display = 'none'; dom.pending.innerHTML = ''; return; }
+    dom.pending.style.display = 'flex';
+    dom.pending.innerHTML = '';
+    dom.pending.appendChild(document.createTextNode(`📎 ${att.filename} (${Math.round(att.size_bytes/1024)} KB)`));
+    const x = el('button', { type: 'button', 'aria-label': '添付キャンセル', onclick: () => showPending(null) }, '×');
+    dom.pending.appendChild(x);
+  }
+
+  async function onFilePicked(ev) {
+    const f = ev.target.files && ev.target.files[0];
+    ev.target.value = '';
+    if (!f) return;
+    if (f.size > 10 * 1024 * 1024) {
+      renderMessage({ id: 'err-' + Date.now(), sender_type: 'system', content: 'ファイルが大きすぎます (最大10MB)', created_at: new Date().toISOString() });
+      return;
+    }
+    try {
+      await ensureConversation();
+      const form = new FormData();
+      form.append('file', f);
+      const headers = state.contactToken ? { 'X-Sloten-Contact-Token': state.contactToken } : {};
+      const r = await fetch(`${cfg.apiBase}/api/widget/conversations/${state.conversationId}/attachments`, { method: 'POST', headers, body: form });
+      const text = await r.text();
+      let data; try { data = JSON.parse(text); } catch { data = {}; }
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      showPending(data.attachment);
+    } catch (e) {
+      renderMessage({ id: 'err-' + Date.now(), sender_type: 'system', content: 'アップロード失敗: ' + e.message, created_at: new Date().toISOString() });
+    }
   }
 
   function autoResize(ta) {
@@ -194,6 +235,41 @@
     const bubble = el('div', { class: 'sloten-chat-msg', 'data-sender': msg.sender_type || 'bot', 'data-msg-id': msg.id });
     const contentDiv = el('div', {}, msg.content || '');
     bubble.appendChild(contentDiv);
+
+    // Attachment preview
+    if (msg.attachment) {
+      const a = msg.attachment;
+      const url = `${cfg.apiBase}/api/widget/attachments/${a.id}`;
+      const isImg = (a.content_type || '').startsWith('image/');
+      const box = el('div', { class: 'sloten-chat-attachment' });
+      if (isImg) {
+        const img = el('img', { alt: a.filename, 'data-att-id': a.id });
+        // Fetch with header auth, blob-convert to object URL so <img> can show it.
+        fetch(url, { headers: { 'X-Sloten-Contact-Token': state.contactToken || '' } })
+          .then((r) => r.ok ? r.blob() : Promise.reject(new Error('download failed')))
+          .then((b) => { img.src = URL.createObjectURL(b); })
+          .catch(() => { img.alt = '画像の読み込みに失敗'; });
+        img.addEventListener('click', () => window.open(img.src, '_blank', 'noopener'));
+        box.appendChild(img);
+      } else {
+        const link = el('a', {
+          class: 'sloten-chat-attachment-file',
+          href: '#', onclick: async (ev) => {
+            ev.preventDefault();
+            try {
+              const r = await fetch(url, { headers: { 'X-Sloten-Contact-Token': state.contactToken || '' } });
+              if (!r.ok) throw new Error('download failed');
+              const b = await r.blob();
+              const u = URL.createObjectURL(b);
+              window.open(u, '_blank', 'noopener');
+            } catch (e) { console.warn(e); }
+          },
+        }, '📎 ' + (a.filename || 'file'),
+           el('span', { class: 'sloten-chat-attachment-meta' }, Math.round((a.size_bytes || 0) / 1024) + ' KB'));
+        box.appendChild(link);
+      }
+      bubble.appendChild(box);
+    }
 
     if (msg.content_type === 'input_select' && msg.content_attributes) {
       try {
@@ -301,16 +377,22 @@
   }
 
   async function sendText(text) {
-    if (!text) return;
+    // Allow empty text if an attachment is pending — send just the file.
+    if (!text && !pendingAttachment) return;
     sending = true;
     dom.send.disabled = true;
     setTyping(true);
     try {
       await ensureConversation();
-      await api('POST', `/api/widget/conversations/${state.conversationId}/messages`, {
+      const body = {
         sender_type: 'customer',
-        content: text,
-      });
+        content: text || (pendingAttachment ? pendingAttachment.filename : ''),
+      };
+      if (pendingAttachment) {
+        body.content_attributes = { attachment_id: pendingAttachment.id };
+      }
+      await api('POST', `/api/widget/conversations/${state.conversationId}/messages`, body);
+      if (pendingAttachment) showPending(null);
       // Broadcast will render it via WS; also render optimistically if WS absent.
       if (!wsActive()) {
         renderMessage({

@@ -39,6 +39,7 @@ import { handleScheduled } from './scheduled.mjs';
 import { verifyContactToken, extractContactToken } from './auth/contact-token.mjs';
 import { listBotMenus, createBotMenu, updateBotMenu, deleteBotMenu } from './handlers/bot-menus.mjs';
 import { listBotFlows, createBotFlow, updateBotFlow, deleteBotFlow } from './handlers/bot-flows.mjs';
+import { uploadAttachment, downloadAttachment } from './handlers/attachments.mjs';
 import {
   sendMessage, listMessages,
 } from './handlers/messages-native.mjs';
@@ -163,6 +164,44 @@ export default {
         return logoutHandler(request, env, corsHeaders);
       }
       if (path === '/api/staff/me' && method === 'GET') return meHandler(request, env, corsHeaders);
+
+      // --- Attachments ---
+      // Widget customer upload: token-gated, own conversation only.
+      {
+        const m = path.match(/^\/api\/widget\/conversations\/([^/]+)\/attachments$/);
+        if (m && method === 'POST') {
+          const token = extractContactToken(request);
+          const payload = await verifyContactToken(env, token);
+          if (!payload) return err('Unauthorized (widget contact token required)', 401, corsHeaders);
+          const conv = await env.DB.prepare('SELECT contact_id FROM conversations WHERE id = ?').bind(m[1]).first();
+          if (!conv) return err('Conversation not found', 404, corsHeaders);
+          if (conv.contact_id !== payload.cid) return err('Forbidden (contact mismatch)', 403, corsHeaders);
+          return uploadAttachment(request, env, corsHeaders, m[1], 'customer');
+        }
+      }
+      // Widget customer download: token-gated
+      {
+        const m = path.match(/^\/api\/widget\/attachments\/([^/]+)$/);
+        if (m && method === 'GET') {
+          const token = extractContactToken(request);
+          const payload = await verifyContactToken(env, token);
+          if (!payload) return err('Unauthorized (widget contact token required)', 401, corsHeaders);
+          const row = await env.DB.prepare('SELECT conversation_id FROM attachments WHERE id = ?').bind(m[1]).first();
+          if (!row) return err('Attachment not found', 404, corsHeaders);
+          const conv = await env.DB.prepare('SELECT contact_id FROM conversations WHERE id = ?').bind(row.conversation_id).first();
+          if (!conv || conv.contact_id !== payload.cid) return err('Forbidden', 403, corsHeaders);
+          return downloadAttachment(request, env, corsHeaders, m[1]);
+        }
+      }
+      // Staff upload + download (admin console)
+      {
+        const m = path.match(/^\/api\/conversations\/([^/]+)\/attachments$/);
+        if (m && method === 'POST') return requireStaff(uploadAttachment)(request, env, corsHeaders, m[1], 'staff');
+      }
+      {
+        const m = path.match(/^\/api\/attachments\/([^/]+)$/);
+        if (m && method === 'GET') return requireStaff(downloadAttachment)(request, env, corsHeaders, m[1]);
+      }
 
       // --- WebSocket upgrade to ConversationRoom Durable Object ---
       {

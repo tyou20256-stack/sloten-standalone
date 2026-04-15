@@ -8,6 +8,7 @@ import { generateBotReply } from '../ai-chat-adapter.mjs';
 import { broadcastToConversation } from '../broadcast.mjs';
 import { checkRateLimit, rateLimitResponse } from '../rate-limiter.mjs';
 import { runFlowForCustomerMessage } from './bot-flows.mjs';
+import { linkAttachmentToMessage, fetchAttachmentsForMessages } from './attachments.mjs';
 
 const VALID_SENDER = new Set(['customer', 'bot', 'staff', 'system']);
 const VALID_CONTENT_TYPE = new Set(['text', 'input_select', 'file', 'system_event']);
@@ -76,6 +77,21 @@ export async function sendMessage(request, env, corsHeaders, conversationId, opt
   const forcePrivate = isWidget ? false : !!body.is_private;
 
   try {
+    // Allow customers/staff to attach a pre-uploaded file by id. For widget,
+    // only attachment_id is accepted from body.content_attributes (everything
+    // else is ignored).
+    let contentAttributes = isWidget ? null : body.content_attributes;
+    const attachmentId = isWidget
+      ? (body.content_attributes && body.content_attributes.attachment_id ? String(body.content_attributes.attachment_id) : null)
+      : (contentAttributes?.attachment_id ? String(contentAttributes.attachment_id) : null);
+    if (attachmentId) {
+      const att = await env.DB.prepare('SELECT id, conversation_id FROM attachments WHERE id = ?').bind(attachmentId).first();
+      if (!att || att.conversation_id !== conversationId) {
+        return err('Invalid attachment_id', 400, corsHeaders);
+      }
+      contentAttributes = { ...(contentAttributes || {}), attachment_id: attachmentId };
+    }
+
     const msg = await insertMessage(env, {
       conversationId,
       tenantId: conv.tenant_id,
@@ -83,9 +99,12 @@ export async function sendMessage(request, env, corsHeaders, conversationId, opt
       senderId: isWidget ? null : body.sender_id,
       content,
       contentType,
-      contentAttributes: isWidget ? null : body.content_attributes,
+      contentAttributes,
       isPrivate: forcePrivate,
     });
+    if (attachmentId) {
+      await linkAttachmentToMessage(env, attachmentId, msg.id, conversationId);
+    }
 
     // Auto bot reply: customer message on bot-handled conversation.
     // Priority:
@@ -158,5 +177,9 @@ export async function listMessages(request, env, corsHeaders, conversationId, op
   q += ' ORDER BY created_at ASC LIMIT ?';
   vals.push(limit);
   const { results } = await env.DB.prepare(q).bind(...vals).all();
-  return ok({ success: true, messages: results || [] }, corsHeaders);
+  // Decorate messages with attachment metadata when an attachment_id is
+  // present in content_attributes — clients can then preview via the
+  // widget/staff download endpoints.
+  const decorated = await fetchAttachmentsForMessages(env, results || []);
+  return ok({ success: true, messages: decorated }, corsHeaders);
 }
