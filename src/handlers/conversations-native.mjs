@@ -90,6 +90,7 @@ export async function updateConversation(request, env, corsHeaders, id) {
     updates.push('status = ?');
     vals.push(body.status);
     if (body.status === 'closed') updates.push(`closed_at = datetime('now')`);
+    else updates.push('closed_at = NULL'); // reset on reopen/return-to-bot
   }
   if (body.assignee_id !== undefined) {
     updates.push('assignee_id = ?');

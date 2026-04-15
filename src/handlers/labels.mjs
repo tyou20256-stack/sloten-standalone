@@ -22,7 +22,12 @@ export async function createLabel(request, env, corsHeaders) {
   const name = (body.name || '').trim();
   if (!name) return err('name required', 400, corsHeaders);
   if (name.length > 40) return err('name too long (max 40)', 400, corsHeaders);
-  const color = validColor(body.color) ? body.color : '#6b7280';
+  // Explicitly reject invalid colors rather than silently defaulting — this
+  // prevents typos like "red" from silently becoming grey.
+  if (body.color !== undefined && body.color !== null && body.color !== '' && !validColor(body.color)) {
+    return err('Invalid color (expected #RRGGBB)', 400, corsHeaders);
+  }
+  const color = body.color || '#6b7280';
   try {
     const r = await env.DB.prepare(
       'INSERT INTO labels (tenant_id, name, color, description) VALUES (?, ?, ?, ?)'
@@ -67,7 +72,8 @@ export async function deleteLabel(request, env, corsHeaders, id) {
   if (!existing) return err('Label not found', 404, corsHeaders);
   await env.DB.prepare('DELETE FROM labels WHERE id = ?').bind(id).run();
   // Remove the label name from any conversations referencing it (CSV cleanup).
-  // Cheap for small fleets; for larger scale, use JSON_each or separate join table.
+  // LIKE pattern must escape %/_/\ in the label name itself.
+  const escapedName = existing.name.replace(/[\\%_]/g, (c) => '\\' + c);
   await env.DB.prepare(
     `UPDATE conversations
         SET labels = TRIM(
@@ -78,6 +84,6 @@ export async function deleteLabel(request, env, corsHeaders, id) {
           ','
         )
       WHERE labels LIKE ? ESCAPE '\\'`
-  ).bind(existing.name, `%${existing.name}%`).run();
+  ).bind(existing.name, `%${escapedName}%`).run();
   return ok({ success: true }, corsHeaders);
 }

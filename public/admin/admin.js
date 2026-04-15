@@ -74,6 +74,10 @@
   }
   function closeModal() { $('#slo-adm-modal').removeAttribute('data-open'); }
   $('#slo-adm-modal').addEventListener('click', (ev) => { if (ev.target.id === 'slo-adm-modal') closeModal(); });
+  // Global Escape closes open modal (accessibility).
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && $('#slo-adm-modal').getAttribute('data-open') === '1') closeModal();
+  });
 
   function confirmDialog(msg) { return new Promise((res) => {
     openModal('確認', (form, actions) => {
@@ -839,8 +843,14 @@
   }
   async function bulkImportStaff() {
     if (!(await confirmDialog('Chatwoot の担当者 email から未登録スタッフを一括作成し、会話の assignee_id を復元します。続行しますか？'))) return;
+    // Small loading overlay while waiting for the backend.
+    const loading = el('div', {
+      style: 'position:fixed;inset:0;background:rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;z-index:3000;color:#fff;font-size:14px;',
+    }, 'インポート中…');
+    document.body.appendChild(loading);
     try {
-      const r = await api('POST', '/api/staff/import_from_chatwoot');
+      const r = await api('POST', '/api/staff/import_from_chatwoot?show_passwords=1');
+      loading.remove();
       openModal('一括インポート結果', (form, actions) => {
         form.appendChild(el('p', {}, `対象 email: ${r.total_emails} / 新規作成: ${r.created_count} / 既存スキップ: ${r.skipped_count} / 会話 backfill: ${r.backfilled_conversations}`));
         if (r.created.length) {
@@ -857,8 +867,21 @@
           form.appendChild(table);
         }
         actions.appendChild(el('button', { class: 'slo-adm-btn', onclick: () => { closeModal(); navigate('staff'); } }, '閉じる'));
+        if (r.created.length) {
+          actions.insertBefore(el('button', {
+            class: 'slo-adm-btn slo-adm-btn-secondary',
+            onclick: () => {
+              const csv = '\uFEFFemail,password\n' + r.created.map((c) => `"${c.email}","${c.password}"`).join('\n');
+              const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+              const u = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = u; a.download = `staff-passwords-${new Date().toISOString().slice(0,10)}.csv`;
+              a.click(); URL.revokeObjectURL(u);
+            },
+          }, '📥 CSV ダウンロード'), actions.firstChild);
+        }
       });
-    } catch (e) { alert(e.message); }
+    } catch (e) { loading.remove(); alert(e.message); }
   }
 
   function showGeneratedPassword(email, password, onClose) {
@@ -888,7 +911,12 @@
       }
     });
     $('#slo-adm-logout').addEventListener('click', logout);
-    for (const n of $$('.slo-adm-nav-item')) n.addEventListener('click', () => navigate(n.dataset.section));
+    // Event delegation — avoids accumulating listeners on repeated renders.
+    const nav = document.querySelector('.slo-adm-nav');
+    if (nav) nav.addEventListener('click', (ev) => {
+      const item = ev.target.closest('.slo-adm-nav-item');
+      if (item && item.dataset.section) navigate(item.dataset.section);
+    });
 
     const s = await checkAuth();
     if (s) await onAuthenticated();

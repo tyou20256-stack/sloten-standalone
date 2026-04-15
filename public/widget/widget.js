@@ -45,7 +45,7 @@
 
   const STORAGE_KEY = 'sloten_chat:v1';
   const state = Object.assign(
-    { contactId: null, conversationId: null, status: null, history: [] },
+    { contactId: null, conversationId: null, contactToken: null, status: null, history: [] },
     loadState()
   );
 
@@ -58,19 +58,32 @@
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
         contactId: state.contactId,
         conversationId: state.conversationId,
+        contactToken: state.contactToken,
       }));
     } catch (_) {}
   }
 
   async function api(method, path, body) {
+    const headers = { 'Content-Type': 'application/json' };
+    if (state.contactToken) headers['X-Sloten-Contact-Token'] = state.contactToken;
     const r = await fetch(cfg.apiBase + path, {
       method,
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: body ? JSON.stringify(body) : undefined,
     });
     const text = await r.text();
     let data; try { data = JSON.parse(text); } catch { data = { raw: text }; }
-    if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+    if (!r.ok) {
+      // 401/403 on existing state means token or conversation is invalid —
+      // clear and force fresh bootstrap on next send.
+      if ((r.status === 401 || r.status === 403) && state.contactToken) {
+        state.contactId = null;
+        state.conversationId = null;
+        state.contactToken = null;
+        saveState();
+      }
+      throw new Error(data.error || `HTTP ${r.status}`);
+    }
     return data;
   }
 
@@ -153,6 +166,11 @@
     if (ev.key === 'Enter' && !ev.shiftKey) {
       ev.preventDefault();
       onSend();
+      return;
+    }
+    if (ev.key === 'Escape') {
+      ev.preventDefault();
+      close();
     }
   }
 
@@ -220,6 +238,7 @@
 
     const r = await api('POST', '/api/widget/contacts', payload);
     state.contactId = r.contact.id;
+    if (r.contact_token) state.contactToken = r.contact_token;
     saveState();
     return state.contactId;
   }
@@ -314,14 +333,17 @@
   // --- WebSocket ---
   let ws = null;
   let wsReconnectTimer = null;
+  let wsAttempt = 0;
   let pollTimer = null;
 
   function wsActive() { return ws && ws.readyState === WebSocket.OPEN; }
 
   function connectWS() {
-    if (!state.conversationId) return;
+    if (!state.conversationId || !state.contactToken) return;
+    if (ws && ws.readyState !== WebSocket.CLOSED) return; // already connected/connecting
     try {
-      ws = new WebSocket(`${cfg.wsBase}/ws/widget/conversations/${state.conversationId}`);
+      const u = `${cfg.wsBase}/ws/widget/conversations/${state.conversationId}?contact_token=${encodeURIComponent(state.contactToken)}`;
+      ws = new WebSocket(u);
     } catch (e) {
       console.warn('[sloten-chat] ws construct failed:', e.message);
       startPolling();
@@ -329,6 +351,7 @@
     }
     ws.addEventListener('open', () => {
       setStatus('接続中');
+      wsAttempt = 0;
       stopPolling();
     });
     ws.addEventListener('message', (ev) => {
@@ -354,10 +377,15 @@
 
   function scheduleReconnect() {
     if (wsReconnectTimer) return;
+    // Exponential backoff with cap: 3s -> 6s -> 12s -> ... up to 60s.
+    // After 10 consecutive failures, stop trying; polling fallback continues.
+    if (wsAttempt >= 10) return;
+    const delay = Math.min(60000, 3000 * Math.pow(2, wsAttempt));
+    wsAttempt++;
     wsReconnectTimer = setTimeout(() => {
       wsReconnectTimer = null;
       connectWS();
-    }, 3000);
+    }, delay);
   }
 
   function startPolling() {
@@ -396,7 +424,10 @@
       connectWS();
     }
   }
-  function close() { dom.root.setAttribute('data-open', '0'); }
+  function close() {
+    dom.root.setAttribute('data-open', '0');
+    stopPolling();
+  }
 
   async function init() {
     injectStyles();

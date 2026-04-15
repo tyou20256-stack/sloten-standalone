@@ -1,7 +1,7 @@
 // Sloten Standalone — Phase 1 Worker entry point.
 // Self-contained chat backend (no Chatwoot).
 
-import { buildCorsHeaders, handleCorsPreflight } from './cors-helper.mjs';
+import { buildCorsHeaders, handleCorsPreflight, isAllowedOrigin } from './cors-helper.mjs';
 import { checkRateLimit, rateLimitResponse } from './rate-limiter.mjs';
 import { ok, err } from './json.mjs';
 
@@ -36,6 +36,7 @@ import {
   listPrompts, createPrompt, updatePrompt, deletePrompt,
 } from './handlers/ai-prompts.mjs';
 import { handleScheduled } from './scheduled.mjs';
+import { verifyContactToken, extractContactToken } from './auth/contact-token.mjs';
 import {
   sendMessage, listMessages,
 } from './handlers/messages-native.mjs';
@@ -53,19 +54,41 @@ function forwardToConversationRoom(env, conversationId, role, request) {
   return stub.fetch(u.toString(), request);
 }
 
+function timingSafeEqual(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
 function bearerAuth(request, env) {
   const h = request.headers.get('Authorization') || '';
   const m = h.match(/^Bearer\s+(.+)$/);
   if (!m) return false;
-  return env.ADMIN_API_TOKEN && m[1] === env.ADMIN_API_TOKEN;
+  return !!env.ADMIN_API_TOKEN && timingSafeEqual(m[1], env.ADMIN_API_TOKEN);
 }
 
-// Cookie (staff) OR Bearer (admin) — either grants access.
-function requireStaffOrAdmin(handler) {
+// CSRF defense: for cookie-auth state-changing requests (POST/PUT/PATCH/DELETE)
+// require same-origin indicator. Bearer-token callers are API-to-API and
+// bypass this check.
+function csrfCheck(request, env) {
+  if (bearerAuth(request, env)) return true;
+  const method = request.method.toUpperCase();
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return true;
+  const sfs = request.headers.get('Sec-Fetch-Site');
+  if (sfs === 'same-origin') return true;
+  const origin = request.headers.get('Origin');
+  if (origin && isAllowedOrigin(origin, env)) return true;
+  return false;
+}
+
+// Cookie (any active staff) OR Bearer admin. GET-only sensible usage; writes
+// go through requireAdminRole for admin-only gating.
+function requireStaff(handler) {
   return async (request, env, corsHeaders, ...rest) => {
-    if (bearerAuth(request, env)) {
-      return handler(request, env, corsHeaders, ...rest);
-    }
+    if (bearerAuth(request, env)) return handler(request, env, corsHeaders, ...rest);
+    if (!csrfCheck(request, env)) return err('CSRF: Origin/Sec-Fetch-Site rejected', 403, corsHeaders);
     const staff = await resolveStaffFromCookie(request, env);
     if (staff) {
       request.__staff = staff;
@@ -74,14 +97,14 @@ function requireStaffOrAdmin(handler) {
     return err('Unauthorized', 401, corsHeaders);
   };
 }
-const requireAdmin = requireStaffOrAdmin; // alias for existing handler wiring
+// `requireAdmin` is deliberately removed — all routes now use either
+// requireStaff (any authenticated staff) or requireAdminRole (admin only).
 
-// admin-role-only: Bearer (super-admin) OR cookie staff with role='admin'.
+// Admin-role-only: Bearer (super-admin) OR cookie staff with role='admin'.
 function requireAdminRole(handler) {
   return async (request, env, corsHeaders, ...rest) => {
-    if (bearerAuth(request, env)) {
-      return handler(request, env, corsHeaders, ...rest);
-    }
+    if (bearerAuth(request, env)) return handler(request, env, corsHeaders, ...rest);
+    if (!csrfCheck(request, env)) return err('CSRF: Origin/Sec-Fetch-Site rejected', 403, corsHeaders);
     const staff = await resolveStaffFromCookie(request, env);
     if (staff && staff.role === 'admin') {
       request.__staff = staff;
@@ -106,7 +129,7 @@ export default {
     try {
       // --- Public ---
       if (path === '/health' && method === 'GET') {
-        return ok({ status: 'ok', environment: env.ENVIRONMENT, provider: env.AI_PROVIDER }, corsHeaders);
+        return ok({ status: 'ok' }, corsHeaders);
       }
 
       // /widget alias → /widget/index.html (convenience).
@@ -125,8 +148,18 @@ export default {
       }
 
       // --- Staff auth (cookie-based) ---
-      if (path === '/api/staff/login' && method === 'POST') return loginHandler(request, env, corsHeaders);
-      if (path === '/api/staff/logout' && method === 'POST') return logoutHandler(request, env, corsHeaders);
+      if (path === '/api/staff/login' && method === 'POST') {
+        // IP-level rate limit to stop credential-stuffing across many accounts.
+        const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+        const check = await checkRateLimit(env, `login:${ip}`, 10, 60, ctx);
+        if (!check.allowed) return rateLimitResponse(check, corsHeaders);
+        return loginHandler(request, env, corsHeaders);
+      }
+      if (path === '/api/staff/logout' && method === 'POST') {
+        // Soft CSRF guard: logout should not be forceable from another origin.
+        if (!csrfCheck(request, env)) return err('CSRF: Origin/Sec-Fetch-Site rejected', 403, corsHeaders);
+        return logoutHandler(request, env, corsHeaders);
+      }
       if (path === '/api/staff/me' && method === 'GET') return meHandler(request, env, corsHeaders);
 
       // --- WebSocket upgrade to ConversationRoom Durable Object ---
@@ -135,6 +168,12 @@ export default {
         let m;
         if ((m = path.match(/^\/ws\/widget\/conversations\/([^/]+)$/))) {
           if (upgrade !== 'websocket') return err('Expected WebSocket upgrade', 426, corsHeaders);
+          const token = extractContactToken(request);
+          const payload = await verifyContactToken(env, token);
+          if (!payload) return err('Unauthorized (widget contact token required)', 401, corsHeaders);
+          const conv = await env.DB.prepare('SELECT contact_id FROM conversations WHERE id = ?').bind(m[1]).first();
+          if (!conv) return err('Conversation not found', 404, corsHeaders);
+          if (conv.contact_id !== payload.cid) return err('Forbidden (contact mismatch)', 403, corsHeaders);
           return forwardToConversationRoom(env, m[1], 'customer', request);
         }
         if ((m = path.match(/^\/ws\/operator\/conversations\/([^/]+)$/))) {
@@ -153,53 +192,85 @@ export default {
         if (!check.allowed) return rateLimitResponse(check, corsHeaders);
       }
 
+      // POST /api/widget/contacts is the only widget endpoint that doesn't
+      // require a contact_token (because the caller doesn't have one yet).
       if (path === '/api/widget/contacts' && method === 'POST') return createContact(request, env, corsHeaders);
-      if (path === '/api/widget/conversations' && method === 'POST') return createConversation(request, env, corsHeaders);
+
+      // Helper: verify contact_token matches the conversation's contact_id.
+      async function verifyWidgetOwnership(conversationId) {
+        const token = extractContactToken(request);
+        const payload = await verifyContactToken(env, token);
+        if (!payload) return { ok: false, response: err('Unauthorized (widget contact token required)', 401, corsHeaders) };
+        const conv = await env.DB.prepare('SELECT contact_id FROM conversations WHERE id = ?').bind(conversationId).first();
+        if (!conv) return { ok: false, response: err('Conversation not found', 404, corsHeaders) };
+        if (conv.contact_id !== payload.cid) return { ok: false, response: err('Forbidden (contact mismatch)', 403, corsHeaders) };
+        return { ok: true, contactId: payload.cid };
+      }
+
+      if (path === '/api/widget/conversations' && method === 'POST') {
+        // conversation create: verify token matches body.contact_id
+        let body; try { body = await request.clone().json(); } catch { body = {}; }
+        const token = extractContactToken(request);
+        const payload = await verifyContactToken(env, token);
+        if (!payload) return err('Unauthorized (widget contact token required)', 401, corsHeaders);
+        if (body.contact_id && body.contact_id !== payload.cid) {
+          return err('Forbidden (contact mismatch)', 403, corsHeaders);
+        }
+        return createConversation(request, env, corsHeaders);
+      }
 
       {
         const m = path.match(/^\/api\/widget\/conversations\/([^/]+)\/messages$/);
-        if (m && method === 'POST') return sendMessage(request, env, corsHeaders, m[1]);
-        if (m && method === 'GET') return listMessages(request, env, corsHeaders, m[1]);
+        if (m) {
+          const check = await verifyWidgetOwnership(m[1]);
+          if (!check.ok) return check.response;
+          if (method === 'POST') return sendMessage(request, env, corsHeaders, m[1], { source: 'widget' }, ctx);
+          if (method === 'GET')  return listMessages(request, env, corsHeaders, m[1], { source: 'widget' });
+        }
       }
       {
         const m = path.match(/^\/api\/widget\/conversations\/([^/]+)$/);
-        if (m && method === 'GET') return getConversation(request, env, corsHeaders, m[1]);
+        if (m && method === 'GET') {
+          const check = await verifyWidgetOwnership(m[1]);
+          if (!check.ok) return check.response;
+          return getConversation(request, env, corsHeaders, m[1]);
+        }
       }
 
       // --- Admin (Bearer auth) ---
       // Contacts
-      if (path === '/api/contacts' && method === 'GET') return requireAdmin(listContacts)(request, env, corsHeaders);
+      if (path === '/api/contacts' && method === 'GET') return requireStaff(listContacts)(request, env, corsHeaders);
       {
         const m = path.match(/^\/api\/contacts\/([^/]+)\/conversations$/);
-        if (m && method === 'GET') return requireAdmin(listContactConversations)(request, env, corsHeaders, m[1]);
+        if (m && method === 'GET') return requireStaff(listContactConversations)(request, env, corsHeaders, m[1]);
       }
       {
         const m = path.match(/^\/api\/contacts\/([^/]+)$/);
-        if (m && method === 'GET') return requireAdmin(getContact)(request, env, corsHeaders, m[1]);
+        if (m && method === 'GET') return requireStaff(getContact)(request, env, corsHeaders, m[1]);
       }
 
-      // Conversations (admin view)
-      if (path === '/api/conversations' && method === 'GET') return requireAdmin(listConversations)(request, env, corsHeaders);
+      // Conversations (staff view)
+      if (path === '/api/conversations' && method === 'GET') return requireStaff(listConversations)(request, env, corsHeaders);
       {
         const m = path.match(/^\/api\/conversations\/([^/]+)$/);
-        if (m && method === 'GET') return requireAdmin(getConversation)(request, env, corsHeaders, m[1]);
-        if (m && method === 'PATCH') return requireAdmin(updateConversation)(request, env, corsHeaders, m[1]);
+        if (m && method === 'GET') return requireStaff(getConversation)(request, env, corsHeaders, m[1]);
+        if (m && method === 'PATCH') return requireStaff(updateConversation)(request, env, corsHeaders, m[1]);
       }
       {
         const m = path.match(/^\/api\/conversations\/([^/]+)\/messages$/);
-        if (m && method === 'GET') return requireAdmin(listMessages)(request, env, corsHeaders, m[1]);
-        if (m && method === 'POST') return requireAdmin(sendMessage)(request, env, corsHeaders, m[1]);
+        if (m && method === 'GET') return requireStaff(listMessages)(request, env, corsHeaders, m[1]);
+        if (m && method === 'POST') return requireStaff(sendMessage)(request, env, corsHeaders, m[1], {}, ctx);
       }
       {
         const m = path.match(/^\/api\/conversations\/([^/]+)\/mark_read$/);
-        if (m && method === 'POST') return requireAdmin(markRead)(request, env, corsHeaders, m[1]);
+        if (m && method === 'POST') return requireStaff(markRead)(request, env, corsHeaders, m[1]);
       }
 
-      // Search
-      if (path === '/api/search' && method === 'GET') return requireAdmin(searchHandler)(request, env, corsHeaders);
+      // Search (staff)
+      if (path === '/api/search' && method === 'GET') return requireStaff(searchHandler)(request, env, corsHeaders);
 
-      // Dashboard
-      if (path === '/api/dashboard/stats' && method === 'GET') return requireAdmin(dashboardStats)(request, env, corsHeaders);
+      // Dashboard (staff)
+      if (path === '/api/dashboard/stats' && method === 'GET') return requireStaff(dashboardStats)(request, env, corsHeaders);
 
       // Staff admin (admin role only, except self via /api/staff/me above)
       if (path === '/api/staff' && method === 'GET') return requireAdminRole(listStaff)(request, env, corsHeaders);
@@ -221,8 +292,8 @@ export default {
         if (m && method === 'GET') return requireAdminRole(exportCsv)(request, env, corsHeaders, m[1]);
       }
 
-      // Teams (admin-role)
-      if (path === '/api/teams' && method === 'GET') return requireAdmin(listTeams)(request, env, corsHeaders);
+      // Teams — reads = any staff, writes = admin
+      if (path === '/api/teams' && method === 'GET') return requireStaff(listTeams)(request, env, corsHeaders);
       if (path === '/api/teams' && method === 'POST') return requireAdminRole(createTeam)(request, env, corsHeaders);
       {
         const m = path.match(/^\/api\/teams\/(\d+)$/);
@@ -260,43 +331,49 @@ export default {
         if (m && method === 'POST') return requireAdminRole(submitFeedback)(request, env, corsHeaders, parseInt(m[1], 10));
       }
 
-      // Labels
-      if (path === '/api/labels' && method === 'GET') return requireAdmin(listLabels)(request, env, corsHeaders);
-      if (path === '/api/labels' && method === 'POST') return requireAdmin(createLabel)(request, env, corsHeaders);
+      // Labels — reads = any staff, writes = admin
+      if (path === '/api/labels' && method === 'GET') return requireStaff(listLabels)(request, env, corsHeaders);
+      if (path === '/api/labels' && method === 'POST') return requireAdminRole(createLabel)(request, env, corsHeaders);
       {
         const m = path.match(/^\/api\/labels\/(\d+)$/);
-        if (m && method === 'PUT')    return requireAdmin(updateLabel)(request, env, corsHeaders, parseInt(m[1], 10));
-        if (m && method === 'DELETE') return requireAdmin(deleteLabel)(request, env, corsHeaders, parseInt(m[1], 10));
+        if (m && method === 'PUT')    return requireAdminRole(updateLabel)(request, env, corsHeaders, parseInt(m[1], 10));
+        if (m && method === 'DELETE') return requireAdminRole(deleteLabel)(request, env, corsHeaders, parseInt(m[1], 10));
       }
 
-      // FAQ
-      if (path === '/api/faq' && method === 'GET') return handleFaqGet(request, env, corsHeaders);
-      if (path === '/api/faq/search' && method === 'GET') return handleFaqSearch(request, env, corsHeaders);
-      if (path === '/api/faq' && method === 'POST') return requireAdmin(handleFaqPost)(request, env, corsHeaders);
+      // FAQ — staff reads, admin writes. FAQ search stays public for widget.
+      if (path === '/api/faq' && method === 'GET') return requireStaff(handleFaqGet)(request, env, corsHeaders);
+      if (path === '/api/faq/search' && method === 'GET') {
+        // Public but rate-limited.
+        const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+        const check = await checkRateLimit(env, `faqsearch:${ip}`, 60, 60, ctx);
+        if (!check.allowed) return rateLimitResponse(check, corsHeaders);
+        return handleFaqSearch(request, env, corsHeaders);
+      }
+      if (path === '/api/faq' && method === 'POST') return requireAdminRole(handleFaqPost)(request, env, corsHeaders);
       {
         const m = path.match(/^\/api\/faq\/(\d+)$/);
-        if (m && method === 'GET') return handleFaqGetOne(request, env, corsHeaders, parseInt(m[1], 10));
-        if (m && method === 'PUT') return requireAdmin(handleFaqPut)(request, env, corsHeaders, parseInt(m[1], 10));
-        if (m && method === 'DELETE') return requireAdmin(handleFaqDelete)(request, env, corsHeaders, parseInt(m[1], 10));
+        if (m && method === 'GET') return requireStaff(handleFaqGetOne)(request, env, corsHeaders, parseInt(m[1], 10));
+        if (m && method === 'PUT') return requireAdminRole(handleFaqPut)(request, env, corsHeaders, parseInt(m[1], 10));
+        if (m && method === 'DELETE') return requireAdminRole(handleFaqDelete)(request, env, corsHeaders, parseInt(m[1], 10));
       }
 
-      // Templates
-      if (path === '/api/templates' && method === 'GET') return requireAdmin(handleTemplatesGet)(request, env, corsHeaders);
-      if (path === '/api/templates' && method === 'POST') return requireAdmin(handleTemplatesPost)(request, env, corsHeaders);
+      // Templates — staff reads, admin writes
+      if (path === '/api/templates' && method === 'GET') return requireStaff(handleTemplatesGet)(request, env, corsHeaders);
+      if (path === '/api/templates' && method === 'POST') return requireAdminRole(handleTemplatesPost)(request, env, corsHeaders);
       {
         const m = path.match(/^\/api\/templates\/(\d+)$/);
-        if (m && method === 'PUT') return requireAdmin(handleTemplatesPut)(request, env, corsHeaders, parseInt(m[1], 10));
-        if (m && method === 'DELETE') return requireAdmin(handleTemplatesDelete)(request, env, corsHeaders, parseInt(m[1], 10));
+        if (m && method === 'PUT') return requireAdminRole(handleTemplatesPut)(request, env, corsHeaders, parseInt(m[1], 10));
+        if (m && method === 'DELETE') return requireAdminRole(handleTemplatesDelete)(request, env, corsHeaders, parseInt(m[1], 10));
       }
 
-      // Knowledge sources
-      if (path === '/api/knowledge-sources' && method === 'GET') return requireAdmin(handleKnowledgeSourcesGet)(request, env, corsHeaders);
-      if (path === '/api/knowledge-sources' && method === 'POST') return requireAdmin(handleKnowledgeSourcesPost)(request, env, corsHeaders);
+      // Knowledge sources — staff reads (including :id), admin writes
+      if (path === '/api/knowledge-sources' && method === 'GET') return requireStaff(handleKnowledgeSourcesGet)(request, env, corsHeaders);
+      if (path === '/api/knowledge-sources' && method === 'POST') return requireAdminRole(handleKnowledgeSourcesPost)(request, env, corsHeaders);
       {
         const m = path.match(/^\/api\/knowledge-sources\/(\d+)$/);
-        if (m && method === 'GET') return handleKnowledgeSourcesGetOne(request, env, corsHeaders, parseInt(m[1], 10));
-        if (m && method === 'PUT') return requireAdmin(handleKnowledgeSourcesPut)(request, env, corsHeaders, parseInt(m[1], 10));
-        if (m && method === 'DELETE') return requireAdmin(handleKnowledgeSourcesDelete)(request, env, corsHeaders, parseInt(m[1], 10));
+        if (m && method === 'GET') return requireStaff(handleKnowledgeSourcesGetOne)(request, env, corsHeaders, parseInt(m[1], 10));
+        if (m && method === 'PUT') return requireAdminRole(handleKnowledgeSourcesPut)(request, env, corsHeaders, parseInt(m[1], 10));
+        if (m && method === 'DELETE') return requireAdminRole(handleKnowledgeSourcesDelete)(request, env, corsHeaders, parseInt(m[1], 10));
       }
 
       return err('Not Found', 404, corsHeaders);

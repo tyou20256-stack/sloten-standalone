@@ -60,7 +60,16 @@ export async function submitFeedback(request, env, corsHeaders, logId) {
   if (response) return response;
   const rating = parseInt(body.rating, 10);
   if (rating !== 1 && rating !== -1) return err('rating must be 1 or -1', 400, corsHeaders);
-  const staffId = request.__staff?.id || null;
+  // Require an identifiable staff; otherwise the ON CONFLICT unique key is NULL
+  // and rows accumulate without upsert. Bearer-token callers must supply
+  // `?staff_id=` explicitly, else fail.
+  let staffId = request.__staff?.id || null;
+  if (staffId == null) {
+    const url = new URL(request.url);
+    const explicit = parseInt(url.searchParams.get('staff_id') || '', 10);
+    if (!Number.isFinite(explicit)) return err('staff_id required for feedback', 400, corsHeaders);
+    staffId = explicit;
+  }
   const note = body.note ? String(body.note).slice(0, 2000) : null;
   await env.DB.prepare(
     `INSERT INTO ai_log_feedback (ai_log_id, staff_id, rating, note) VALUES (?, ?, ?, ?)

@@ -6,6 +6,7 @@ import { uuid } from '../id.mjs';
 import { ok, created, err, parseJson } from '../json.mjs';
 import { generateBotReply } from '../ai-chat-adapter.mjs';
 import { broadcastToConversation } from '../broadcast.mjs';
+import { checkRateLimit, rateLimitResponse } from '../rate-limiter.mjs';
 
 const VALID_SENDER = new Set(['customer', 'bot', 'staff', 'system']);
 const VALID_CONTENT_TYPE = new Set(['text', 'input_select', 'file', 'system_event']);
@@ -56,43 +57,45 @@ async function insertMessage(env, { conversationId, tenantId, senderType, sender
   return row;
 }
 
-export async function sendMessage(request, env, corsHeaders, conversationId) {
+export async function sendMessage(request, env, corsHeaders, conversationId, opts = {}, ctx = undefined) {
   const { body, response } = await parseJson(request, corsHeaders);
   if (response) return response;
 
   const conv = await env.DB.prepare('SELECT * FROM conversations WHERE id = ?').bind(conversationId).first();
   if (!conv) return err('Conversation not found', 404, corsHeaders);
 
-  const senderType = body.sender_type || 'customer';
+  // Widget path: force customer sender and non-private regardless of body.
+  const isWidget = opts.source === 'widget';
+  const senderType = isWidget ? 'customer' : (body.sender_type || 'customer');
   if (!VALID_SENDER.has(senderType)) return err('Invalid sender_type', 400, corsHeaders);
   const contentType = body.content_type || 'text';
   if (!VALID_CONTENT_TYPE.has(contentType)) return err('Invalid content_type', 400, corsHeaders);
   const content = (body.content || '').trim();
   if (!content && contentType === 'text') return err('content required', 400, corsHeaders);
+  const forcePrivate = isWidget ? false : !!body.is_private;
 
   try {
     const msg = await insertMessage(env, {
       conversationId,
       tenantId: conv.tenant_id,
       senderType,
-      senderId: body.sender_id,
+      senderId: isWidget ? null : body.sender_id,
       content,
       contentType,
-      contentAttributes: body.content_attributes,
-      isPrivate: body.is_private,
+      contentAttributes: isWidget ? null : body.content_attributes,
+      isPrivate: forcePrivate,
     });
 
     // Auto bot reply: customer message on bot-handled conversation
     let botReply = null;
     if (senderType === 'customer' && conv.status === 'bot') {
-      console.log('[sendMessage] invoking bot reply, provider=', env.AI_PROVIDER, 'hasKey=', !!env.GEMINI_API_KEY);
       try {
         const reply = await generateBotReply(env, {
           conversationId,
           tenantId: conv.tenant_id,
           customerMessage: content,
+          ctx,
         });
-        console.log('[sendMessage] bot reply returned, len=', (reply?.content || '').length);
         if (reply && reply.content) {
           botReply = await insertMessage(env, {
             conversationId,
@@ -117,10 +120,11 @@ export async function sendMessage(request, env, corsHeaders, conversationId) {
   }
 }
 
-export async function listMessages(request, env, corsHeaders, conversationId) {
+export async function listMessages(request, env, corsHeaders, conversationId, opts = {}) {
   const url = new URL(request.url);
   const limit = Math.min(parseInt(url.searchParams.get('limit') || '100', 10), 500);
-  const includePrivate = url.searchParams.get('include_private') === '1';
+  // Widget callers are never shown private notes, regardless of query.
+  const includePrivate = opts.source === 'widget' ? false : (url.searchParams.get('include_private') === '1');
   let q = 'SELECT * FROM messages WHERE conversation_id = ?';
   const vals = [conversationId];
   if (!includePrivate) q += ' AND is_private = 0';

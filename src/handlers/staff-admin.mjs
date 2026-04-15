@@ -89,7 +89,13 @@ export async function deleteStaff(request, env, corsHeaders, id) {
 // Bulk-create staff from conversations.metadata.chatwoot_assignee_email values.
 // For each unique email not already in staff_members, create with generated
 // password. Then backfill conversations.assignee_id where the email matches.
+//
+// By default passwords are NOT returned in the response (only counts + emails).
+// Pass `?show_passwords=1` to include them — required for first run so the
+// operator can deliver them to staff.
 export async function importStaffFromChatwoot(request, env, corsHeaders) {
+  const url = new URL(request.url);
+  const showPasswords = url.searchParams.get('show_passwords') === '1';
   // 1) Collect unique chatwoot_assignee_email values from imported conversations.
   const { results: convs } = await env.DB.prepare(
     `SELECT id, metadata FROM conversations
@@ -147,8 +153,9 @@ export async function importStaffFromChatwoot(request, env, corsHeaders) {
     created_count: created.length,
     skipped_count: skipped.length,
     backfilled_conversations: backfilled,
-    created,
+    created: showPasswords ? created : created.map(({ id, email }) => ({ id, email })),
     skipped,
+    passwords_shown: showPasswords,
   }, corsHeaders);
 }
 

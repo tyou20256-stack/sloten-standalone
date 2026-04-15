@@ -47,8 +47,7 @@ const RESOURCES = {
   },
   staff: {
     columns: ['id', 'tenant_id', 'email', 'name', 'role', 'is_active', 'phone', 'department', 'language', 'last_login_at', 'created_at', 'updated_at'],
-    query: () => `SELECT id, tenant_id, email, name, role, is_active, phone, department, language, last_login_at, created_at, updated_at FROM staff_members ORDER BY id ASC`,
-    noTenant: true,
+    query: () => `SELECT id, tenant_id, email, name, role, is_active, phone, department, language, last_login_at, created_at, updated_at FROM staff_members WHERE tenant_id = ? ORDER BY id ASC`,
   },
   ai_logs: {
     columns: ['id', 'tenant_id', 'conversation_id', 'provider', 'model', 'input', 'output', 'tokens_in', 'tokens_out', 'latency_ms', 'status', 'error_message', 'created_at'],
@@ -69,6 +68,17 @@ export async function exportCsv(request, env, corsHeaders, resource) {
   const tenantId = url.searchParams.get('tenant_id') || env.DEFAULT_TENANT_ID || 'tenant_default';
   const since = url.searchParams.get('since');
   const until = url.searchParams.get('until');
+  // Must be ISO-like (YYYY-MM-DD... or YYYY-MM-DDTHH:MM...). Reject garbage
+  // that could silently produce an empty or full-table export.
+  const ISO = /^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2})?)?$/;
+  if (since && !ISO.test(since)) {
+    return new Response(JSON.stringify({ error: 'Invalid since (ISO 8601 expected)' }), {
+      status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+  if (until && !ISO.test(until)) {
+    return new Response(JSON.stringify({ error: 'Invalid until (ISO 8601 expected)' }), {
+      status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
 
   const args = [];
   if (!def.noTenant) args.push(tenantId);
@@ -91,8 +101,9 @@ export async function exportCsv(request, env, corsHeaders, resource) {
       },
     });
   } catch (e) {
-    console.error('[export]', resource, e.message);
-    return new Response(JSON.stringify({ error: 'Export failed: ' + e.message }), {
+    // Never expose raw SQL error messages — log internally.
+    console.error('[export]', resource, e.stack || e.message);
+    return new Response(JSON.stringify({ error: 'Export failed. Please try again.' }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

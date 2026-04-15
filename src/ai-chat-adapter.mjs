@@ -85,7 +85,7 @@ async function callAnthropic(apiKey, system, userMessage) {
   return text.trim();
 }
 
-export async function generateBotReply(env, { conversationId, tenantId, customerMessage }) {
+export async function generateBotReply(env, { conversationId, tenantId, customerMessage, ctx }) {
   const provider = (env.AI_PROVIDER || 'gemini').toLowerCase();
   const model = provider === 'anthropic' ? 'claude-haiku-4-5-20251001' : 'gemini-2.5-flash-lite';
   const { faqRows, kbRows } = await loadContext(env, tenantId);
@@ -103,12 +103,14 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
   let errorMessage = null;
 
   try {
+    // PII-masked input is sent to the LLM too — never forward raw emails/
+    // phone numbers / account IDs to third-party providers.
     if (provider === 'anthropic') {
       if (!env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY not set');
-      text = await callAnthropic(env.ANTHROPIC_API_KEY, system, customerMessage);
+      text = await callAnthropic(env.ANTHROPIC_API_KEY, system, maskedInput);
     } else {
       if (!env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not set');
-      text = await callGemini(env.GEMINI_API_KEY, system, customerMessage);
+      text = await callGemini(env.GEMINI_API_KEY, system, maskedInput);
     }
     if (!text) status = 'empty';
   } catch (e) {
@@ -117,12 +119,17 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
   }
 
   // Log (best-effort — never block reply on log failure)
-  recordAiCall(env, {
+  // system_prompt is NOT persisted verbatim to avoid KB content leaking via
+  // CSV exports. The prompt_id + truncated header snippet is enough to
+  // reconstruct which variant was used.
+  // Use ctx.waitUntil so the write survives response return on short-lived
+  // Worker isolates; if ctx isn't provided, fall back to awaiting inline.
+  const logPromise = recordAiCall(env, {
     tenant_id: tenantId,
     conversation_id: conversationId,
     provider,
     model,
-    system_prompt: system,
+    system_prompt: promptHeader ? `prompt_id=${promptRow?.id}` : 'default',
     input: maskedInput,
     output: text,
     latency_ms: Date.now() - started,
@@ -130,6 +137,8 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
     error_message: errorMessage,
     prompt_id: promptRow?.id || null,
   });
+  if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(logPromise);
+  else await logPromise;
 
   if (status === 'error') throw new Error(errorMessage);
   if (!text) {

@@ -116,9 +116,19 @@ export class ConversationRoom {
 
   #broadcast(frame) {
     const text = JSON.stringify(frame);
+    const isPrivate = frame?.message?.is_private === 1 || frame?.message?.is_private === true;
     const sockets = this.state.getWebSockets();
     let sent = 0;
     for (const ws of sockets) {
+      // Private staff notes go ONLY to operator connections.
+      if (isPrivate) {
+        let isOperator = false;
+        try {
+          const tags = this.state.getTags(ws) || [];
+          isOperator = tags.includes('role:operator');
+        } catch (_) { /* if we can't tell, treat as customer for safety */ }
+        if (!isOperator) continue;
+      }
       try { ws.send(text); sent++; }
       catch (_) { /* drop failed peer */ }
     }

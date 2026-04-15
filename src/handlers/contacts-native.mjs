@@ -2,6 +2,7 @@
 
 import { uuid } from '../id.mjs';
 import { ok, created, err, parseJson } from '../json.mjs';
+import { issueContactToken } from '../auth/contact-token.mjs';
 
 function decorate(row) {
   if (!row) return row;
@@ -12,7 +13,8 @@ export async function createContact(request, env, corsHeaders) {
   const { body, response } = await parseJson(request, corsHeaders);
   if (response) return response;
   const tenantId = body.tenant_id || env.DEFAULT_TENANT_ID || 'tenant_default';
-  const id = body.id || uuid();
+  // Always server-generated — never trust body.id from a public widget endpoint.
+  const id = uuid();
   const { email = null, phone = null, name = null, avatar_url = null } = body;
   const metadata = body.metadata ? JSON.stringify(body.metadata) : null;
   const isIdentified = email || phone ? 1 : 0;
@@ -23,7 +25,9 @@ export async function createContact(request, env, corsHeaders) {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(id, tenantId, email, phone, name, avatar_url, metadata, isIdentified).run();
     const row = await env.DB.prepare('SELECT * FROM contacts WHERE id = ?').bind(id).first();
-    return created({ success: true, contact: decorate(row) }, corsHeaders);
+    // Issue an ownership token — required on all subsequent widget calls.
+    const contact_token = await issueContactToken(env, id);
+    return created({ success: true, contact: decorate(row), contact_token }, corsHeaders);
   } catch (e) {
     console.error('createContact:', e.message);
     return err('Internal error', 500, corsHeaders);

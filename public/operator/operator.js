@@ -230,10 +230,12 @@
   }
   function openWS(convId) {
     closeWS();
+    if (state.wsReconnectTimer) { clearTimeout(state.wsReconnectTimer); state.wsReconnectTimer = null; }
     try {
       state.ws = new WebSocket(`${WS_BASE}/ws/operator/conversations/${convId}`);
       state.wsConvId = convId;
     } catch (e) { return; }
+    state.ws.addEventListener('open', () => { state.wsAttempt = 0; });
     state.ws.addEventListener('message', (ev) => {
       let f; try { f = JSON.parse(ev.data); } catch { return; }
       if (f.type === 'message.created' && f.message) {
@@ -275,7 +277,14 @@
       }
     });
     state.ws.addEventListener('close', () => {
-      if (state.wsConvId === convId) setTimeout(() => openWS(convId), 3000);
+      if (state.wsConvId !== convId || state.selectedId !== convId) return;
+      if ((state.wsAttempt || 0) >= 10) return;
+      const delay = Math.min(60000, 3000 * Math.pow(2, state.wsAttempt || 0));
+      state.wsAttempt = (state.wsAttempt || 0) + 1;
+      state.wsReconnectTimer = setTimeout(() => {
+        state.wsReconnectTimer = null;
+        if (state.selectedId === convId) openWS(convId);
+      }, delay);
     });
   }
 
@@ -627,26 +636,37 @@
     now.setMinutes(now.getMinutes() + 60);
     const pad = (n) => String(n).padStart(2, '0');
     const defaultVal = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
-    const win = window.open('', '_blank', 'width=360,height=220,toolbar=no,menubar=no');
-    if (!win) {
-      const v = prompt('スヌーズ終了日時 (YYYY-MM-DDTHH:MM)', defaultVal);
-      if (v) snoozeConv(new Date(v).toISOString());
-      return;
+
+    // Build an inline overlay modal — reliable across browsers and pop-up
+    // blockers, no cross-window postMessage, no leaked listeners.
+    const backdrop = el('div', {
+      style: 'position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:2000;display:flex;align-items:center;justify-content:center;',
+      onclick: (ev) => { if (ev.target === backdrop) close(); },
+    });
+    const card = el('div', { style: 'background:#fff;border-radius:10px;padding:20px;width:320px;box-shadow:0 10px 30px rgba(0,0,0,0.2);' },
+      el('h3', { style: 'margin:0 0 12px;font-size:16px;' }, 'スヌーズ終了日時'),
+      el('div', { style: 'font-size:12px;color:#6b7280;margin-bottom:8px;' }, 'この時刻まで会話を「スヌーズ中」フィルタに隠します')
+    );
+    const input = el('input', { type: 'datetime-local', value: defaultVal, style: 'width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:4px;' });
+    card.appendChild(input);
+    const actions = el('div', { style: 'display:flex;justify-content:flex-end;gap:8px;margin-top:16px;' },
+      el('button', { style: 'padding:6px 12px;border:1px solid #d1d5db;background:#fff;border-radius:4px;cursor:pointer;', onclick: () => close() }, 'キャンセル'),
+      el('button', {
+        style: 'padding:6px 12px;border:none;background:#2563eb;color:#fff;border-radius:4px;cursor:pointer;',
+        onclick: () => { const v = input.value; if (v) snoozeConv(new Date(v).toISOString()); close(); },
+      }, '設定')
+    );
+    card.appendChild(actions);
+    backdrop.appendChild(card);
+    document.body.appendChild(backdrop);
+    input.focus();
+
+    function onKey(ev) { if (ev.key === 'Escape') close(); }
+    function close() {
+      document.removeEventListener('keydown', onKey);
+      backdrop.remove();
     }
-    win.document.write(`<!doctype html><meta charset="utf-8"><title>スヌーズ</title>
-      <style>body{font-family:sans-serif;padding:16px;}label{display:block;margin:8px 0 4px;font-size:12px;}
-      input{width:100%;padding:6px;border:1px solid #ccc;border-radius:4px;}button{margin-top:12px;padding:6px 12px;cursor:pointer;border:1px solid #2563eb;background:#2563eb;color:#fff;border-radius:4px;}</style>
-      <h3 style="margin:0">スヌーズ終了日時</h3>
-      <label>この時刻まで会話を「スヌーズ中」フィルタに隠します</label>
-      <input id="dt" type="datetime-local" value="${defaultVal}" />
-      <button onclick="(function(){const v=document.getElementById('dt').value;if(!v)return;window.opener.postMessage({snooze:new Date(v).toISOString()},'*');window.close();})()">設定</button>
-    `);
-    function onMsg(ev) {
-      if (ev.source !== win || !ev.data?.snooze) return;
-      window.removeEventListener('message', onMsg);
-      snoozeConv(ev.data.snooze);
-    }
-    window.addEventListener('message', onMsg);
+    document.addEventListener('keydown', onKey);
   }
 
   async function runSearch(q) {
