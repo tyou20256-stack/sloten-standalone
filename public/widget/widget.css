@@ -2,23 +2,29 @@
  * Sloten Chat Widget — scoped CSS.
  * All selectors prefixed `.sloten-chat-` to avoid host page collisions.
  * Theme via CSS variables on .sloten-chat-root.
+ *
+ * Design: dark navy header + gold accents (matches sloten.io brand).
  */
 
 .sloten-chat-root {
-  --slc-brand: #2563eb;
-  --slc-brand-fg: #ffffff;
-  --slc-bg: #ffffff;
+  --slc-bg: #eef1f3;
+  --slc-header-bg: #0f2233;
+  --slc-header-bg2: #143249;
+  --slc-brand-gold: #f5c518;
+  --slc-brand-gold-dk: #d9a900;
   --slc-fg: #111827;
+  --slc-fg-inv: #ffffff;
   --slc-muted: #6b7280;
   --slc-border: #e5e7eb;
-  --slc-bubble-customer: #2563eb;
+  --slc-online: #22c55e;
+  --slc-bubble-customer: #1e40af;
   --slc-bubble-customer-fg: #ffffff;
-  --slc-bubble-bot: #f3f4f6;
+  --slc-bubble-bot: #ffffff;
   --slc-bubble-bot-fg: #111827;
   --slc-bubble-staff: #ecfdf5;
   --slc-bubble-staff-fg: #065f46;
-  --slc-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
-  --slc-radius: 12px;
+  --slc-shadow: 0 12px 36px rgba(0,0,0,0.20);
+  --slc-radius: 14px;
   --slc-font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Yu Gothic UI", sans-serif;
 
   position: fixed;
@@ -32,42 +38,31 @@
 
 .sloten-chat-root *,
 .sloten-chat-root *::before,
-.sloten-chat-root *::after {
-  box-sizing: border-box;
-}
+.sloten-chat-root *::after { box-sizing: border-box; }
 
+/* --- Launcher --- */
 .sloten-chat-launcher {
-  width: 60px;
-  height: 60px;
-  border-radius: 50%;
-  background: var(--slc-brand);
-  color: var(--slc-brand-fg);
-  border: none;
-  cursor: pointer;
+  width: 64px; height: 64px; border-radius: 50%;
+  background: var(--slc-brand-gold);
+  color: var(--slc-header-bg);
+  border: none; cursor: pointer;
   box-shadow: var(--slc-shadow);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: flex; align-items: center; justify-content: center;
   transition: transform 0.15s ease;
 }
-.sloten-chat-launcher:hover { transform: scale(1.05); }
-.sloten-chat-launcher svg { width: 28px; height: 28px; }
+.sloten-chat-launcher:hover { transform: scale(1.06); }
+.sloten-chat-launcher svg { width: 30px; height: 30px; }
 .sloten-chat-launcher[data-unread="1"]::after {
-  content: "";
-  position: absolute;
-  top: -2px;
-  right: -2px;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: #ef4444;
-  border: 2px solid #ffffff;
+  content: ""; position: absolute; top: -2px; right: -2px;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: #ef4444; border: 2px solid #fff;
 }
 
+/* --- Panel --- */
 .sloten-chat-panel {
-  width: 360px;
+  width: 380px;
   max-width: calc(100vw - 40px);
-  height: 560px;
+  height: 600px;
   max-height: calc(100vh - 100px);
   background: var(--slc-bg);
   border-radius: var(--slc-radius);
@@ -75,58 +70,131 @@
   display: none;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid var(--slc-border);
 }
 .sloten-chat-root[data-open="1"] .sloten-chat-panel { display: flex; }
 .sloten-chat-root[data-open="1"] .sloten-chat-launcher { display: none; }
 
+/* --- Header --- */
 .sloten-chat-header {
-  background: var(--slc-brand);
-  color: var(--slc-brand-fg);
+  background: linear-gradient(180deg, var(--slc-header-bg) 0%, var(--slc-header-bg2) 100%);
+  color: var(--slc-fg-inv);
   padding: 14px 16px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  display: flex; align-items: center; gap: 12px;
 }
-.sloten-chat-title { font-weight: 600; font-size: 15px; }
-.sloten-chat-subtitle { font-size: 12px; opacity: 0.85; margin-top: 2px; }
+.sloten-chat-header-avatar {
+  width: 44px; height: 44px; border-radius: 10px;
+  background: var(--slc-brand-gold);
+  color: var(--slc-header-bg);
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 800; font-size: 16px; letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+.sloten-chat-header-text { flex: 1; min-width: 0; }
+.sloten-chat-title { font-weight: 700; font-size: 16px; line-height: 1.2; }
+.sloten-chat-subtitle {
+  font-size: 12px; opacity: 0.85; margin-top: 4px;
+  display: flex; align-items: center; gap: 6px;
+}
+.sloten-chat-subtitle::before {
+  content: ""; display: inline-block; width: 8px; height: 8px;
+  border-radius: 50%; background: var(--slc-online);
+  box-shadow: 0 0 0 2px rgba(34,197,94,0.25);
+}
 .sloten-chat-close {
-  background: transparent;
-  border: none;
-  color: var(--slc-brand-fg);
-  cursor: pointer;
-  font-size: 22px;
-  line-height: 1;
-  padding: 0 4px;
+  background: rgba(255,255,255,0.1); border: none;
+  color: var(--slc-fg-inv); cursor: pointer;
+  width: 32px; height: 32px; border-radius: 8px;
+  font-size: 18px; line-height: 1; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.12s;
+}
+.sloten-chat-close:hover { background: rgba(255,255,255,0.2); }
+
+/* --- Fixed banners (welcome + dreampot) always visible under header --- */
+.sloten-chat-pinned {
+  padding: 12px 12px 0;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.sloten-chat-welcome {
+  background: linear-gradient(180deg, var(--slc-header-bg) 0%, var(--slc-header-bg2) 100%);
+  color: var(--slc-fg-inv);
+  border-radius: 10px;
+  padding: 12px 14px;
+  position: relative;
+  overflow: hidden;
+}
+.sloten-chat-welcome::before {
+  /* subtle radial glow */
+  content: ""; position: absolute; inset: -20%;
+  background: radial-gradient(circle at 30% 0%, rgba(245,197,24,0.15), transparent 60%);
+  pointer-events: none;
+}
+.sloten-chat-welcome-title {
+  color: var(--slc-brand-gold);
+  font-weight: 700; font-size: 13.5px;
+  margin-bottom: 2px;
+  position: relative;
+}
+.sloten-chat-welcome-body {
+  font-size: 12.5px; opacity: 0.95; line-height: 1.5;
+  position: relative;
 }
 
+.sloten-chat-dreampot {
+  background: linear-gradient(90deg, #f5c518 0%, #fbbf24 50%, #f59e0b 100%);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex; align-items: center; gap: 10px;
+  cursor: pointer;
+  color: #1a1200;
+  box-shadow: 0 3px 12px rgba(245,197,24,0.3);
+  transition: transform 0.12s, box-shadow 0.12s;
+}
+.sloten-chat-dreampot:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(245,197,24,0.45);
+}
+.sloten-chat-dreampot-badge {
+  width: 40px; height: 40px; border-radius: 8px;
+  background: var(--slc-header-bg);
+  color: var(--slc-fg-inv);
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 800; font-size: 14px; letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+.sloten-chat-dreampot-text { flex: 1; min-width: 0; }
+.sloten-chat-dreampot-title {
+  font-weight: 700; font-size: 14px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sloten-chat-dreampot-more {
+  font-size: 11px; opacity: 0.75;
+}
+
+/* --- Handoff / status banner --- */
 .sloten-chat-banner {
+  margin: 10px 12px 0;
   padding: 8px 12px;
-  background: #fef3c7;
-  color: #78350f;
-  font-size: 12px;
-  border-bottom: 1px solid var(--slc-border);
+  background: #fef3c7; color: #78350f;
+  font-size: 12px; border-radius: 8px;
   display: none;
 }
 .sloten-chat-banner[data-visible="1"] { display: block; }
 
+/* --- Messages --- */
 .sloten-chat-messages {
   flex: 1;
   overflow-y: auto;
   padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  background: #f9fafb;
+  display: flex; flex-direction: column; gap: 8px;
 }
-
 .sloten-chat-msg {
   max-width: 85%;
-  padding: 8px 12px;
+  padding: 9px 12px;
   border-radius: 12px;
   line-height: 1.5;
-  white-space: pre-wrap;
-  word-wrap: break-word;
+  white-space: pre-wrap; word-wrap: break-word;
+  font-size: 13.5px;
 }
 .sloten-chat-msg[data-sender="customer"] {
   background: var(--slc-bubble-customer);
@@ -139,6 +207,7 @@
   color: var(--slc-bubble-bot-fg);
   align-self: flex-start;
   border-bottom-left-radius: 4px;
+  border: 1px solid var(--slc-border);
 }
 .sloten-chat-msg[data-sender="staff"] {
   background: var(--slc-bubble-staff);
@@ -147,140 +216,110 @@
   border-bottom-left-radius: 4px;
 }
 .sloten-chat-msg[data-sender="system"] {
-  background: transparent;
-  color: var(--slc-muted);
-  font-size: 12px;
-  align-self: center;
-  max-width: 100%;
+  background: transparent; color: var(--slc-muted);
+  font-size: 11.5px; align-self: center; max-width: 100%;
 }
-
 .sloten-chat-meta {
-  font-size: 10px;
-  color: var(--slc-muted);
-  margin-top: 2px;
+  font-size: 10px; color: var(--slc-muted); margin-top: 3px;
 }
-.sloten-chat-msg[data-sender="customer"] .sloten-chat-meta { color: rgba(255,255,255,0.8); }
+.sloten-chat-msg[data-sender="customer"] .sloten-chat-meta { color: rgba(255,255,255,0.75); }
 
+/* --- input_select buttons --- */
 .sloten-chat-selects {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 6px;
+  display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px;
 }
 .sloten-chat-select-btn {
-  background: var(--slc-bg);
-  border: 1px solid var(--slc-brand);
-  color: var(--slc-brand);
-  padding: 6px 10px;
-  border-radius: 16px;
-  cursor: pointer;
-  font-size: 12px;
+  background: var(--slc-header-bg);
+  border: 1px solid var(--slc-header-bg2);
+  color: var(--slc-fg-inv);
+  padding: 7px 12px; border-radius: 18px;
+  cursor: pointer; font-size: 12.5px;
+  transition: background 0.12s, transform 0.1s;
 }
-.sloten-chat-select-btn:hover { background: var(--slc-brand); color: var(--slc-brand-fg); }
+.sloten-chat-select-btn:hover {
+  background: var(--slc-header-bg2);
+  transform: translateY(-1px);
+}
+
+.sloten-chat-attach {
+  background: #fff; border: 1px solid var(--slc-border);
+  color: var(--slc-fg); border-radius: 50%; width: 36px; height: 36px;
+  cursor: pointer; font-size: 16px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+}
+.sloten-chat-attach:hover { background: #f3f4f6; }
+.sloten-chat-attach:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.sloten-chat-attachment {
+  margin-top: 6px; display: flex; flex-direction: column; gap: 4px;
+}
+.sloten-chat-attachment img {
+  max-width: 100%; max-height: 240px; border-radius: 6px;
+  display: block; background: #f3f4f6; cursor: pointer;
+}
+.sloten-chat-attachment-file {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 10px; background: rgba(0,0,0,0.05);
+  border-radius: 8px; color: inherit; text-decoration: none; font-size: 12px;
+}
+.sloten-chat-attachment-meta { font-size: 10px; opacity: 0.75; }
 
 .sloten-chat-typing {
   align-self: flex-start;
-  padding: 8px 12px;
-  background: var(--slc-bubble-bot);
-  border-radius: 12px;
-  color: var(--slc-muted);
-  font-size: 12px;
-  display: none;
+  padding: 8px 12px; background: var(--slc-bubble-bot);
+  border-radius: 12px; border: 1px solid var(--slc-border);
+  color: var(--slc-muted); font-size: 12px; display: none;
 }
 .sloten-chat-typing[data-visible="1"] { display: block; }
 
-.sloten-chat-input-wrap {
-  border-top: 1px solid var(--slc-border);
-  padding: 8px;
-  display: flex;
-  gap: 6px;
-  background: var(--slc-bg);
-}
-.sloten-chat-input {
-  flex: 1;
-  border: 1px solid var(--slc-border);
-  border-radius: 8px;
-  padding: 8px 10px;
-  font: inherit;
-  resize: none;
-  outline: none;
-  max-height: 100px;
-  color: var(--slc-fg);
-  background: var(--slc-bg);
-}
-.sloten-chat-input:focus { border-color: var(--slc-brand); }
-.sloten-chat-send {
-  background: var(--slc-brand);
-  color: var(--slc-brand-fg);
-  border: none;
-  border-radius: 8px;
-  padding: 0 14px;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 600;
-}
-.sloten-chat-send:disabled { opacity: 0.5; cursor: not-allowed; }
-
-.sloten-chat-attach {
-  background: transparent;
-  border: 1px solid var(--slc-border);
-  color: var(--slc-fg);
-  border-radius: 8px;
-  padding: 0 10px;
-  cursor: pointer;
-  font-size: 16px;
-  line-height: 1;
-}
-.sloten-chat-attach:hover { background: var(--slc-bubble-bot); }
-.sloten-chat-attach:disabled { opacity: 0.5; cursor: not-allowed; }
-.sloten-chat-attach-hidden { display: none !important; }
-
-.sloten-chat-attachment {
-  margin-top: 6px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.sloten-chat-attachment img {
-  max-width: 100%;
-  max-height: 240px;
-  border-radius: 6px;
-  display: block;
-  background: #f3f4f6;
-  cursor: pointer;
-}
-.sloten-chat-attachment-file {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  background: rgba(255,255,255,0.15);
-  border-radius: 8px;
-  color: inherit;
-  text-decoration: none;
-  font-size: 12px;
-}
-.sloten-chat-msg[data-sender="bot"] .sloten-chat-attachment-file,
-.sloten-chat-msg[data-sender="staff"] .sloten-chat-attachment-file {
-  background: rgba(0,0,0,0.08);
-}
-.sloten-chat-attachment-meta { font-size: 10px; opacity: 0.8; }
-
 .sloten-chat-pending {
   display: flex; align-items: center; gap: 6px;
-  padding: 4px 8px; background: #fef3c7; border-radius: 6px;
-  font-size: 12px; color: #78350f; margin: 4px 8px;
+  padding: 5px 10px; background: #fef3c7; border-radius: 8px;
+  font-size: 12px; color: #78350f; margin: 0 12px 6px;
 }
 .sloten-chat-pending button {
   margin-left: auto; background: transparent; border: none;
   color: #78350f; cursor: pointer; font-size: 14px;
 }
 
-.sloten-chat-status {
-  font-size: 11px;
-  padding: 4px 8px;
+/* --- Input area --- */
+.sloten-chat-input-wrap {
   border-top: 1px solid var(--slc-border);
-  color: var(--slc-muted);
-  text-align: center;
+  padding: 10px 12px;
+  display: flex; gap: 8px; align-items: center;
+  background: var(--slc-bg);
+}
+.sloten-chat-input {
+  flex: 1;
+  border: 1px solid var(--slc-border);
+  border-radius: 22px;
+  padding: 9px 14px;
+  font: inherit; font-size: 13.5px;
+  resize: none; outline: none;
+  max-height: 88px;
+  color: var(--slc-fg); background: #fff;
+}
+.sloten-chat-input:focus {
+  border-color: var(--slc-header-bg);
+  box-shadow: 0 0 0 3px rgba(15,34,51,0.08);
+}
+.sloten-chat-send {
+  width: 38px; height: 38px; border-radius: 50%;
+  background: var(--slc-header-bg);
+  color: var(--slc-fg-inv);
+  border: none; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.12s, transform 0.1s;
+}
+.sloten-chat-send:hover:not(:disabled) {
+  background: var(--slc-header-bg2);
+  transform: translateY(-1px);
+}
+.sloten-chat-send:disabled { opacity: 0.4; cursor: not-allowed; }
+.sloten-chat-send svg { width: 16px; height: 16px; }
+
+.sloten-chat-status {
+  font-size: 10.5px; padding: 4px 12px 6px;
+  color: var(--slc-muted); text-align: center;
   background: var(--slc-bg);
 }

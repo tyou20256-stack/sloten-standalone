@@ -19,7 +19,17 @@
   const script = document.currentScript || document.querySelector('script[src*="widget.js"]');
   const ds = (script && script.dataset) || {};
   const userCfg = window.SlotenChatConfig || {};
-  const defaults = { tenantId: 'tenant_default', title: 'サポート', subtitle: 'AI オペレーター', autoOpen: false };
+  const defaults = {
+    tenantId: 'tenant_default',
+    title: 'スロット天国',
+    subtitle: '対応中',
+    brandInitials: 'ST',
+    welcomeTitle: 'こんばんは、スロット天国サポートです',
+    welcomeBody: 'ご用件をお選びいただくか、自由にご質問ください。',
+    dreampotUrl: 'https://sloten.io/lottery',
+    inputPlaceholder: 'ご質問を入力…',
+    autoOpen: false,
+  };
 
   const apiBase = (ds.api || userCfg.api || (script ? new URL(script.src).origin : window.location.origin)).replace(/\/$/, '');
 
@@ -38,6 +48,11 @@
     tenantId: ds.tenantId || userCfg.tenantId || defaults.tenantId,
     title: ds.title || userCfg.title || defaults.title,
     subtitle: ds.subtitle || userCfg.subtitle || defaults.subtitle,
+    brandInitials: ds.brandInitials || userCfg.brandInitials || defaults.brandInitials,
+    welcomeTitle: ds.welcomeTitle || userCfg.welcomeTitle || defaults.welcomeTitle,
+    welcomeBody: ds.welcomeBody || userCfg.welcomeBody || defaults.welcomeBody,
+    dreampotUrl: ds.dreampotUrl || userCfg.dreampotUrl || defaults.dreampotUrl,
+    inputPlaceholder: ds.inputPlaceholder || userCfg.inputPlaceholder || defaults.inputPlaceholder,
     autoOpen: (ds.autoOpen || userCfg.autoOpen || '').toString() === '1' || userCfg.autoOpen === true,
     cssUrl: ds.cssUrl || userCfg.cssUrl || (script ? new URL('./widget.css', script.src).toString() : null),
     user: hostUser,
@@ -114,6 +129,7 @@
   };
 
   const ICON_CHAT = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 5.94 2 10.8c0 2.52 1.26 4.79 3.3 6.41L4 22l5.22-2.61c.9.14 1.83.21 2.78.21 5.52 0 10-3.94 10-8.8C22 5.94 17.52 2 12 2z"/></svg>';
+  const ICON_SEND = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>';
 
   const dom = {};
   function buildUI() {
@@ -125,24 +141,50 @@
       html: ICON_CHAT,
     });
     dom.panel = el('div', { class: 'sloten-chat-panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'サポートチャット' });
+
+    // Header: ST avatar + title + "対応中" + close
+    const brandInitials = (cfg.brandInitials || 'ST').slice(0, 2);
     const header = el('div', { class: 'sloten-chat-header' },
-      el('div', {},
+      el('div', { class: 'sloten-chat-header-avatar', 'aria-hidden': 'true' }, brandInitials),
+      el('div', { class: 'sloten-chat-header-text' },
         el('div', { class: 'sloten-chat-title' }, cfg.title),
-        el('div', { class: 'sloten-chat-subtitle' }, cfg.subtitle)
+        el('div', { class: 'sloten-chat-subtitle' }, cfg.subtitle),
       ),
-      el('button', { class: 'sloten-chat-close', 'aria-label': '閉じる', onclick: close }, '\u00d7')
+      el('button', { class: 'sloten-chat-close', type: 'button', 'aria-label': 'チャットウィジェットを閉じる', onclick: close }, '\u00d7'),
     );
+
+    // Pinned welcome + dreampot (always above the message stream)
+    dom.pinned = el('div', { class: 'sloten-chat-pinned' });
+    dom.welcome = el('div', { class: 'sloten-chat-welcome' },
+      el('div', { class: 'sloten-chat-welcome-title' }, cfg.welcomeTitle),
+      el('div', { class: 'sloten-chat-welcome-body' }, cfg.welcomeBody),
+    );
+    dom.dreampot = el('div', {
+      class: 'sloten-chat-dreampot',
+      role: 'button', tabindex: '0',
+      onclick: () => window.open(cfg.dreampotUrl, '_blank', 'noopener'),
+      onkeydown: (ev) => { if (ev.key === 'Enter' || ev.key === ' ') window.open(cfg.dreampotUrl, '_blank', 'noopener'); },
+    },
+      el('div', { class: 'sloten-chat-dreampot-badge' }, 'JP'),
+      el('div', { class: 'sloten-chat-dreampot-text' },
+        el('div', { class: 'sloten-chat-dreampot-title', id: 'slc-dreampot-title' }, 'ドリームポット 読み込み中…'),
+        el('div', { class: 'sloten-chat-dreampot-more' }, '詳しくはこちら'),
+      ),
+    );
+    dom.pinned.appendChild(dom.welcome);
+    dom.pinned.appendChild(dom.dreampot);
+
     dom.banner = el('div', { class: 'sloten-chat-banner' });
     dom.messages = el('div', { class: 'sloten-chat-messages' });
     dom.typing = el('div', { class: 'sloten-chat-typing' }, '入力中…');
     dom.input = el('textarea', {
       class: 'sloten-chat-input',
       rows: '1',
-      placeholder: 'メッセージを入力…',
+      placeholder: cfg.inputPlaceholder,
       onkeydown: onKeyDown,
       oninput: () => autoResize(dom.input),
     });
-    dom.send = el('button', { class: 'sloten-chat-send', type: 'button', 'aria-label': 'メッセージを送信', onclick: onSend }, '送信');
+    dom.send = el('button', { class: 'sloten-chat-send', type: 'button', 'aria-label': 'メッセージを送信', onclick: onSend, html: ICON_SEND });
     dom.attach = el('button', { class: 'sloten-chat-attach', type: 'button', 'aria-label': 'ファイルを添付', title: 'ファイル添付 (画像/PDF, 最大10MB)', onclick: () => dom.file.click() }, '📎');
     dom.file = el('input', { type: 'file', accept: 'image/*,application/pdf', style: 'display:none', onchange: onFilePicked });
     dom.pending = el('div', { class: 'sloten-chat-pending', style: 'display:none' });
@@ -150,6 +192,7 @@
     dom.status = el('div', { class: 'sloten-chat-status' }, '接続準備中');
 
     dom.panel.appendChild(header);
+    dom.panel.appendChild(dom.pinned);
     dom.panel.appendChild(dom.banner);
     dom.panel.appendChild(dom.messages);
     dom.messages.appendChild(dom.typing);
@@ -516,16 +559,32 @@
     stopPolling();
   }
 
+  // --- Dreampot live amount ---
+  let dreampotTimer = null;
+  async function refreshDreampot() {
+    try {
+      const r = await fetch(cfg.apiBase + '/api/public/jackpot', { credentials: 'omit' });
+      const j = await r.json();
+      if (j && j.success && Number.isFinite(j.amount)) {
+        const t = document.getElementById('slc-dreampot-title');
+        if (t) t.textContent = 'ドリームポット ¥' + j.amount.toLocaleString('en-US');
+      }
+    } catch (_) { /* ignore transient errors */ }
+  }
+
   async function init() {
     injectStyles();
     buildUI();
+    refreshDreampot();
+    if (dreampotTimer) clearInterval(dreampotTimer);
+    dreampotTimer = setInterval(refreshDreampot, 60 * 1000);
     if (cfg.autoOpen) await open();
     if (state.conversationId) {
       // Resume on fresh page load: connect WS eagerly so operator replies
       // arrive even if the user hasn't opened the panel yet.
       connectWS();
     }
-    setStatus('準備完了');
+    setStatus('');
   }
 
   if (document.readyState === 'loading') {

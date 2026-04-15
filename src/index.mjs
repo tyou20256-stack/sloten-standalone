@@ -40,6 +40,7 @@ import { verifyContactToken, extractContactToken } from './auth/contact-token.mj
 import { listBotMenus, createBotMenu, updateBotMenu, deleteBotMenu } from './handlers/bot-menus.mjs';
 import { listBotFlows, createBotFlow, updateBotFlow, deleteBotFlow } from './handlers/bot-flows.mjs';
 import { uploadAttachment, downloadAttachment, downloadAttachmentSigned } from './handlers/attachments.mjs';
+import { getPublicJackpot } from './handlers/public-jackpot.mjs';
 import {
   listCandidates, updateCandidate, approveCandidate, rejectCandidate, bulkAction, runExtractionNow,
 } from './handlers/faq-candidates.mjs';
@@ -136,6 +137,9 @@ export default {
       // --- Public ---
       if (path === '/health' && method === 'GET') {
         return ok({ status: 'ok' }, corsHeaders);
+      }
+      if (path === '/api/public/jackpot' && method === 'GET') {
+        return getPublicJackpot(request, env, corsHeaders);
       }
 
       // /widget alias → /widget/index.html (convenience).
