@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="robots" content="noindex" />
-  <title>Sloten Admin Console</title>
+  <title>スタッフダッシュボード — Sloten Admin</title>
   <link rel="stylesheet" href="./admin.css" />
 </head>
 <body data-view="login">
@@ -31,38 +31,63 @@
     </div>
   </div>
 
-  <!-- App -->
+  <!-- App: 260px sidebar + content area (grid layout, mirrors reference admin) -->
   <div class="slo-adm-app">
-    <div class="slo-adm-top">
-      <div class="slo-adm-top-brand">Sloten Admin</div>
-      <div>
-        <a href="/operator/">オペレーター画面 →</a>
+    <!-- Sidebar -->
+    <nav class="slo-adm-nav" aria-label="メインナビゲーション">
+      <div class="slo-adm-nav-brand">
+        <span class="slo-adm-nav-brand-avatar" aria-hidden="true">SL</span>
+        <span>スタッフダッシュボード</span>
       </div>
-      <div class="slo-adm-top-user">
-        <span id="slo-adm-top-user"></span>
-        <button id="slo-adm-logout">ログアウト</button>
-      </div>
-    </div>
+      <div class="slo-adm-nav-user" id="slo-adm-nav-user">読み込み中…</div>
 
-    <nav class="slo-adm-nav">
-      <div class="slo-adm-nav-item" data-section="dashboard" data-active="1">ダッシュボード</div>
-      <div class="slo-adm-nav-item" data-section="faq">FAQ</div>
-      <div class="slo-adm-nav-item" data-section="templates">テンプレート</div>
-      <div class="slo-adm-nav-item" data-section="knowledge">ナレッジ</div>
-      <div class="slo-adm-nav-item" data-section="labels">ラベル</div>
-      <div class="slo-adm-nav-item" data-section="staff">スタッフ</div>
-      <div class="slo-adm-nav-item" data-section="faq-candidates">FAQ 候補 <span id="slo-adm-fq-badge" style="display:none;margin-left:4px;background:#ef4444;color:#fff;border-radius:10px;padding:1px 6px;font-size:10px;"></span></div>
-      <div class="slo-adm-nav-item" data-section="ai-logs">AI ログ</div>
-      <div class="slo-adm-nav-item" data-section="bot-menus">ボットメニュー</div>
-      <div class="slo-adm-nav-item" data-section="bot-flows">ボットフロー</div>
-      <div class="slo-adm-nav-item" data-section="prompts">プロンプト (A/B)</div>
-      <div class="slo-adm-nav-item" data-section="teams">チーム</div>
-      <div class="slo-adm-nav-item" data-section="export">エクスポート</div>
+      <div class="slo-adm-nav-cat">運用</div>
+      <div class="slo-adm-nav-item" data-section="dashboard" data-active="1"><span class="icon">📊</span><span class="label">ダッシュボード</span></div>
+      <div class="slo-adm-nav-item" data-section="conversations"><span class="icon">💬</span><span class="label">会話</span></div>
+
+      <div class="slo-adm-nav-cat">コンテンツ管理</div>
+      <div class="slo-adm-nav-item" data-section="faq"><span class="icon">📚</span><span class="label">FAQ</span></div>
+      <div class="slo-adm-nav-item" data-section="knowledge"><span class="icon">🧠</span><span class="label">ナレッジベース</span></div>
+      <div class="slo-adm-nav-item" data-section="templates"><span class="icon">📋</span><span class="label">テンプレート</span></div>
+      <div class="slo-adm-nav-item" data-section="labels"><span class="icon">🏷️</span><span class="label">タグ</span></div>
+      <div class="slo-adm-nav-item" data-section="bonus-codes"><span class="icon">🎁</span><span class="label">ボーナスコード</span></div>
+      <div class="slo-adm-nav-item" data-section="bonus-submissions"><span class="icon">📝</span><span class="label">コード申請履歴</span></div>
+      <div class="slo-adm-nav-item" data-section="bot-menus"><span class="icon">🎨</span><span class="label">ボットメニュー</span></div>
+      <div class="slo-adm-nav-item" data-section="bot-flows"><span class="icon">🔀</span><span class="label">ボットフロー</span></div>
+      <div class="slo-adm-nav-item" data-section="menu-tree"><span class="icon">🗂️</span><span class="label">メニュー・メッセージ</span></div>
+
+      <div class="slo-adm-nav-cat">分析・AI</div>
+      <div class="slo-adm-nav-item" data-section="ai-logs"><span class="icon">📝</span><span class="label">AI回答ログ</span></div>
+      <div class="slo-adm-nav-item" data-section="prompts"><span class="icon">🤖</span><span class="label">AIプロンプト (A/B)</span></div>
+      <div class="slo-adm-nav-item" data-section="faq-candidates"><span class="icon">⭐</span><span class="label">FAQ 候補</span> <span id="slo-adm-fq-badge" style="display:none;margin-left:4px;background:#ef4444;color:#fff;border-radius:10px;padding:1px 6px;font-size:10px;"></span></div>
+
+      <div class="slo-adm-nav-cat">設定</div>
+      <div class="slo-adm-nav-item" data-section="staff"><span class="icon">👥</span><span class="label">担当者</span></div>
+      <div class="slo-adm-nav-item" data-section="teams"><span class="icon">🏢</span><span class="label">チーム</span></div>
+      <div class="slo-adm-nav-item" data-section="webhook-test"><span class="icon">🧪</span><span class="label">Bot テスト</span></div>
+      <div class="slo-adm-nav-item" data-section="gas-urls"><span class="icon">🔗</span><span class="label">GAS URL 設定</span></div>
+      <div class="slo-adm-nav-item" data-section="audit-log"><span class="icon">📋</span><span class="label">監査ログ</span></div>
+      <div class="slo-adm-nav-item" data-section="error-log"><span class="icon">⚠️</span><span class="label">エラーログ</span></div>
+      <div class="slo-adm-nav-item" data-section="backup"><span class="icon">💾</span><span class="label">バックアップ/リストア</span></div>
+      <div class="slo-adm-nav-item" data-section="export"><span class="icon">⬇️</span><span class="label">エクスポート</span></div>
+
+      <div class="slo-adm-nav-footer">v2.0 standalone</div>
     </nav>
 
-    <main class="slo-adm-content" id="slo-adm-content">
-      <div style="color:#9ca3af;">読み込み中…</div>
-    </main>
+    <!-- Main area: top bar + content -->
+    <div class="slo-adm-main">
+      <div class="slo-adm-top">
+        <div class="slo-adm-top-brand">Sloten Admin</div>
+        <div class="slo-adm-top-user">
+          <a href="/operator/">オペレーター画面 →</a>
+          <span id="slo-adm-top-user"></span>
+          <button id="slo-adm-logout">ログアウト</button>
+        </div>
+      </div>
+      <main class="slo-adm-content" id="slo-adm-content">
+        <div class="slo-adm-empty">読み込み中…</div>
+      </main>
+    </div>
   </div>
 
   <!-- Modal overlay -->
@@ -71,6 +96,10 @@
   </div>
 
   <script src="../shared/toast.js"></script>
-  <script src="./admin.js"></script>
+  <script src="./admin-core.js"></script>
+  <script src="./sections/bot-flows.js"></script>
+  <script src="./sections/bot-data.js"></script>
+  <script src="./sections/ops.js"></script>
+  <script src="./sections/content.js"></script>
 </body>
 </html>

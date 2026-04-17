@@ -24,7 +24,7 @@ import {
 import { searchHandler } from './handlers/search.mjs';
 import { listLabels, createLabel, updateLabel, deleteLabel } from './handlers/labels.mjs';
 import {
-  listStaff, createStaff, updateStaff, deleteStaff, resetStaffPassword, importStaffFromChatwoot,
+  listStaff, listStaffLookup, createStaff, updateStaff, deleteStaff, resetStaffPassword, importStaffFromChatwoot,
 } from './handlers/staff-admin.mjs';
 import { dashboardStats } from './handlers/dashboard.mjs';
 import { exportCsv } from './handlers/export.mjs';
@@ -39,6 +39,8 @@ import { handleScheduled } from './scheduled.mjs';
 import { verifyContactToken, extractContactToken } from './auth/contact-token.mjs';
 import { listBotMenus, createBotMenu, updateBotMenu, deleteBotMenu } from './handlers/bot-menus.mjs';
 import { listBotFlows, createBotFlow, updateBotFlow, deleteBotFlow } from './handlers/bot-flows.mjs';
+import { listBonusCodes, createBonusCode, updateBonusCode, deleteBonusCode, listBonusSubmissions } from './handlers/bonus-codes-admin.mjs';
+import { adminTestBot, listGasUrls, setGasUrl, pingGasUrl, listAuditLog, listErrorLog, adminBackup, adminRestore, adminMenuTree } from './handlers/admin-ops.mjs';
 import { uploadAttachment, downloadAttachment, downloadAttachmentSigned } from './handlers/attachments.mjs';
 import { getPublicJackpot } from './handlers/public-jackpot.mjs';
 import {
@@ -136,7 +138,24 @@ export default {
     try {
       // --- Public ---
       if (path === '/health' && method === 'GET') {
-        return ok({ status: 'ok' }, corsHeaders);
+        // Deep health: verify DB is reachable (not just Worker alive).
+        try {
+          const dbCheck = await env.DB.prepare('SELECT 1 AS ping').first();
+          const kvCheck = env.SESSION_KV ? 'ok' : 'missing';
+          return ok({
+            status: 'ok',
+            db: dbCheck?.ping === 1 ? 'ok' : 'error',
+            kv: kvCheck,
+            timestamp: new Date().toISOString(),
+          }, corsHeaders);
+        } catch (e) {
+          return new Response(JSON.stringify({
+            status: 'degraded',
+            db: 'error',
+            error: e.message,
+            timestamp: new Date().toISOString(),
+          }), { status: 503, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+        }
       }
       if (path === '/api/public/jackpot' && method === 'GET') {
         return getPublicJackpot(request, env, corsHeaders);
@@ -342,6 +361,8 @@ export default {
 
       // Staff admin (admin role only, except self via /api/staff/me above)
       if (path === '/api/staff' && method === 'GET') return requireAdminRole(listStaff)(request, env, corsHeaders);
+      // Directory lookup for any authenticated staff (id/name/role only, no secrets).
+      if (path === '/api/staff/lookup' && method === 'GET') return requireStaff(listStaffLookup)(request, env, corsHeaders);
       if (path === '/api/staff' && method === 'POST') return requireAdminRole(createStaff)(request, env, corsHeaders);
       if (path === '/api/staff/import_from_chatwoot' && method === 'POST') return requireAdminRole(importStaffFromChatwoot)(request, env, corsHeaders);
       {
@@ -402,6 +423,29 @@ export default {
         if (m && method === 'PATCH')  return requireAdminRole(updateBotFlow)(request, env, corsHeaders, parseInt(m[1], 10));
         if (m && method === 'DELETE') return requireAdminRole(deleteBotFlow)(request, env, corsHeaders, parseInt(m[1], 10));
       }
+
+      // Bonus codes (admin-role writes; reads open to staff)
+      if (path === '/api/bonus-codes' && method === 'GET') return requireStaff(listBonusCodes)(request, env, corsHeaders);
+      if (path === '/api/bonus-codes' && method === 'POST') return requireAdminRole(createBonusCode)(request, env, corsHeaders);
+      {
+        const m = path.match(/^\/api\/bonus-codes\/(\d+)$/);
+        if (m && method === 'PATCH')  return requireAdminRole(updateBonusCode)(request, env, corsHeaders, parseInt(m[1], 10));
+        if (m && method === 'DELETE') return requireAdminRole(deleteBonusCode)(request, env, corsHeaders, parseInt(m[1], 10));
+      }
+      if (path === '/api/bonus-code-submissions' && method === 'GET') return requireStaff(listBonusSubmissions)(request, env, corsHeaders);
+
+      // Admin operations (admin-role): test webhook, GAS URL editor, ping,
+      // audit/error logs, backup/restore. Mirrors production chatwoot-bot
+      // admin "運用・監視" tab.
+      if (path === '/api/admin/test-bot' && method === 'POST') return requireAdminRole((req, e, h) => adminTestBot(req, e, h, ctx))(request, env, corsHeaders);
+      if (path === '/api/admin/gas-urls' && method === 'GET')  return requireAdminRole(listGasUrls)(request, env, corsHeaders);
+      if (path === '/api/admin/gas-urls' && method === 'POST') return requireAdminRole(setGasUrl)(request, env, corsHeaders);
+      if (path === '/api/admin/gas-ping' && method === 'POST') return requireAdminRole(pingGasUrl)(request, env, corsHeaders);
+      if (path === '/api/admin/audit-log' && method === 'GET') return requireAdminRole(listAuditLog)(request, env, corsHeaders);
+      if (path === '/api/admin/error-log' && method === 'GET') return requireAdminRole(listErrorLog)(request, env, corsHeaders);
+      if (path === '/api/admin/backup' && method === 'GET')    return requireAdminRole(adminBackup)(request, env, corsHeaders);
+      if (path === '/api/admin/restore' && method === 'POST')  return requireAdminRole(adminRestore)(request, env, corsHeaders);
+      if (path === '/api/admin/menu-tree' && method === 'GET')  return requireStaff(adminMenuTree)(request, env, corsHeaders);
 
       // Bot menus (admin-role)
       if (path === '/api/bot-menus' && method === 'GET') return requireStaff(listBotMenus)(request, env, corsHeaders);

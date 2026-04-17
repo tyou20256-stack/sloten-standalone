@@ -28,6 +28,19 @@ export async function listStaff(request, env, corsHeaders) {
   return ok({ success: true, staff: (results || []).map(sanitize) }, corsHeaders);
 }
 
+// Minimal read-only directory for any authenticated staff (used by the
+// operator console to resolve sender_id -> name/role when rendering chat
+// messages). Returns only non-sensitive fields.
+export async function listStaffLookup(request, env, corsHeaders) {
+  const { results } = await env.DB.prepare(
+    `SELECT id, email, name, role, is_active
+       FROM staff_members
+      WHERE is_active = 1
+      ORDER BY role DESC, id ASC`,
+  ).all();
+  return ok({ success: true, staff: results || [] }, corsHeaders);
+}
+
 export async function createStaff(request, env, corsHeaders) {
   const { body, response } = await parseJson(request, corsHeaders);
   if (response) return response;

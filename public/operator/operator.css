@@ -204,6 +204,17 @@ body[data-view="app"] .slo-op-app { display: grid; }
 .slo-op-msg[data-sender="system"]   { background: transparent; color: #9ca3af; font-size: 11px; align-self: center; max-width: 100%; }
 .slo-op-msg-meta { font-size: 10px; color: #9ca3af; margin-top: 2px; }
 .slo-op-msg[data-sender="staff"] .slo-op-msg-meta { color: rgba(255,255,255,0.8); }
+/* Admin replies: gold-tinted bubble + crown ring so the role is unmistakable. */
+.slo-op-msg[data-sender="staff"][data-staff-role="admin"] {
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  box-shadow: 0 0 0 2px rgba(245,197,24,0.4);
+}
+.slo-op-msg[data-sender="staff"][data-staff-role="admin"] .slo-op-msg-meta {
+  color: rgba(255,255,255,0.95); font-weight: 600;
+}
+.slo-op-msg[data-sender="staff"][data-staff-role="supervisor"] {
+  background: linear-gradient(135deg, #7c3aed, #6d28d9);
+}
 
 .slo-op-compose {
   border-top: 1px solid #e5e7eb;

@@ -1,0 +1,82 @@
+{
+  "name": "deposit-test",
+  "description": "テスト用: 金額入力 → スクショ提出 → GAS webhook(新スプシに記録)",
+  "trigger_type": "entry",
+  "trigger_value": "^(テスト入金|入金テスト|test_deposit)$",
+  "start_step_id": "intro",
+  "priority": 500,
+  "is_active": 1,
+  "steps": [
+    {
+      "id": "intro",
+      "type": "message",
+      "content": "【テスト入金フロー】\nこのフローはテスト用スプレッドシートに記録されます。\n本番データには影響しません。",
+      "next": "ask_method"
+    },
+    {
+      "id": "ask_method",
+      "type": "select",
+      "prompt": "入金方法をお選びください。",
+      "var": "method",
+      "options": [
+        { "title": "PayPay", "value": "paypay", "next": "ask_amount" },
+        { "title": "銀行振込", "value": "bank", "next": "ask_amount" },
+        { "title": "コンビニ", "value": "conveni", "next": "ask_amount" }
+      ]
+    },
+    {
+      "id": "ask_amount",
+      "type": "input",
+      "prompt": "入金金額を半角数字で入力してください。(例: 5000)",
+      "var": "amount",
+      "validate": "^[0-9]{3,7}$",
+      "validate_error": "3〜7桁の半角数字でご入力ください。",
+      "next": "ask_name"
+    },
+    {
+      "id": "ask_name",
+      "type": "input",
+      "prompt": "振込名義(カタカナ)またはアカウントID(PayPayの場合は電話番号)を入力してください。",
+      "var": "name_or_id",
+      "validate": "^.{2,30}$",
+      "validate_error": "2〜30文字でご入力ください。",
+      "next": "ask_screenshot"
+    },
+    {
+      "id": "ask_screenshot",
+      "type": "input",
+      "prompt": "入金完了画面のスクリーンショットを添付してください。(左下のクリップアイコンから画像をアップロードできます)",
+      "capture": "attachment",
+      "var": "screenshot_attachment_id",
+      "validate_error": "画像(スクリーンショット)を添付してください。テキストだけでは受け付けられません。",
+      "next": "submit"
+    },
+    {
+      "id": "submit",
+      "type": "webhook",
+      "url": "{{env.GAS_BOT_WEBHOOK_URL}}",
+      "method": "POST",
+      "timeout_ms": 10000,
+      "body": {
+        "event": "deposit_test_submit",
+        "method": "{{vars.method}}",
+        "amount": "{{vars.amount}}",
+        "name_or_id": "{{vars.name_or_id}}"
+      },
+      "on_error": "error_handoff",
+      "error_message": "スプレッドシート記録に失敗しました。担当者におつなぎします。",
+      "next": "done"
+    },
+    {
+      "id": "done",
+      "type": "message",
+      "content": "ご提出ありがとうございました。\nテストスプレッドシートへの記録が完了しました。\n担当者が内容を確認次第ご連絡いたします。",
+      "next": null
+    },
+    {
+      "id": "error_handoff",
+      "type": "handoff",
+      "note": "テスト入金フローでGAS呼び出しに失敗。担当者確認要。"
+    }
+  ]
+}

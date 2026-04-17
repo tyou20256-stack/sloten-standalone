@@ -8,21 +8,35 @@ import { recordAiCall } from './handlers/ai-logs.mjs';
 import { pickActivePrompt } from './handlers/ai-prompts.mjs';
 import { findKeywordMenu, findFallbackMenu, menuToMessagePayload } from './handlers/bot-menus.mjs';
 import { maskPII } from './pii-masker.mjs';
+import { filterResponse, detectInputThreat } from './responseFilter.mjs';
 
-const MAX_CONTEXT_FAQ = 8;
-const MAX_CONTEXT_KB = 3;
+const MAX_CONTEXT_FAQ = 15;
+const MAX_CONTEXT_KB = 8;
 
 function buildSystemPrompt(faqRows, kbRows, header) {
   const faqText = faqRows.slice(0, MAX_CONTEXT_FAQ)
     .map((r) => `Q: ${r.question}\nA: ${r.answer}`)
     .join('\n\n');
   const kbText = kbRows.slice(0, MAX_CONTEXT_KB)
-    .map((r) => `[${r.title || 'untitled'}]\n${(r.content || '').slice(0, 1500)}`)
+    .map((r) => `[${r.title || 'untitled'}]\n${(r.content || '').slice(0, 3000)}`)
     .join('\n\n---\n\n');
   const head = header || [
-    'あなたはスロット天国のカスタマーサポート担当です。',
-    '日本語で簡潔に、丁寧に回答してください。',
-    'FAQ やナレッジに情報がない場合は「担当者におつなぎします」と案内してください。',
+    'あなたは「スロット天国」のAIカスタマーサポート担当です。',
+    '',
+    '## 基本ルール',
+    '- 日本語で丁寧に（です・ます調で）回答してください。ナレッジベースに詳しい情報があれば**省略せず具体的に**案内してください。',
+    '- **必ず下記の FAQ とナレッジベースの情報のみに基づいて回答してください。** 記載のない情報を推測や一般知識で補わないでください。',
+    '- FAQ・ナレッジに情報がない場合は「担当者におつなぎしますので、少々お待ちください」と案内してください。',
+    '- **入金の操作・手続き**（「入金したい」「振り込みたい」「PayPayで送金したい」等の実行依頼）にはメニュー誘導してください。ただし入金方法の種類・対応決済方法・出金の目安時間など**情報を聞いているだけの質問にはナレッジの情報に基づいて回答してください。**',
+    '- 英語やその他の言語での質問には「申し訳ございませんが、現在は日本語のみの対応となっております」と回答してください。',
+    '- 意味不明な入力には「ご質問内容を確認できませんでした。メニューからお選びいただくか、ご質問をお書きください」と案内してください。',
+    '',
+    '## スロット天国の基本情報（必ずこの情報を正として使用）',
+    '- カスタマーサポートは **24時間対応** です。',
+    '- ライセンス: **ジョージア（グルジア）iGaming サブライセンス N138/1**（有効期限: 2026年10月29日）。キュラソーではありません。',
+    '- 本人確認（KYC）は原則不要。電話番号とメールアドレスのみで登録可能。',
+    '- 入金方法: PayPayマネー、PayPayマネーライト、銀行振込、コンビニ入金、ATM、仮想通貨。',
+    '- ドリームポット: 業界初の独自賞金プール機能。',
   ].join('\n');
   return [
     head,
@@ -41,7 +55,7 @@ async function loadContext(env, tenantId) {
       'SELECT question, answer, category FROM faq WHERE tenant_id = ? AND is_active = 1 ORDER BY priority DESC, usage_count DESC LIMIT ?'
     ).bind(tenantId, MAX_CONTEXT_FAQ * 2).all(),
     env.DB.prepare(
-      'SELECT title, content FROM knowledge_sources WHERE is_active = 1 ORDER BY priority ASC, id DESC LIMIT ?'
+      'SELECT title, content FROM knowledge_sources WHERE is_active = 1 ORDER BY priority DESC, id DESC LIMIT ?'
     ).bind(MAX_CONTEXT_KB * 2).all(),
   ]);
   return { faqRows: faq.results || [], kbRows: kb.results || [] };
@@ -52,7 +66,7 @@ async function callGemini(apiKey, system, userMessage, model = 'gemini-2.5-flash
   const body = {
     system_instruction: { parts: [{ text: system }] },
     contents: [{ role: 'user', parts: [{ text: userMessage }] }],
-    generationConfig: { temperature: 0.3, maxOutputTokens: 800 },
+    generationConfig: { temperature: 0.2, maxOutputTokens: 1200 },
   };
   const r = await fetch(url, {
     method: 'POST',
@@ -111,6 +125,15 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
   const system = buildSystemPrompt(faqRows, kbRows, promptHeader);
 
   const maskedInput = maskPII(customerMessage || '');
+
+  // Input threat detection — block prompt injection / data extraction before
+  // sending to the LLM. This saves an API call and prevents adversarial inputs
+  // from reaching the model.
+  const threat = detectInputThreat(maskedInput);
+  if (threat.suspicious) {
+    return { content: 'サポートに関するご質問をお願いいたします。', content_type: 'text' };
+  }
+
   const started = Date.now();
   let text = '';
   let status = 'ok';
@@ -155,6 +178,16 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
   else await logPromise;
 
   if (status === 'error') throw new Error(errorMessage);
+
+  // Output safety filter — block LLM responses that mention competitors,
+  // leak internal info, or provide gambling/legal advice.
+  if (text) {
+    const filtered = filterResponse(text);
+    if (!filtered.safe) {
+      text = filtered.response; // Replace with safe fallback
+    }
+  }
+
   if (!text) {
     // 2) Empty AI response — try fallback menu, otherwise plain handoff text.
     try {

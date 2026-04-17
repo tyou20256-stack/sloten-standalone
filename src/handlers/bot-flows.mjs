@@ -23,9 +23,11 @@
 import { ok, created, err, parseJson } from '../json.mjs';
 import { resolveTenantId } from '../tenant-scope.mjs';
 import { signAttachmentUrl, baseUrlOf } from '../auth/attachment-signature.mjs';
+import { resolveEnvForTemplate } from '../env-resolver.mjs';
+import { logError as _logError } from '../audit.mjs';
 
 const VALID_TRIGGER_TYPES = new Set(['entry', 'manual']);
-const VALID_STEP_TYPES = new Set(['message', 'input', 'select', 'webhook', 'handoff']);
+const VALID_STEP_TYPES = new Set(['message', 'input', 'select', 'webhook', 'handoff', 'collect']);
 
 function parseSteps(steps) {
   if (Array.isArray(steps)) return steps;
@@ -47,6 +49,15 @@ function validateSteps(steps) {
     if (s.type === 'select' && !Array.isArray(s.options)) return `step ${s.id}: options required`;
     if (s.type === 'input' && !s.var) return `step ${s.id}: var required`;
     if (s.type === 'webhook' && !s.url) return `step ${s.id}: url required`;
+    if (s.type === 'collect') {
+      if (!Array.isArray(s.slots) || !s.slots.length) return `step ${s.id}: slots required`;
+      for (const slot of s.slots) {
+        if (!slot || !slot.var) return `step ${s.id}: slot.var required`;
+        if (!slot.match || (!slot.match.regex && !slot.match.attachment)) {
+          return `step ${s.id}: slot.match requires regex or attachment`;
+        }
+      }
+    }
   }
   return null;
 }
@@ -208,7 +219,7 @@ async function persistState(env, conversationId, state) {
 //   [{ content, content_type, content_attributes }]
 // The engine stops when it hits an interactive step (input/select) or flow end.
 // `input` is the customer's latest message (null when just entering a flow).
-export async function executeFlow(env, conv, contact, inputText, ctx) {
+export async function executeFlow(env, conv, contact, inputText, ctx, inputAttrs = null) {
   const rawState = conv.flow_state ? (typeof conv.flow_state === 'string' ? JSON.parse(conv.flow_state) : conv.flow_state) : null;
   if (!rawState) return { messages: [], state: null, handoff: false };
   const flow = await getFlow(env, rawState.flow_id);
@@ -218,6 +229,7 @@ export async function executeFlow(env, conv, contact, inputText, ctx) {
   const messages = [];
   let handoff = false;
   let pending = inputText; // customer reply for the current interactive step
+  const pendingAttachmentId = inputAttrs && inputAttrs.attachment_id ? String(inputAttrs.attachment_id) : null;
 
   // Safety cap: prevent runaway loops.
   for (let i = 0; i < 20; i++) {
@@ -225,6 +237,22 @@ export async function executeFlow(env, conv, contact, inputText, ctx) {
     if (!step) break;
 
     if (step.type === 'input') {
+      // When capture:'attachment', require an uploaded file; text alone prompts retry.
+      if (step.capture === 'attachment') {
+        if (pending == null && !pendingAttachmentId) {
+          messages.push({ content: renderTemplate(step.prompt || '', { vars: state.vars, contact, env }), content_type: 'text' });
+          break;
+        }
+        if (!pendingAttachmentId) {
+          messages.push({ content: step.validate_error || '画像（スクリーンショット）を添付してください。', content_type: 'text' });
+          break;
+        }
+        state.vars[step.var] = pendingAttachmentId;
+        pending = null;
+        state.step_id = step.next;
+        if (!state.step_id) break;
+        continue;
+      }
       if (pending == null) {
         messages.push({ content: renderTemplate(step.prompt || '', { vars: state.vars, contact, env }), content_type: 'text' });
         break; // wait for customer
@@ -265,7 +293,14 @@ export async function executeFlow(env, conv, contact, inputText, ctx) {
         });
         break;
       }
-      if (step.var) state.vars[step.var] = pending;
+      // Options can opt out of storing their value via `skip_var: true`
+      // (e.g. "↩️ 戻る" buttons that should not pollute the business var).
+      if (step.var && !choice.skip_var) {
+        state.vars[step.var] = pending;
+        // Also store the human-readable title so templates can reference it
+        // as {{vars._choice_title}} etc. (useful for game names).
+        state.vars[step.var + '_title'] = choice.title || pending;
+      }
       pending = null;
       state.step_id = choice.next;
       if (!state.step_id) break;
@@ -280,11 +315,133 @@ export async function executeFlow(env, conv, contact, inputText, ctx) {
       continue;
     }
 
+    // Collect: slot-filling step that captures multiple vars in any order.
+    // Each slot has { var, match: {regex?|attachment?}, prompt, confirm? }.
+    // On first entry, show `intro` + prompt for first unfilled slot.
+    // On subsequent messages, map input to the first unfilled slot whose
+    // detector matches. Emit `confirm` text (or default) + ask for next
+    // missing slot. When all slots filled, advance to step.next.
+    if (step.type === 'collect') {
+      const slots = step.slots || [];
+      const isUnfilled = (s) => !state.vars[s.var];
+      const firstEntry = pending == null && !pendingAttachmentId
+        && !slots.some((s) => state.vars[s.var]);
+
+      if (firstEntry) {
+        if (step.intro) {
+          const c = renderTemplate(step.intro, { vars: state.vars, contact, env });
+          if (c) messages.push({ content: c, content_type: 'text' });
+        }
+        const firstMissing = slots.find(isUnfilled);
+        if (firstMissing) {
+          messages.push({
+            content: renderTemplate(firstMissing.prompt || '', { vars: state.vars, contact, env }),
+            content_type: 'text',
+          });
+        }
+        break;
+      }
+
+      // Try to fill one slot from the incoming message. Attachment input
+      // can only fill attachment slots; text input only regex slots. First
+      // unfilled slot in declared order whose detector matches wins.
+      let filledSlot = null;
+      if (pendingAttachmentId) {
+        filledSlot = slots.find((s) => isUnfilled(s) && s.match && s.match.attachment === true);
+        if (filledSlot) state.vars[filledSlot.var] = pendingAttachmentId;
+      } else if (pending != null) {
+        let rangeFailed = false;
+        for (const s of slots) {
+          if (!isUnfilled(s)) continue;
+          if (!s.match || !s.match.regex) continue;
+          try {
+            if (!new RegExp(s.match.regex).test(pending)) continue;
+          } catch (_) { continue; }
+          // Optional numeric range validation. If the input parses as a
+          // number and falls outside [min_numeric, max_numeric], emit the
+          // slot's range_error (or a default) without filling the slot.
+          if (s.min_numeric != null || s.max_numeric != null) {
+            const n = Number(pending);
+            const belowMin = s.min_numeric != null && n < s.min_numeric;
+            const aboveMax = s.max_numeric != null && n > s.max_numeric;
+            if (belowMin || aboveMax) {
+              const msg = renderTemplate(
+                s.range_error || `入力可能な範囲は ${s.min_numeric ?? '-'}〜${s.max_numeric ?? '-'} です。`,
+                { vars: state.vars, contact, env },
+              );
+              messages.push({ content: msg, content_type: 'text' });
+              rangeFailed = true;
+              break;
+            }
+          }
+          state.vars[s.var] = pending;
+          filledSlot = s;
+          break;
+        }
+        if (rangeFailed) {
+          pending = null;
+          break;
+        }
+      }
+      pending = null;
+
+      if (!filledSlot) {
+        // Nothing matched. Emit the generic invalid-input notice (if any),
+        // then re-show the prompt for the first still-missing slot so the
+        // user sees the expected format.
+        if (step.on_invalid) {
+          messages.push({
+            content: renderTemplate(step.on_invalid, { vars: state.vars, contact, env }),
+            content_type: 'text',
+          });
+        }
+        const nextMissing = slots.find(isUnfilled);
+        if (nextMissing) {
+          messages.push({
+            content: renderTemplate(
+              nextMissing.invalid_prompt || nextMissing.prompt || '',
+              { vars: state.vars, contact, env },
+            ),
+            content_type: 'text',
+          });
+        } else if (!step.on_invalid) {
+          messages.push({
+            content: '入力内容を確認できませんでした。もう一度お送りください。',
+            content_type: 'text',
+          });
+        }
+        break;
+      }
+
+      // Optional confirmation after a slot is filled.
+      if (filledSlot.confirm) {
+        const c = renderTemplate(filledSlot.confirm, { vars: state.vars, contact, env });
+        if (c) messages.push({ content: c, content_type: 'text' });
+      }
+
+      const stillMissing = slots.find(isUnfilled);
+      if (stillMissing) {
+        messages.push({
+          content: renderTemplate(stillMissing.prompt || '', { vars: state.vars, contact, env }),
+          content_type: 'text',
+        });
+        break;
+      }
+
+      // All slots filled → advance.
+      state.step_id = step.next;
+      if (!state.step_id) break;
+      continue;
+    }
+
     if (step.type === 'webhook') {
       let nextStepId = step.next || null;
       try {
-        const url = renderTemplate(step.url, { vars: state.vars, contact, env });
-        const bodyObj = renderTemplate(step.body || {}, { vars: state.vars, contact, env });
+        // Resolve env (with admin overrides applied) once per webhook step
+        // so {{env.GAS_BOT_WEBHOOK_URL}} hits the override-aware getter.
+        const resolvedEnv = await resolveEnvForTemplate(env);
+        const url = renderTemplate(step.url, { vars: state.vars, contact, env: resolvedEnv });
+        const bodyObj = renderTemplate(step.body || {}, { vars: state.vars, contact, env: resolvedEnv });
         // If vars contain attachment_id, expand it into a signed URL so GAS
         // can fetch the image/PDF without auth.
         const attachments = {};
@@ -331,6 +488,7 @@ export async function executeFlow(env, conv, contact, inputText, ctx) {
         }
       } catch (e) {
         console.warn('[flow:webhook]', step.id, e.message);
+        _logError(env, 'flow:webhook', e, { conversation_id: conv.id, step_id: step.id }).catch(() => {});
         // On failure, fall through to step.on_error or default next.
         if (step.on_error && findStep(flow, step.on_error)) nextStepId = step.on_error;
         messages.push({ content: step.error_message || 'システム連携でエラーが発生しました。担当者におつなぎします。', content_type: 'text' });
@@ -367,10 +525,10 @@ export async function startFlow(env, conv, contact, flow, ctx) {
 // Called from sendMessage when customer sends a message. Returns bot messages
 // to insert (empty array if no flow is active / matches). Also updates
 // conversation state side-effects (flow_state, handoff -> status).
-export async function runFlowForCustomerMessage(env, conv, contact, text, ctx) {
+export async function runFlowForCustomerMessage(env, conv, contact, text, ctx, inputAttrs = null) {
   // Already in a flow?
   if (conv.flow_state) {
-    const result = await executeFlow(env, conv, contact, text, ctx);
+    const result = await executeFlow(env, conv, contact, text, ctx, inputAttrs);
     await persistState(env, conv.id, result.state);
     if (result.handoff) {
       await env.DB.prepare(`UPDATE conversations SET status = 'open', updated_at = datetime('now') WHERE id = ?`).bind(conv.id).run();

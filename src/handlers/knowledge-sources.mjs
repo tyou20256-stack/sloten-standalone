@@ -11,7 +11,7 @@ function json(body, status, corsHeaders) {
 }
 
 const KS_UPDATABLE = [
-  'url', 'title', 'source_type', 'priority', 'category',
+  'url', 'title', 'content', 'source_type', 'priority', 'category',
   'auto_refresh', 'content_hash', 'last_refreshed_at', 'is_active',
 ];
 
@@ -45,20 +45,23 @@ function validateUrl(u) {
 export async function handleKnowledgeSourcesGet(request, env, corsHeaders) {
   try {
     const { results } = await env.DB.prepare(
-      'SELECT * FROM knowledge_sources ORDER BY priority ASC, id DESC'
+      'SELECT * FROM knowledge_sources ORDER BY priority DESC, id DESC'
     ).all();
-    return json({ data: results || [] }, 200, corsHeaders);
+    // Dual envelope: `sources` + `success` for the standard admin UI,
+    // `data` retained for legacy tking510-compatible callers.
+    const sources = results || [];
+    return json({ success: true, sources, data: sources }, 200, corsHeaders);
   } catch (e) {
     console.error('handleKnowledgeSourcesGet:', e.message);
-    return json({ error: 'Internal error' }, 500, corsHeaders);
+    return json({ success: false, error: 'Internal error' }, 500, corsHeaders);
   }
 }
 
 export async function handleKnowledgeSourcesGetOne(request, env, corsHeaders, id) {
   try {
     const row = await env.DB.prepare('SELECT * FROM knowledge_sources WHERE id = ?').bind(id).first();
-    if (!row) return json({ error: 'Not found' }, 404, corsHeaders);
-    return json({ data: row }, 200, corsHeaders);
+    if (!row) return json({ success: false, error: 'Not found' }, 404, corsHeaders);
+    return json({ success: true, source: row, data: row }, 200, corsHeaders);
   } catch (e) {
     console.error('handleKnowledgeSourcesGetOne:', e.message);
     return json({ error: 'Internal error' }, 500, corsHeaders);
@@ -72,24 +75,24 @@ export async function handleKnowledgeSourcesPost(request, env, corsHeaders) {
   }
   try {
     const {
-      tenant_id = 'tenant_default',
-      url = null, title = null, source_type = null,
-      priority = 5, category = null, auto_refresh = 0,
+      url = null, title = null, content = null, source_type = null,
+      priority = 3, category = null, auto_refresh = 0,
       content_hash = null, last_refreshed_at = null, is_active = 1,
     } = body || {};
 
-    const v = validateUrl(url);
-    if (!v.ok) return json({ success: false, error: v.error }, 400, corsHeaders);
+    // URL is required only for url-type sources.
+    if (source_type !== 'text') {
+      const v = validateUrl(url);
+      if (!v.ok) return json({ success: false, error: v.error }, 400, corsHeaders);
+    }
 
     const result = await env.DB.prepare(
-      `INSERT INTO knowledge_sources (tenant_id, url, title, source_type, priority, category,
+      `INSERT INTO knowledge_sources (url, title, content, source_type, priority, category,
         auto_refresh, content_hash, last_refreshed_at, is_active)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(tenant_id, url, title, source_type, priority, category,
-      auto_refresh, content_hash, last_refreshed_at, is_active).run();
+    ).bind(url, title, content, source_type || 'url', priority, category,
+      auto_refresh ? 1 : 0, content_hash, last_refreshed_at, is_active ? 1 : 0).run();
 
-    // NOTE: `content` field from HTML is accepted but silently ignored — schema has no column for it.
-    // `chunks` is a stub (no real chunking) so the HTML success alert displays a number.
     return json({ success: true, id: result.meta?.last_row_id, chunks: 1 }, 201, corsHeaders);
   } catch (e) {
     console.error('handleKnowledgeSourcesPost:', e.message);

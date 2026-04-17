@@ -25,6 +25,7 @@
     searchDebounce: null,
     notifyGranted: false,
     pendingAttachment: null, // {id, filename, content_type, size_bytes}
+    staffById: {},           // staff directory: id -> {id, name, email, role}
   };
 
   const PRIORITIES = [
@@ -121,6 +122,14 @@
   async function loadTeams() {
     try { const r = await api('GET', '/api/teams'); state.teams = r.teams || []; }
     catch (e) { state.teams = []; }
+  }
+  async function loadStaffDirectory() {
+    try {
+      const r = await api('GET', '/api/staff/lookup');
+      const map = {};
+      for (const s of (r.staff || [])) map[String(s.id)] = s;
+      state.staffById = map;
+    } catch (e) { console.warn('loadStaffDirectory', e.message); }
   }
 
   async function selectConversation(id) {
@@ -440,9 +449,23 @@
       const body = el('div', {});
       if (m.is_private) body.appendChild(el('span', { class: 'slo-op-msg-private-tag' }, '内部'));
       body.appendChild(document.createTextNode(m.content || ''));
-      const b = el('div', { class: 'slo-op-msg', 'data-sender': m.sender_type, 'data-private': m.is_private ? '1' : '0', 'data-msg-id': m.id },
+      // Resolve staff sender to name + role badge so admins are clearly
+      // distinguished from agents in the chat history.
+      let metaText = `${m.sender_type} · ${formatTime(m.created_at)}`;
+      const metaBadges = [];
+      if (m.sender_type === 'staff' && m.sender_id) {
+        const s = state.staffById[String(m.sender_id)];
+        if (s) {
+          const roleLabel = s.role === 'admin' ? '👑 管理者'
+                          : s.role === 'supervisor' ? '🛡 スーパーバイザー'
+                          : '担当者';
+          metaText = `${s.name || s.email || 'staff'} · ${roleLabel} · ${formatTime(m.created_at)}`;
+          metaBadges.push(s.role);
+        }
+      }
+      const b = el('div', { class: 'slo-op-msg', 'data-sender': m.sender_type, 'data-private': m.is_private ? '1' : '0', 'data-msg-id': m.id, 'data-staff-role': metaBadges[0] || '' },
         body,
-        el('div', { class: 'slo-op-msg-meta' }, `${m.sender_type} · ${formatTime(m.created_at)}`)
+        el('div', { class: 'slo-op-msg-meta' }, metaText)
       );
       // Attachment render (decorated server-side in listMessages)
       if (m.attachment) {
@@ -874,7 +897,7 @@
   async function onAuthenticated() {
     document.body.setAttribute('data-view', 'app');
     renderTop();
-    await Promise.all([loadConversations(), loadLabels(), loadTemplates(), loadTeams()]);
+    await Promise.all([loadConversations(), loadLabels(), loadTemplates(), loadTeams(), loadStaffDirectory()]);
     if (state.listTimer) clearInterval(state.listTimer);
     state.listTimer = setInterval(loadConversations, 10000);
   }

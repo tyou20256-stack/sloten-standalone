@@ -11,9 +11,12 @@
     "check:all": "node scripts/check-all.mjs",
     "migrate:local": "node scripts/apply-migrations.mjs",
     "migrate:remote": "node scripts/apply-migrations.mjs --remote",
-    "smoke": "node scripts/dev-smoke.mjs"
+    "smoke": "node scripts/dev-smoke.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "devDependencies": {
+    "vitest": "^4.1.4",
     "wrangler": "^4.0.0"
   }
 }

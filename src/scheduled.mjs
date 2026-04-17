@@ -26,7 +26,18 @@ export async function handleScheduled(event, env, ctx) {
     console.error('[scheduled] snooze wake error:', e.message);
   }
 
-  // --- 2) Weekly FAQ extraction
+  // --- 2) Log rotation — purge audit_log & error_log entries older than 90 days.
+  try {
+    const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
+    const a = await env.DB.prepare('DELETE FROM audit_log WHERE created_at < ?').bind(cutoff).run();
+    const e = await env.DB.prepare('DELETE FROM error_log WHERE created_at < ?').bind(cutoff).run();
+    const total = (a.meta?.changes || 0) + (e.meta?.changes || 0);
+    if (total) console.log(`[scheduled] purged ${total} old log entries (>90d)`);
+  } catch (e) {
+    console.error('[scheduled] log rotation error:', e.message);
+  }
+
+  // --- 3) Weekly FAQ extraction
   try {
     const last = await getLastExtractionTs(env);
     const now = Date.now();

@@ -34,6 +34,10 @@
 
   const apiBase = (ds.api || userCfg.api || (script ? new URL(script.src).origin : window.location.origin)).replace(/\/$/, '');
 
+  // Cache-bust suffix for widget.css. Declared BEFORE cfg so it's accessible
+  // during cssUrl resolution (TDZ avoidance).
+  const WIDGET_VERSION = 'v20260416.e';
+
   // Host-provided user info (optional). Populated from:
   //   data-user-name / data-user-email / data-user-phone / data-user-external-id
   //   window.SlotenChatConfig.user = { name, email, phone, external_id, metadata }
@@ -60,9 +64,6 @@
     user: hostUser,
   };
 
-  // Append cache-busting version to CSS URL the same way the host HTML does
-  // for widget.js, so stylesheet fixes also propagate quickly.
-  const WIDGET_VERSION = 'v20260416.b';
   const STORAGE_KEY = 'sloten_chat:v1';
   const state = Object.assign(
     { contactId: null, conversationId: null, contactToken: null, status: null, history: [] },
@@ -461,7 +462,9 @@
   let sending = false;
   async function onSend() {
     const text = (dom.input.value || '').trim();
-    if (!text || sending) return;
+    // Allow send when either text OR an attachment is present.
+    if (sending) return;
+    if (!text && !pendingAttachment) return;
     dom.input.value = '';
     autoResize(dom.input);
     await sendText(text);
@@ -482,18 +485,21 @@
       if (pendingAttachment) {
         body.content_attributes = { attachment_id: pendingAttachment.id };
       }
-      await api('POST', `/api/widget/conversations/${state.conversationId}/messages`, body);
+      const r = await api('POST', `/api/widget/conversations/${state.conversationId}/messages`, body);
       if (pendingAttachment) showPending(null);
-      // Broadcast will render it via WS; also render optimistically if WS absent.
-      if (!wsActive()) {
-        renderMessage({
-          id: 'local-' + Date.now(),
-          sender_type: 'customer',
-          content: text,
-          created_at: new Date().toISOString(),
-        });
-        setTimeout(pollMessages, 800);
+      // Render the customer's own message from the HTTP response using the
+      // real server-assigned id. WS will broadcast the same id and renderMessage
+      // dedupes on data-msg-id, so no double bubble appears. This covers the
+      // race where WS is still opening on first message and the broadcast fires
+      // before the client is listening.
+      if (r && r.message) renderMessage(r.message);
+      // Render bot replies from the HTTP response as a safety net.
+      if (r && Array.isArray(r.bot_replies)) {
+        for (const m of r.bot_replies) renderMessage(m);
+      } else if (r && r.bot_reply) {
+        renderMessage(r.bot_reply);
       }
+      if (!wsActive()) setTimeout(pollMessages, 800);
     } catch (e) {
       renderMessage({
         id: 'err-' + Date.now(),

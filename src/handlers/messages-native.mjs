@@ -10,6 +10,8 @@ import { checkRateLimit, rateLimitResponse } from '../rate-limiter.mjs';
 import { runFlowForCustomerMessage } from './bot-flows.mjs';
 import { linkAttachmentToMessage, fetchAttachmentsForMessages } from './attachments.mjs';
 import { signAttachmentUrl, baseUrlOf } from '../auth/attachment-signature.mjs';
+import { matchBonusCode, getBonusReply, recordSubmission, forwardToGas } from '../bonus-codes.mjs';
+import { logError } from '../audit.mjs';
 
 const VALID_SENDER = new Set(['customer', 'bot', 'staff', 'system']);
 const VALID_CONTENT_TYPE = new Set(['text', 'input_select', 'file', 'system_event']);
@@ -111,7 +113,7 @@ export async function sendMessage(request, env, corsHeaders, conversationId, opt
     // attachment -> notify external system (GAS etc.) with a signed URL.
     if (
       !isWidget && senderType === 'staff' && attachmentId && !forcePrivate
-      && env.OPERATOR_ATTACHMENT_WEBHOOK_URL
+      && await (await import('../env-resolver.mjs')).getEnvValue(env, 'OPERATOR_ATTACHMENT_WEBHOOK_URL')
     ) {
       const sendWebhook = async () => {
         try {
@@ -138,7 +140,7 @@ export async function sendMessage(request, env, corsHeaders, conversationId, opt
               url: signedUrl,
             },
           };
-          const r = await fetch(env.OPERATOR_ATTACHMENT_WEBHOOK_URL, {
+          const r = await fetch(await (await import('../env-resolver.mjs')).getEnvValue(env, 'OPERATOR_ATTACHMENT_WEBHOOK_URL'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
@@ -171,7 +173,90 @@ export async function sendMessage(request, env, corsHeaders, conversationId, opt
         // Reload conv with flow_state column after our UPDATE above.
         const fresh = await env.DB.prepare('SELECT * FROM conversations WHERE id = ?').bind(conversationId).first();
         const contact = fresh?.contact_id ? await env.DB.prepare('SELECT * FROM contacts WHERE id = ?').bind(fresh.contact_id).first() : null;
-        const flowResult = await runFlowForCustomerMessage(env, fresh, contact, content, ctx);
+
+        // 1. Bonus code match — highest priority. Runs even when inside a
+        //    flow, because customers are told to "type bonus codes directly
+        //    in the chat" even from the menu (see bonus_code_request step).
+        //    We suppress bonus matching only when the customer is inside a
+        //    deposit sub-flow collecting money — there, their inputs are
+        //    amounts/IDs and must not be eaten by a coincidentally-matching
+        //    code.
+        const inDepositFlow = fresh.flow_state && (() => {
+          try {
+            const st = JSON.parse(fresh.flow_state);
+            return typeof st.step_id === 'string' && (
+              st.step_id.startsWith('paypay_money') ||
+              st.step_id.startsWith('bank_transfer') ||
+              st.step_id.startsWith('convenience_store_deposit')
+            );
+          } catch { return false; }
+        })();
+        if (!inDepositFlow) {
+          const match = await matchBonusCode(env, conv.tenant_id, content);
+          if (match.matched) {
+            // Determine whether this bonus code has follow-up buttons that
+            // need flow re-entry (has_balance / game selection / plan choice).
+            // If so, set flow_state to the bridge select step so the next
+            // button click routes correctly. Otherwise clear flow_state.
+            const bridgeStepId = `bonus_select_${match.row.type_key}`;
+            const slotenMain = await env.DB.prepare(
+              `SELECT id FROM bot_flows WHERE tenant_id = ? AND name = 'sloten-main' AND is_active = 1 LIMIT 1`,
+            ).bind(conv.tenant_id).first();
+            // Check if bridge step actually exists in the flow.
+            let hasBridge = false;
+            if (slotenMain) {
+              try {
+                const flowRow = await env.DB.prepare('SELECT steps FROM bot_flows WHERE id = ?').bind(slotenMain.id).first();
+                const flowSteps = JSON.parse(flowRow?.steps || '[]');
+                hasBridge = flowSteps.some((s) => s.id === bridgeStepId);
+              } catch (_) {}
+            }
+            if (hasBridge && slotenMain) {
+              // Set flow_state to the bridge step so the next customer click
+              // enters the flow at the right position.
+              const bridgeState = JSON.stringify({ flow_id: slotenMain.id, step_id: bridgeStepId, vars: {} });
+              await env.DB.prepare(
+                `UPDATE conversations SET flow_state=?, updated_at=datetime('now') WHERE id=?`,
+              ).bind(bridgeState, conversationId).run();
+            } else if (fresh.flow_state) {
+              // No bridge — clear flow state (original behavior for codes
+              // whose items are just welcome_message / transfer_to_agent).
+              await env.DB.prepare(
+                `UPDATE conversations SET flow_state=NULL, updated_at=datetime('now') WHERE id=?`,
+              ).bind(conversationId).run();
+            }
+            const reply = getBonusReply(match.row);
+            if (reply && reply.content) {
+              const botMsg = await insertMessage(env, {
+                conversationId,
+                tenantId: conv.tenant_id,
+                senderType: 'bot', senderId: null,
+                content: reply.content,
+                contentType: reply.items.length ? 'input_select' : 'text',
+                contentAttributes: reply.items.length ? { items: reply.items } : null,
+                isPrivate: false,
+              });
+              botReplies.push(botMsg);
+              botReply = botMsg;
+            }
+            const submissionId = await recordSubmission(env, {
+              tenantId: conv.tenant_id,
+              conversationId,
+              contactId: fresh.contact_id,
+              match,
+              code: match.code,
+            });
+            await forwardToGas(env, ctx, { submissionId, match, conversationId, contact });
+            if (match.row.transfer_after) {
+              await env.DB.prepare(
+                `UPDATE conversations SET status='open', updated_at=datetime('now') WHERE id=?`,
+              ).bind(conversationId).run();
+            }
+            return created({ success: true, message: msg, bot_reply: botReply, bot_replies: botReplies }, corsHeaders);
+          }
+        }
+
+        const flowResult = await runFlowForCustomerMessage(env, fresh, contact, content, ctx, contentAttributes);
         if (flowResult.messages && flowResult.messages.length) {
           for (const m of flowResult.messages) {
             const botMsg = await insertMessage(env, {
@@ -209,12 +294,14 @@ export async function sendMessage(request, env, corsHeaders, conversationId, opt
         }
       } catch (e) {
         console.warn('[sendMessage] bot reply failed:', e.message, e.stack);
+        logError(env, 'sendMessage:botReply', e, { conversation_id: conversationId }).catch(() => {});
       }
     }
 
     return created({ success: true, message: msg, bot_reply: botReply, bot_replies: botReplies }, corsHeaders);
   } catch (e) {
     console.error('sendMessage:', e.message);
+    logError(env, 'sendMessage', e, { conversation_id: conversationId }).catch(() => {});
     return err('Internal error', 500, corsHeaders);
   }
 }
