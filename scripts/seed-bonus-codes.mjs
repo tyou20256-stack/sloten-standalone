@@ -41,6 +41,8 @@ const DEFS = [
   ['arquel',           'アークエル',                     ['アークエル','あーくえる'],                                         'case_insensitive',    'arquel_success',           'BC_入学',   false],
   ['rafiel',           'ラフィエル',                     ['ラフィエル','らふぃえる'],                                         'case_insensitive',    'rafiel_success',           'BC_入学',   false],
   ['seraphim',         'セレフィム',                     ['セレフィム','せれふぃむ'],                                         'case_insensitive',    'seraphim_success',         'BC_入学',   false],
+  // BC_だっちゃん event (HEAVEN DAY 特別プロモーション)
+  ['heavenday_daachin','HEAVEN DAY だっちゃん天国',        ['だっちゃん天国'],                                                   'case_insensitive',    'heavenday_daachin_success','BC_だっちゃん', false],
 ];
 
 const escSql = (s) => String(s == null ? '' : s).replace(/'/g, "''");
