@@ -150,6 +150,7 @@ Cloudflare dashboard の error rate + latency を監視。
 | `17-phase1-implementation.md` | **AI 精度向上 Phase 1 実装完了レポート (2026-04-23)** | ★★★ (本番投入前必読) |
 | `18-phase2a-implementation.md` | **AI 精度向上 Phase 2a 実装完了レポート (Shadow + Chunks + Sentiment)** | ★★★ (Phase 2b 前必読) |
 | `19-phase2b-implementation.md` | **AI 精度向上 Phase 2b 実装完了レポート (Vectorize + Hybrid RRF + FAQ Silver)** | ★★★ (本番投入前必読) |
+| `20-staging-latest-snapshot.md` | **staging-bk 最新スナップショット (2026-04-23 — 全機能実装済)** | ★★★ (現状把握) |
 | `discussion/` | **自動化戦略 — 6 専門家議論結果 + 統合ロードマップ** | ★★★ (中長期方針) |
 | `ai-accuracy-discussion/` | **AI 回答精度向上 — 7 専門家議論 + Phase 1-3 ロードマップ** | ★★★ (改善方針) |
 | `review-reports/` | 4 パスのレビュー結果 (深掘り用) | ★ (必要なら) |

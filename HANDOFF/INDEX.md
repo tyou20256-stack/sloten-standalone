@@ -30,6 +30,7 @@ sloten-standalone/HANDOFF/
 ├── 17-phase1-implementation.md    ★★★ AI 精度 Phase 1 実装完了レポート
 ├── 18-phase2a-implementation.md   ★★★ AI 精度 Phase 2a 実装完了レポート
 ├── 19-phase2b-implementation.md   ★★★ AI 精度 Phase 2b 実装完了レポート (Vectorize + Hybrid RRF + FAQ Silver)
+├── 20-staging-latest-snapshot.md  ★★★ staging-bk 最新スナップショット
 │
 ├── ai-accuracy-discussion/        ★★★ AI 回答精度向上 (7 専門家議論)
 │   ├── 00-synthesis.md            統合ロードマップ + 合意/対立まとめ
