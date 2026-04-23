@@ -25,6 +25,21 @@ sloten-standalone/HANDOFF/
 ├── 12-chatwoot-freeze-decision.md ★★★ chatwoot 凍結判断 (Option B 採用)
 ├── 13-hybrid-dependency-map.md    ★★★ sloten ↔ GAS 責任分担マップ
 ├── 14-gas-update-sop.md           ★★★ PayPay/EC GAS 更新 SOP
+├── 15-staging-bk-qa-report.md     ★★★ staging-bk QA レポート (2026-04-22)
+├── 16-sloten-site-integration.md  ★★★ スロ天サイト埋込 + setUser 連携
+├── 17-phase1-implementation.md    ★★★ AI 精度 Phase 1 実装完了レポート
+├── 18-phase2a-implementation.md   ★★★ AI 精度 Phase 2a 実装完了レポート
+├── 19-phase2b-implementation.md   ★★★ AI 精度 Phase 2b 実装完了レポート (Vectorize + Hybrid RRF + FAQ Silver)
+│
+├── ai-accuracy-discussion/        ★★★ AI 回答精度向上 (7 専門家議論)
+│   ├── 00-synthesis.md            統合ロードマップ + 合意/対立まとめ
+│   ├── 01-ai-engineer-rag.md      RAG / retrieval / embeddings
+│   ├── 02-model-qa-specialist.md  Golden Set / 評価フレームワーク
+│   ├── 03-experiment-tracker.md   A/B / Shadow / Canary
+│   ├── 04-data-engineer.md        chunking / dedup / versioning
+│   ├── 05-feedback-synthesizer.md Silent 失敗検出 / 👍👎 UI
+│   ├── 06-ux-researcher.md        日本人カジノ顧客期待値
+│   └── 07-support-responder.md    AI/人間境界 / RG 対応
 │
 ├── discussion/                    ★★★ 自動化戦略 (6 専門家議論)
 │   ├── 00-synthesis.md            統合ロードマップ + 合意/対立まとめ

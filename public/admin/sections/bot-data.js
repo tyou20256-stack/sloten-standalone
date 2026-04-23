@@ -212,28 +212,51 @@
     }
     reload();
   }
+  // One-click feedback helper (Phase 1 — no modal, no confirmation, 3秒で完了)
+  async function quickFeedback(logId, rating, cellNode) {
+    try {
+      await api('POST', `/api/ai-logs/${logId}/feedback`, { rating, note: null });
+      // Visual confirmation without reload
+      if (cellNode) cellNode.innerHTML = rating === 1 ? '✅ 👍' : (rating === -1 ? '✅ 👎' : '✅ ⚠️');
+    } catch (e) { (window.Sloten?.toast||alert)('feedback 失敗: ' + e.message, { type: 'error' }); }
+  }
+
   function renderAiLogsTable(root, logs) {
     root.innerHTML = '';
     if (logs.length === 0) { root.appendChild(el('div', { class: 'slo-adm-empty' }, 'AI ログはありません')); return; }
     const table = el('table', { class: 'slo-adm-table' });
     table.appendChild(el('thead', {}, el('tr', {},
-      el('th', { style: 'width:140px' }, '日時'),
+      el('th', { style: 'width:130px' }, '日時'),
       el('th', { style: 'width:80px' }, 'ステータス'),
-      el('th', { style: 'width:80px' }, 'ms'),
+      el('th', { style: 'width:70px' }, 'ms'),
+      el('th', { style: 'width:70px' }, 'tokens'),
       el('th', {}, 'input'),
-      el('th', { style: 'width:120px' }, 'feedback'),
-      el('th', { style: 'width:100px' }, ''))));
+      el('th', { style: 'width:80px' }, 'retrieval'),
+      el('th', { style: 'width:110px' }, 'feedback'),
+      el('th', { style: 'width:200px' }, ''))));
     const tbody = el('tbody');
     for (const log of logs) {
+      const tokenStr = (log.tokens_in != null || log.tokens_out != null)
+        ? `${log.tokens_in || '-'}/${log.tokens_out || '-'}`
+        : '—';
+      const trace = log.retrieval_trace ? (() => { try { return JSON.parse(log.retrieval_trace); } catch { return null; } })() : null;
+      const strategy = trace?.strategy || (log.escalation_reason ? `esc:${log.escalation_reason}` : '—');
+      // Pre-create feedback cell so quickFeedback can mutate its content on click.
+      const fbCell = el('td', { style: 'font-size:12px;' }, `👍${log.feedback?.up || 0} / 👎${log.feedback?.down || 0}`);
       tbody.appendChild(el('tr', {},
         el('td', { style: 'font-size:11px;font-family:ui-monospace,monospace;' }, fmtDate(log.created_at)),
         el('td', {}, el('span', { class: 'slo-adm-badge', 'data-role': log.status === 'ok' ? 'agent' : 'admin' }, log.status)),
         el('td', {}, String(log.latency_ms || '—')),
-        el('td', { style: 'max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' }, (log.input || '').slice(0, 80)),
-        el('td', {}, `👍${log.feedback?.up || 0} / 👎${log.feedback?.down || 0}`),
-        el('td', {}, el('div', { class: 'slo-adm-row-actions' },
+        el('td', { style: 'font-size:11px;font-family:ui-monospace,monospace;' }, tokenStr),
+        el('td', { style: 'max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' }, (log.input || '').slice(0, 80)),
+        el('td', { style: 'font-size:11px;color:#6b7280;' }, strategy),
+        fbCell,
+        el('td', {}, el('div', { class: 'slo-adm-row-actions', style: 'gap:4px;' },
+          el('button', { title: '良い', style: 'padding:2px 6px;', onclick: () => quickFeedback(log.id, 1, fbCell) }, '👍'),
+          el('button', { title: '悪い', style: 'padding:2px 6px;', onclick: () => quickFeedback(log.id, -1, fbCell) }, '👎'),
+          el('button', { title: '重大問題', style: 'padding:2px 6px;background:#fef3c7;', onclick: () => quickFeedback(log.id, -2, fbCell) }, '⚠️'),
           el('button', { onclick: () => aiLogModal(log.id) }, '詳細'),
-          el('button', { class: 'danger', onclick: () => deleteAiLog(log.id) }, '削除')))
+          el('button', { class: 'danger', onclick: () => deleteAiLog(log.id) }, '×')))
       ));
     }
     table.appendChild(tbody);
@@ -376,10 +399,50 @@
       modeSel.value = row?.match_mode || 'case_insensitive';
       form.appendChild(modeSel);
       addField('成功メッセージ本文', 'bc-content', row?.success_content || '', { textarea: true, rows: 8, hint: '実際の改行で入力してください' });
-      addField('成功メッセージ選択肢 (JSON array)', 'bc-items',
-        (row?.success_items && row.success_items.length) ? JSON.stringify(row.success_items, null, 2) : '',
-        { textarea: true, rows: 4, hint: '例: [{"title":"OK","value":"welcome_message"}] — 不要なら空欄' });
-      addField('GAS type (optional)', 'bc-gas', row?.gas_type || '', { hint: 'BONUS_CODE_WEBHOOK_URL への転送識別子 (例: BC_入学)' });
+
+      // --- 成功メッセージ選択肢: 動的フォーム (+/- ボタン) ---
+      form.appendChild(el('label', {}, '成功メッセージ選択肢'));
+      const itemsWrap = el('div', { id: 'bc-items-wrap', style: 'border:1px solid #e5e7eb;border-radius:6px;padding:8px;margin-bottom:4px;' });
+      const PRESET_VALUES = [
+        'welcome_message',
+        'transfer_to_agent',
+      ];
+      const dl = el('datalist', { id: 'bc-items-valueoptions' });
+      PRESET_VALUES.forEach((v) => dl.appendChild(el('option', { value: v })));
+      form.appendChild(dl);
+      const addItemRow = (title = '', value = '') => {
+        const rowWrap = el('div', { class: 'bc-item-row', style: 'display:flex;gap:6px;margin-bottom:6px;align-items:center;' });
+        const t = el('input', { type: 'text', placeholder: 'タイトル (例: ↩️ メインメニューに戻る)', value: title, style: 'flex:2;' });
+        const v = el('input', { type: 'text', placeholder: '値 (例: welcome_message)', value: value, list: 'bc-items-valueoptions', style: 'flex:1;' });
+        t.classList.add('bc-item-title');
+        v.classList.add('bc-item-value');
+        const del = el('button', { type: 'button', class: 'slo-adm-btn slo-adm-btn-secondary', style: 'padding:4px 10px;', onclick: () => rowWrap.remove() }, '−');
+        rowWrap.appendChild(t);
+        rowWrap.appendChild(v);
+        rowWrap.appendChild(del);
+        itemsWrap.appendChild(rowWrap);
+      };
+      (row?.success_items || []).forEach((it) => addItemRow(it?.title || '', it?.value || ''));
+      form.appendChild(itemsWrap);
+      form.appendChild(el('button', { type: 'button', class: 'slo-adm-btn slo-adm-btn-secondary',
+        style: 'margin-bottom:10px;',
+        onclick: () => addItemRow('', '') }, '+ 選択肢を追加'));
+      form.appendChild(el('div', { style: 'font-size:11px;color:#6b7280;margin:-6px 0 10px;' },
+        '各選択肢の「値」は遷移先のステップ ID です (例: welcome_message / transfer_to_agent)。空欄のまま保存すると選択肢なしになります。'));
+
+      // --- GAS type: BC_ 固定プレフィックス + suffix 入力 ---
+      const existingGas = row?.gas_type || '';
+      const existingSuffix = existingGas.startsWith('BC_') ? existingGas.slice(3) : existingGas;
+      form.appendChild(el('label', { for: 'bc-gas-suffix' }, 'GAS type (BONUS_CODE_WEBHOOK_URL 転送識別子)'));
+      const gasWrap = el('div', { style: 'display:flex;align-items:center;gap:4px;margin-bottom:4px;' });
+      gasWrap.appendChild(el('span', {
+        style: 'font-family:monospace;font-weight:600;background:#f3f4f6;padding:8px 10px;border:1px solid #e5e7eb;border-radius:6px;color:#374151;'
+      }, 'BC_'));
+      const gasSuffix = el('input', { id: 'bc-gas-suffix', value: existingSuffix, placeholder: '例: 入学 / ギルド / だっちゃん', style: 'flex:1;' });
+      gasWrap.appendChild(gasSuffix);
+      form.appendChild(gasWrap);
+      form.appendChild(el('div', { style: 'font-size:11px;color:#6b7280;margin:-2px 0 10px;' },
+        'GAS へ転送する場合、BC_ の後ろに識別子を入力 (保存時に BC_XXX として登録)。GAS 転送しない場合は空欄のまま。'));
       const tafter = el('input', { type: 'checkbox', id: 'bc-transfer' });
       if (row?.transfer_after) tafter.checked = true;
       const en = el('input', { type: 'checkbox', id: 'bc-enabled' });
@@ -392,27 +455,30 @@
       actions.appendChild(el('button', { class: 'slo-adm-btn slo-adm-btn-secondary', onclick: closeModal }, 'キャンセル'));
       actions.appendChild(el('button', { class: 'slo-adm-btn slo-adm-btn-primary', onclick: async () => {
         const get = (id) => document.getElementById(id).value;
+        const gasSuffixVal = (get('bc-gas-suffix') || '').trim();
         const payload = {
           display_name: get('bc-name'),
           codes: get('bc-codes').split(/\n|,/).map(s => s.trim()).filter(Boolean),
           match_mode: get('bc-mode'),
           success_content: get('bc-content'),
-          gas_type: get('bc-gas') || null,
+          gas_type: gasSuffixVal ? 'BC_' + gasSuffixVal : null,
           transfer_after: document.getElementById('bc-transfer').checked,
           enabled: document.getElementById('bc-enabled').checked,
         };
-        const itemsText = get('bc-items').trim();
-        if (itemsText) {
-          try {
-            payload.success_items = JSON.parse(itemsText);
-            if (!Array.isArray(payload.success_items)) throw new Error('items must be array');
-          } catch (e) {
-            (window.Sloten?.toast||alert)('items は JSON 配列で入力してください', { type: 'error' });
+        // 動的フォームから items を組み立てる: 両方空の行は無視、片方だけ入力の行はエラー
+        const itemRows = Array.from(itemsWrap.querySelectorAll('.bc-item-row'));
+        const builtItems = [];
+        for (const r of itemRows) {
+          const title = r.querySelector('.bc-item-title').value.trim();
+          const value = r.querySelector('.bc-item-value').value.trim();
+          if (!title && !value) continue;
+          if (!title || !value) {
+            (window.Sloten?.toast||alert)('選択肢はタイトルと値の両方を入力してください (不要な行は削除)', { type: 'error' });
             return;
           }
-        } else {
-          payload.success_items = [];
+          builtItems.push({ title, value });
         }
+        payload.success_items = builtItems;
         if (isNew) payload.type_key = get('bc-key');
         try {
           if (isNew) await api('POST', '/api/bonus-codes', payload);
@@ -456,10 +522,409 @@
   }
 
 
+  // --- Phase 1: AI silent-failure viewer ---
+  // Surfaces failures the feedback system missed: 即エスカ / 再質問 / 怒り語
+  async function renderAiSilentFailures(root) {
+    root.appendChild(el('h2', {}, 'AI サイレント失敗 (Phase 1)'));
+    root.appendChild(el('p', { style: 'color:#6b7280;margin:0 0 12px;' },
+      '👍👎 がついていなくても、ユーザー行動から AI 回答の失敗を検出します。migration 018 のビュー 3 種。'));
+    const tabs = el('div', { style: 'display:flex;gap:8px;margin-bottom:12px;' });
+    const listDiv = el('div');
+    const tabs_spec = [
+      { key: 'escalation', label: '即エスカレーション (< 120s)' },
+      { key: 'repeat',     label: '同じ質問 (10分以内)' },
+      { key: 'anger',      label: '怒り・不満ワード後続' },
+    ];
+    let current = 'escalation';
+    async function loadTab(view) {
+      listDiv.innerHTML = '読み込み中...';
+      current = view;
+      for (const b of tabs.querySelectorAll('button')) {
+        b.style.background = b.dataset.view === view ? '#2563eb' : '#fff';
+        b.style.color = b.dataset.view === view ? '#fff' : '#111';
+      }
+      try {
+        const r = await api('GET', `/api/ai-logs/silent-failures?view=${view}&limit=50`);
+        const rows = r.rows || [];
+        listDiv.innerHTML = '';
+        if (rows.length === 0) { listDiv.appendChild(el('div', { class: 'slo-adm-empty' }, '該当なし — 良い兆候です')); return; }
+        const t = el('table', { class: 'slo-adm-table' });
+        t.appendChild(el('thead', {}, el('tr', {},
+          el('th', { style: 'width:140px' }, 'AI 応答時刻'),
+          el('th', { style: 'width:80px' }, 'log_id'),
+          el('th', {}, view === 'escalation' ? 'AI 応答 (抜粋)' : 'ユーザー発話'),
+          el('th', { style: 'width:80px' }, ''))));
+        const tbody = el('tbody');
+        for (const row of rows) {
+          const preview = (view === 'escalation' ? row.ai_response : row.followup_message) || '';
+          tbody.appendChild(el('tr', {},
+            el('td', { style: 'font-size:11px;font-family:ui-monospace,monospace;' }, fmtDate(row.ai_created_at)),
+            el('td', {}, String(row.ai_log_id)),
+            el('td', { style: 'max-width:500px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' }, preview.slice(0, 120)),
+            el('td', {}, el('button', { onclick: () => aiLogModal(row.ai_log_id) }, '詳細'))
+          ));
+        }
+        t.appendChild(tbody);
+        listDiv.appendChild(t);
+      } catch (e) {
+        listDiv.innerHTML = '';
+        listDiv.appendChild(el('div', { class: 'slo-adm-empty' }, 'エラー: ' + e.message));
+      }
+    }
+    for (const t of tabs_spec) {
+      tabs.appendChild(el('button', {
+        class: 'slo-adm-btn',
+        'data-view': t.key,
+        style: 'padding:6px 12px;',
+        onclick: () => loadTab(t.key),
+      }, t.label));
+    }
+    root.appendChild(tabs);
+    root.appendChild(listDiv);
+    loadTab(current);
+  }
+
+  // --- Phase 2: Golden Set editor + eval results + shadow settings ---
+  async function renderGoldenSet(root) {
+    root.appendChild(el('h2', {}, 'Golden Set (評価コーパス)'));
+    root.appendChild(el('p', { style: 'color:#6b7280;margin:0 0 12px;' },
+      'プロンプト評価に使う Q&A 標準セット。nightly で `scripts/eval-golden-set.mjs` が全 active プロンプトを評価します。'));
+    const toolbar = el('div', { style: 'display:flex;gap:8px;margin-bottom:12px;' },
+      el('button', { class: 'slo-adm-btn slo-adm-btn-primary', onclick: () => goldenEditor(null) }, '+ 新規追加'),
+      el('button', { class: 'slo-adm-btn slo-adm-btn-secondary', onclick: () => renderGoldenSet(root) }, '🔄 再読み込み'));
+    root.appendChild(toolbar);
+
+    try {
+      const [rowsResp, evalResp] = await Promise.all([
+        api('GET', '/api/golden-set'),
+        api('GET', '/api/golden-eval').catch(() => ({ prompts: [] })),
+      ]);
+      // Eval summary first
+      if (evalResp.prompts?.length) {
+        root.appendChild(el('h3', {}, '直近 30 日評価サマリ'));
+        const t = el('table', { class: 'slo-adm-table', style: 'margin-bottom:20px;' });
+        t.appendChild(el('thead', {}, el('tr', {},
+          el('th', {}, 'Prompt'), el('th', {}, 'n'), el('th', {}, 'avg keyword'),
+          el('th', {}, 'violations'), el('th', {}, 'esc match'), el('th', {}, 'avg judge'),
+          el('th', {}, 'avg ms'), el('th', {}, 'latest'))));
+        const tb = el('tbody');
+        for (const p of evalResp.prompts) {
+          tb.appendChild(el('tr', {},
+            el('td', {}, p.prompt_name),
+            el('td', {}, String(p.n)),
+            el('td', {}, ((p.avg_keyword_score || 0) * 100).toFixed(1) + '%'),
+            el('td', {}, String(p.total_violations || 0)),
+            el('td', {}, `${p.esc_match || 0}/${p.n}`),
+            el('td', {}, p.avg_judge != null ? Number(p.avg_judge).toFixed(2) : '—'),
+            el('td', {}, String(Math.round(p.avg_latency || 0))),
+            el('td', { style: 'font-size:11px;color:#6b7280;' }, fmtDate(p.latest_run))));
+        }
+        t.appendChild(tb);
+        root.appendChild(t);
+      }
+
+      root.appendChild(el('h3', {}, 'Golden Set 行 (' + (rowsResp.rows?.length || 0) + ')'));
+      const rows = rowsResp.rows || [];
+      if (rows.length === 0) { root.appendChild(el('div', { class: 'slo-adm-empty' }, '行がありません')); return; }
+      // Group by category
+      const byCat = {};
+      for (const r of rows) { (byCat[r.category] ||= []).push(r); }
+      for (const cat of Object.keys(byCat).sort()) {
+        root.appendChild(el('h4', { style: 'margin:12px 0 4px;' }, `${cat} (${byCat[cat].length})`));
+        const t = el('table', { class: 'slo-adm-table' });
+        t.appendChild(el('thead', {}, el('tr', {},
+          el('th', { style: 'width:40px' }, 'id'),
+          el('th', {}, '質問'),
+          el('th', { style: 'width:80px' }, 'エスカ'),
+          el('th', { style: 'width:100px' }, ''))));
+        const tb = el('tbody');
+        for (const r of byCat[cat]) {
+          tb.appendChild(el('tr', {},
+            el('td', {}, String(r.id)),
+            el('td', {}, r.question),
+            el('td', {}, r.expected_escalation ? '✓ 人間' : 'AI'),
+            el('td', {}, el('div', { class: 'slo-adm-row-actions' },
+              el('button', { onclick: () => goldenEditor(r) }, '編集'),
+              el('button', { class: 'danger', onclick: async () => {
+                if (!await confirmDialog('削除しますか？')) return;
+                await api('DELETE', `/api/golden-set/${r.id}`);
+                renderGoldenSet(root);
+              } }, '×')))));
+        }
+        t.appendChild(tb);
+        root.appendChild(t);
+      }
+    } catch (e) {
+      root.appendChild(el('div', { style: 'color:#ef4444;' }, 'エラー: ' + e.message));
+    }
+  }
+  function goldenEditor(row) {
+    const isNew = !row;
+    openModal(isNew ? 'Golden Set 新規' : `編集 #${row.id}`, (form, actions) => {
+      const add = (label, id, value, opts = {}) => {
+        form.appendChild(el('label', { for: id }, label));
+        const node = opts.textarea
+          ? el('textarea', { id, style: 'min-height:' + ((opts.rows || 3) * 20) + 'px;' })
+          : el('input', { id, value: value || '' });
+        if (opts.textarea) node.value = value || '';
+        form.appendChild(node);
+        if (opts.hint) form.appendChild(el('div', { style: 'font-size:11px;color:#6b7280;margin:-6px 0 10px;' }, opts.hint));
+      };
+      add('カテゴリ', 'g-cat', row?.category || '入出金');
+      add('質問', 'g-q', row?.question || '', { textarea: true, rows: 2, required: true });
+      add('模範回答 (任意)', 'g-ref', row?.reference_answer || '', { textarea: true, rows: 4, hint: '運用者が記入。eval-golden-set.mjs の LLM-as-Judge が使用' });
+      add('必須含有キーワード (JSON array)', 'g-mc',
+        row?.must_contain ? (typeof row.must_contain === 'string' ? row.must_contain : JSON.stringify(row.must_contain)) : '[]',
+        { hint: '例: ["PayPay","入金"]' });
+      add('禁止ワード (JSON array)', 'g-mnc',
+        row?.must_not_contain ? (typeof row.must_not_contain === 'string' ? row.must_not_contain : JSON.stringify(row.must_not_contain)) : '[]',
+        { hint: '例: ["必ず","絶対","100%"]' });
+      const escCheckbox = el('input', { type: 'checkbox', id: 'g-esc' });
+      if (row?.expected_escalation) escCheckbox.checked = true;
+      form.appendChild(el('label', { style: 'display:flex;gap:6px;margin:8px 0 10px;' }, escCheckbox, ' 期待される挙動: 人間エスカレ'));
+      add('メモ', 'g-notes', row?.notes || '', { textarea: true, rows: 2 });
+
+      actions.appendChild(el('button', { class: 'slo-adm-btn slo-adm-btn-secondary', onclick: closeModal }, 'キャンセル'));
+      actions.appendChild(el('button', { class: 'slo-adm-btn slo-adm-btn-primary', onclick: async () => {
+        const get = (id) => document.getElementById(id).value;
+        const parseJsonSafe = (s) => { try { return JSON.parse(s || '[]'); } catch { return null; } };
+        const mc = parseJsonSafe(get('g-mc'));
+        const mnc = parseJsonSafe(get('g-mnc'));
+        if (mc === null || mnc === null) { alert('必須含有 / 禁止ワードは JSON array で'); return; }
+        const payload = {
+          category: get('g-cat'),
+          question: get('g-q'),
+          reference_answer: get('g-ref') || null,
+          must_contain: mc,
+          must_not_contain: mnc,
+          expected_escalation: escCheckbox.checked,
+          notes: get('g-notes') || null,
+        };
+        try {
+          if (isNew) await api('POST', '/api/golden-set', payload);
+          else await api('PATCH', `/api/golden-set/${row.id}`, payload);
+          closeModal();
+          navigate('golden-set');
+        } catch (e) { alert(e.message); }
+      } }, isNew ? '作成' : '保存'));
+    });
+  }
+
+  // --- Phase 2: Shadow mode settings ---
+  async function renderShadowSettings(root) {
+    root.appendChild(el('h2', {}, 'Shadow Mode 設定 (Phase 2)'));
+    root.appendChild(el('p', { style: 'color:#6b7280;margin:0 0 12px;' },
+      'ユーザーに見えない形で候補プロンプトを並列実行し、後で比較評価します。LLM コストが 2-3 倍化するため、off がデフォルト。'));
+    try {
+      const [cfg, prompts] = await Promise.all([
+        api('GET', '/api/admin/shadow-config'),
+        api('GET', '/api/ai-prompts'),
+      ]);
+      const enabled = cfg.config?.['ai.shadow_mode.enabled'] === '1';
+      const ids = cfg.config?.['ai.shadow_mode.prompt_ids'] || '';
+      const enabledInput = el('input', { type: 'checkbox', id: 'shadow-enabled' });
+      if (enabled) enabledInput.checked = true;
+      const idsInput = el('input', { id: 'shadow-ids', value: ids, placeholder: '例: 3,4', style: 'width:240px;' });
+
+      root.appendChild(el('div', { style: 'display:flex;gap:16px;align-items:center;margin-bottom:8px;' },
+        enabledInput, el('label', { for: 'shadow-enabled' }, 'Shadow mode 有効 (ai.shadow_mode.enabled)')));
+      root.appendChild(el('div', { style: 'display:flex;gap:8px;align-items:center;margin-bottom:12px;' },
+        el('label', { for: 'shadow-ids' }, 'Shadow prompt IDs (カンマ区切り、最大 2 本):'), idsInput));
+      root.appendChild(el('button', { class: 'slo-adm-btn slo-adm-btn-primary', onclick: async () => {
+        try {
+          await api('POST', '/api/admin/shadow-config', {
+            'ai.shadow_mode.enabled': enabledInput.checked ? '1' : '0',
+            'ai.shadow_mode.prompt_ids': idsInput.value.trim(),
+          });
+          alert('保存しました');
+        } catch (e) { alert(e.message); }
+      } }, '💾 保存'));
+
+      root.appendChild(el('h3', { style: 'margin-top:24px;' }, '利用可能なプロンプト'));
+      const t = el('table', { class: 'slo-adm-table' });
+      t.appendChild(el('thead', {}, el('tr', {},
+        el('th', {}, 'id'), el('th', {}, '名前'), el('th', {}, 'active'), el('th', {}, 'weight'))));
+      const tb = el('tbody');
+      for (const p of (prompts.prompts || [])) {
+        tb.appendChild(el('tr', {},
+          el('td', {}, String(p.id)), el('td', {}, p.name),
+          el('td', {}, p.is_active ? '✓' : '—'),
+          el('td', {}, String(p.weight))));
+      }
+      t.appendChild(tb);
+      root.appendChild(t);
+    } catch (e) {
+      root.appendChild(el('div', { style: 'color:#ef4444;' }, e.message));
+    }
+  }
+
+  // --- Phase 2b: Vectorize / Hybrid RAG settings ---
+  async function renderVectorize(root) {
+    root.appendChild(el('h2', {}, 'Vectorize (Phase 2b)'));
+    root.appendChild(el('p', { style: 'color:#6b7280;margin:0 0 12px;' },
+      'Workers AI (bge-m3, 1024dim) + Vectorize で密ベクトル検索。BM25 と RRF 融合で言い換え対応が強化されます。'));
+    const stateDiv = el('div');
+    const actionsDiv = el('div', { style: 'display:flex;gap:8px;margin:12px 0;flex-wrap:wrap;' });
+    root.appendChild(stateDiv);
+    root.appendChild(actionsDiv);
+    const logDiv = el('div', { style: 'background:#f9fafb;padding:10px;border-radius:6px;font-family:ui-monospace,monospace;font-size:12px;white-space:pre-wrap;margin-top:12px;max-height:400px;overflow:auto;' });
+    root.appendChild(logDiv);
+    const log = (msg) => { logDiv.textContent += (logDiv.textContent ? '\n' : '') + msg; };
+
+    async function refreshState() {
+      stateDiv.innerHTML = '読み込み中...';
+      try {
+        const r = await api('GET', '/api/admin/vectorize/state');
+        stateDiv.innerHTML = '';
+        stateDiv.appendChild(el('div', { style: 'display:grid;grid-template-columns:auto auto;gap:4px 16px;font-size:13px;' },
+          el('div', { style: 'color:#6b7280;' }, 'AI binding:'),
+          el('div', {}, r.ai_binding ? '✅ 有効' : '❌ 未設定'),
+          el('div', { style: 'color:#6b7280;' }, 'Vectorize binding:'),
+          el('div', {}, r.vectorize_binding ? '✅ 有効' : '❌ 未設定'),
+          el('div', { style: 'color:#6b7280;' }, 'use_vectorize flag:'),
+          el('div', {}, r.flags?.['retrieval.use_vectorize'] === '1' ? '🟢 ON (hybrid RRF)' : '⚪ OFF (BM25 only)'),
+          el('div', { style: 'color:#6b7280;' }, 'use_chunks flag:'),
+          el('div', {}, r.flags?.['retrieval.use_chunks'] === '1' ? '🟢 ON' : '⚪ OFF')));
+        if (r.state?.length) {
+          const t = el('table', { class: 'slo-adm-table', style: 'margin-top:10px;' });
+          t.appendChild(el('thead', {}, el('tr', {},
+            el('th', {}, 'kind'), el('th', {}, 'items'), el('th', {}, 'model'),
+            el('th', {}, 'dim'), el('th', {}, 'last reindex'), el('th', {}, 'notes'))));
+          const tb = el('tbody');
+          for (const s of r.state) {
+            tb.appendChild(el('tr', {},
+              el('td', {}, s.kind), el('td', {}, String(s.item_count)),
+              el('td', {}, s.embedding_model || '—'), el('td', {}, String(s.embedding_dim || '—')),
+              el('td', { style: 'font-size:11px;' }, s.last_reindex_at || '—'),
+              el('td', { style: 'font-size:11px;color:#6b7280;' }, s.notes || '—')));
+          }
+          t.appendChild(tb);
+          stateDiv.appendChild(t);
+        }
+      } catch (e) { stateDiv.innerHTML = '<div style="color:#ef4444;">' + e.message + '</div>'; }
+    }
+    await refreshState();
+
+    actionsDiv.appendChild(el('button', { class: 'slo-adm-btn slo-adm-btn-primary', onclick: async () => {
+      if (!await confirmDialog('knowledge_chunks 全件を再 embed して Vectorize にアップロードします (数分+Workers AI 課金発生)。続行？')) return;
+      log('[reindex:kb_chunks] 開始...');
+      try {
+        const r = await api('POST', '/api/admin/vectorize/reindex', { kind: 'kb_chunks' });
+        log('[reindex:kb_chunks] ' + JSON.stringify(r, null, 2));
+        await refreshState();
+      } catch (e) { log('ERROR: ' + e.message); }
+    } }, '📤 KB chunks を reindex'));
+
+    actionsDiv.appendChild(el('button', { class: 'slo-adm-btn slo-adm-btn-secondary', onclick: async () => {
+      const q = prompt('テスト クエリを入力', '入金方法について');
+      if (!q) return;
+      log('[query] "' + q + '"');
+      try {
+        const r = await api('POST', '/api/admin/vectorize/query', { text: q, top_k: 5 });
+        log(JSON.stringify(r, null, 2));
+      } catch (e) { log('ERROR: ' + e.message); }
+    } }, '🔍 Query テスト'));
+
+    actionsDiv.appendChild(el('button', { class: 'slo-adm-btn slo-adm-btn-secondary', onclick: async () => {
+      try {
+        await api('POST', '/api/admin/vectorize/flags', { 'retrieval.use_vectorize': '1' });
+        alert('Hybrid RRF retrieval を有効化しました');
+        await refreshState();
+      } catch (e) { alert(e.message); }
+    } }, '🟢 Hybrid ON'));
+    actionsDiv.appendChild(el('button', { class: 'slo-adm-btn slo-adm-btn-secondary', onclick: async () => {
+      try {
+        await api('POST', '/api/admin/vectorize/flags', { 'retrieval.use_vectorize': '0' });
+        alert('Hybrid RRF retrieval を無効化しました (BM25 only)');
+        await refreshState();
+      } catch (e) { alert(e.message); }
+    } }, '⚪ Hybrid OFF'));
+  }
+
+  // --- Phase 2b: FAQ Candidates Silver 層 (embedding cluster) ---
+  async function renderFaqClusters(root) {
+    root.appendChild(el('h2', {}, 'FAQ 候補クラスタ (Silver 層)'));
+    root.appendChild(el('p', { style: 'color:#6b7280;margin:0 0 12px;' },
+      '606 候補 → 意味的 cluster へ圧縮。頻度 ≥ 3 の cluster のみ "promoted" 状態に。'));
+
+    const toolbar = el('div', { style: 'display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;' });
+    const listDiv = el('div');
+    root.appendChild(toolbar);
+    root.appendChild(listDiv);
+
+    async function loadClusters(onlyPromoted) {
+      listDiv.innerHTML = '読み込み中...';
+      try {
+        const r = await api('GET', '/api/admin/faq-candidates/clusters?limit=100' + (onlyPromoted ? '&promoted=1' : ''));
+        const cs = r.clusters || [];
+        listDiv.innerHTML = '';
+        if (cs.length === 0) {
+          listDiv.appendChild(el('div', { class: 'slo-adm-empty' },
+            'クラスタがありません。まず Workers AI が有効なアカウントで「🔄 再クラスタリング」を実行してください。'));
+          return;
+        }
+        const t = el('table', { class: 'slo-adm-table' });
+        t.appendChild(el('thead', {}, el('tr', {},
+          el('th', { style: 'width:50px' }, 'id'),
+          el('th', {}, '代表質問'),
+          el('th', { style: 'width:60px' }, 'size'),
+          el('th', { style: 'width:80px' }, '類似度'),
+          el('th', { style: 'width:80px' }, '状態'),
+          el('th', { style: 'width:80px' }, ''))));
+        const tb = el('tbody');
+        for (const c of cs) {
+          tb.appendChild(el('tr', {},
+            el('td', {}, String(c.id)),
+            el('td', {}, c.rep_question || '(no question)'),
+            el('td', {}, String(c.size)),
+            el('td', {}, (c.avg_similarity || 0).toFixed(3)),
+            el('td', {}, c.promoted ? '🟢 promoted' : '⚪ small'),
+            el('td', {}, el('button', { onclick: async () => {
+              try {
+                const mr = await api('GET', `/api/admin/faq-candidates/clusters/${c.id}/members`);
+                alert((mr.members || []).map(m => '#' + m.id + ' [rank ' + m.cluster_rank + '] ' + m.question).join('\n\n'));
+              } catch (e) { alert(e.message); }
+            } }, 'メンバー'))
+          ));
+        }
+        t.appendChild(tb);
+        listDiv.appendChild(t);
+      } catch (e) {
+        listDiv.innerHTML = '<div style="color:#ef4444;">' + e.message + '</div>';
+      }
+    }
+
+    toolbar.appendChild(el('button', { class: 'slo-adm-btn slo-adm-btn-primary', onclick: async () => {
+      if (!await confirmDialog('全 pending FAQ 候補を再 embed + クラスタリング (Workers AI 課金)。続行？')) return;
+      try {
+        const r = await api('POST', '/api/admin/faq-candidates/cluster', { dry_run: false });
+        alert(`候補 ${r.candidates} → ${r.clusters} clusters (promoted ${r.promoted})`);
+        loadClusters(false);
+      } catch (e) { alert(e.message); }
+    } }, '🔄 再クラスタリング'));
+    toolbar.appendChild(el('button', { class: 'slo-adm-btn slo-adm-btn-secondary', onclick: async () => {
+      try {
+        const r = await api('POST', '/api/admin/faq-candidates/cluster', { dry_run: true });
+        const top = (r.top_clusters || []).slice(0, 10).map(c =>
+          `size=${c.size} sim=${c.avg_sim} ${c.promoted ? '🟢' : '⚪'} "${c.rep}"`).join('\n');
+        alert(`候補 ${r.candidates} → ${r.clusters} clusters (promoted ${r.promoted})\n\nTop 10:\n${top}`);
+      } catch (e) { alert(e.message); }
+    } }, '👁️ Dry-run プレビュー'));
+    toolbar.appendChild(el('button', { class: 'slo-adm-btn', onclick: () => loadClusters(false) }, 'すべて'));
+    toolbar.appendChild(el('button', { class: 'slo-adm-btn', onclick: () => loadClusters(true) }, 'promoted のみ'));
+
+    loadClusters(false);
+  }
+
   // --- Register sections ---
   A.section('prompts', renderPrompts);
   A.section('teams', renderTeams);
   A.section('ai-logs', renderAiLogs);
+  A.section('ai-silent-failures', renderAiSilentFailures);
+  A.section('golden-set', renderGoldenSet);
+  A.section('shadow-settings', renderShadowSettings);
+  A.section('vectorize', renderVectorize);
+  A.section('faq-clusters', renderFaqClusters);
   A.section('bonus-codes', renderBonusCodes);
   A.section('bonus-submissions', renderBonusSubmissions);
 })();
