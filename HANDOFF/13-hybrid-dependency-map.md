@@ -46,8 +46,9 @@
                          │     └→ コンビニ (STORES) 入金確認                           │
                          │     └→ EC全体 / EC着金確認用D タブ照合                       │
                          │                                                            │
-                         │  📄 gas-bank-* (BANK_TRANSFER_BOT_WEBHOOK_URL)              │
-                         │     └→ 銀行振込 着金確認 (別 GAS プロジェクト)               │
+                         │  📄 gas-bank-bot-v2.0.x.js (BANK_TRANSFER_BOT_WEBHOOK_URL)  │
+                         │     └→ 銀行振込 着金確認 (action=bank_handoff)              │
+                         │     └→ ATM 入金フロー (action=atm_handoff, 同URL再利用)     │
                          └────────────────────────────────────────────────────────────┘
                                      │
                                      ▼
@@ -75,7 +76,9 @@
 | PayPay **送金先自動選定** | — | ✅ (v3.0.3) | 参照元 |
 | PayPay **着金確認 + 記録** | — | ✅ (v3.0.3) | 書込先 |
 | 銀行振込 入金案内メッセージ | ✅ | — | — |
-| 銀行振込 **着金確認** | — | ✅ (別GAS) | 書込先 |
+| 銀行振込 **着金確認** | — | ✅ (bank-bot v2.0 `action=bank_handoff`) | 書込先 |
+| ATM 入金案内メッセージ | ✅ | — | — |
+| ATM **着金確認 (指定振込名義方式)** | — | ✅ (bank-bot v2.0 `action=atm_handoff`) | 書込先 |
 | コンビニ入金 案内メッセージ | ✅ | — | — |
 | コンビニ **STORES 着金確認** | — | ✅ (v2.3) | 書込先 |
 | AI チャット (Gemini) | ✅ | — | — |
@@ -109,6 +112,28 @@ export const OVERRIDABLE_KEYS = [
 5. 全変更は `audit_log.action='gas_url.update'` で記録
 
 **デプロイ不要で GAS URL をローテーションできる** のが最大の利点。
+
+---
+
+## 3.1 GAS Webhook payload contract (2026-04-21 更新)
+
+sloten-standalone の bot flow engine が webhook step で GAS に送る payload フォーマットを、chatwoot-final-working (2026-04-21) の `gas-webhooks.js` と一致させてあります。各 GAS ボットは以下の形式を期待:
+
+| Handoff (flow flag) | URL | Payload body (step.body) |
+|---|---|---|
+| `handoff_to_gasbot` (PayPay) | `{{env.GAS_BOT_WEBHOOK_URL}}` | `{action:'handoff', payment_method, contact_name:'{{contact.name}}'}` |
+| `handoff_to_bank_bot` | `{{env.BANK_TRANSFER_BOT_WEBHOOK_URL}}` | `{action:'bank_handoff', contact_name:'{{contact.name}}', chat_id:'{{contact.id}}'}` |
+| `handoff_to_atm_bot` (2026-04-21 新設) | `{{env.BANK_TRANSFER_BOT_WEBHOOK_URL}}` (bank と同一 URL) | `{action:'atm_handoff', contact_name:'{{contact.name}}', chat_id:'{{contact.id}}'}` |
+| `ec_start` | `{{env.EC_DEPOSIT_BOT_WEBHOOK_URL}}` (VPS) | 現在は human handoff に暫定退避 (生成器内 TBD) |
+
+bot flow engine (`src/handlers/bot-flows.mjs`) が加える共通フィールド:
+- `flow_id`, `flow_name`, `step_id`
+- `conversation_id` — GAS は必ずこれで会話を識別
+- `contact: {id, name, email, phone}` — 構造化 contact オブジェクト
+- `vars` — flow 内変数
+- `attachments` — 添付ファイルがあれば signed URL 付き
+
+**フォーマット源泉**: GAS ボット側 `doPost(e).action === 'X'` の switch が dispatch 判定。`action` フィールドが無いと GAS は無視する。
 
 ---
 

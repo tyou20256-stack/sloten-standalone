@@ -637,13 +637,26 @@
     // Contact fields
     const fields = el('div', { class: 'slo-op-info-section' });
     fields.appendChild(el('h4', {}, 'ユーザー情報'));
-    const addRow = (label, value) => {
+    const addRow = (label, value, opts = {}) => {
       if (value == null || value === '') return;
-      fields.appendChild(el('div', { class: 'slo-op-info-row' },
+      const row = el('div', { class: 'slo-op-info-row' },
         el('span', {}, label),
-        el('span', {}, String(value))
-      ));
+        el('span', opts.strong ? { style: 'font-weight:600;color:#111;' } : {}, String(value))
+      );
+      fields.appendChild(row);
     };
+    // Identifier (Chatwoot parity). Prefer the column set by widget
+    // `$chatwoot.setUser()` equivalent. Fall back to Chatwoot-imported
+    // identifier stored in metadata. Migration pointers (chatwoot:...) are
+    // treated as "not a user identifier" and hidden here.
+    const metaForId = (() => { try { return contact.metadata ? JSON.parse(contact.metadata) : null; } catch { return null; } })();
+    const isImportPointer = typeof contact.external_id === 'string' && contact.external_id.startsWith('chatwoot:');
+    const displayIdentifier = (!isImportPointer ? contact.external_id : null)
+      || metaForId?.chatwoot_identifier
+      || metaForId?.identifier
+      || metaForId?.external_id
+      || null;
+    addRow('識別子', displayIdentifier, { strong: true });
     addRow('名前', contact.name);
     addRow('メール', contact.email);
     addRow('電話', contact.phone);

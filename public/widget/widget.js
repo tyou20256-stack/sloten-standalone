@@ -39,13 +39,18 @@
   const WIDGET_VERSION = 'v20260416.e';
 
   // Host-provided user info (optional). Populated from:
-  //   data-user-name / data-user-email / data-user-phone / data-user-external-id
-  //   window.SlotenChatConfig.user = { name, email, phone, external_id, metadata }
+  //   data-user-name / data-user-email / data-user-phone
+  //   data-user-identifier  (preferred, Chatwoot parity)
+  //   data-user-external-id (legacy, same semantics)
+  //   window.SlotenChatConfig.user = { identifier, name, email, phone, metadata }
   const hostUser = Object.assign({}, (userCfg.user || {}));
   if (ds.userName)       hostUser.name = ds.userName;
   if (ds.userEmail)      hostUser.email = ds.userEmail;
   if (ds.userPhone)      hostUser.phone = ds.userPhone;
-  if (ds.userExternalId) hostUser.external_id = ds.userExternalId;
+  if (ds.userIdentifier) hostUser.identifier = ds.userIdentifier;
+  if (ds.userExternalId && !hostUser.identifier) hostUser.identifier = ds.userExternalId;
+  // Back-compat: legacy `external_id` key still maps to identifier.
+  if (hostUser.external_id && !hostUser.identifier) hostUser.identifier = hostUser.external_id;
 
   const cfg = {
     apiBase,
@@ -362,15 +367,16 @@
   // --- Bootstrap conversation ---
   async function ensureContact() {
     if (state.contactId) return state.contactId;
-    // Collect host-provided user info. external_id goes into metadata,
-    // additional metadata (if any) is merged.
+    // Collect host-provided user info. `identifier` goes to contacts.external_id
+    // (Chatwoot `$chatwoot.setUser(identifier)` parity). Additional metadata
+    // (if any) is merged into contacts.metadata.
     const payload = { tenant_id: cfg.tenantId };
     const u = cfg.user || {};
-    if (u.name)  payload.name  = u.name;
-    if (u.email) payload.email = u.email;
-    if (u.phone) payload.phone = u.phone;
+    if (u.name)       payload.name  = u.name;
+    if (u.email)      payload.email = u.email;
+    if (u.phone)      payload.phone = u.phone;
+    if (u.identifier) payload.identifier = u.identifier;
     const meta = Object.assign({}, u.metadata || {});
-    if (u.external_id) meta.external_id = u.external_id;
     if (Object.keys(meta).length) payload.metadata = meta;
 
     const r = await api('POST', '/api/widget/contacts', payload);
@@ -378,6 +384,43 @@
     if (r.contact_token) state.contactToken = r.contact_token;
     saveState();
     return state.contactId;
+  }
+
+  // Runtime profile update — mirrors Chatwoot's `window.$chatwoot.setUser()`.
+  // Safe to call before or after the contact has been created. If called
+  // before, the values are held in cfg.user and sent on first create. If
+  // called after, a PATCH is issued to apply the changes server-side.
+  async function setUser(identifier, userInfo = {}) {
+    const u = cfg.user = cfg.user || {};
+    if (identifier != null) u.identifier = String(identifier);
+    if (userInfo && typeof userInfo === 'object') {
+      if (userInfo.name  !== undefined) u.name  = userInfo.name;
+      if (userInfo.email !== undefined) u.email = userInfo.email;
+      // Chatwoot uses `phone_number`; accept both for compatibility.
+      if (userInfo.phone !== undefined) u.phone = userInfo.phone;
+      if (userInfo.phone_number !== undefined) u.phone = userInfo.phone_number;
+      if (userInfo.avatar_url !== undefined) u.avatar_url = userInfo.avatar_url;
+      if (userInfo.custom_attributes && typeof userInfo.custom_attributes === 'object') {
+        u.metadata = Object.assign({}, u.metadata || {}, userInfo.custom_attributes);
+      }
+      if (userInfo.metadata && typeof userInfo.metadata === 'object') {
+        u.metadata = Object.assign({}, u.metadata || {}, userInfo.metadata);
+      }
+    }
+    if (!state.contactId) return { deferred: true };
+    const body = {};
+    if (u.identifier !== undefined) body.identifier = u.identifier;
+    if (u.name       !== undefined) body.name       = u.name;
+    if (u.email      !== undefined) body.email      = u.email;
+    if (u.phone      !== undefined) body.phone      = u.phone;
+    if (u.avatar_url !== undefined) body.avatar_url = u.avatar_url;
+    if (u.metadata   !== undefined) body.metadata   = u.metadata;
+    try {
+      const r = await api('PATCH', '/api/widget/contacts/' + encodeURIComponent(state.contactId), body);
+      return { ok: true, contact: r.contact };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
   }
 
   async function ensureConversation() {
@@ -651,6 +694,11 @@
   window.SlotenChat = {
     open,
     close,
+    // Chatwoot parity: `window.$chatwoot.setUser(identifier, userInfo)`
+    //   userInfo: { name, email, phone|phone_number, avatar_url, custom_attributes }
+    // Safe to call before or after widget initialization. Before: held in
+    // config and sent on first contact creation. After: PATCH to update.
+    setUser,
     reset() {
       state.contactId = null;
       state.conversationId = null;

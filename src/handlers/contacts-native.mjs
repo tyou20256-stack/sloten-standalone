@@ -2,12 +2,25 @@
 
 import { uuid } from '../id.mjs';
 import { ok, created, err, parseJson } from '../json.mjs';
-import { issueContactToken } from '../auth/contact-token.mjs';
+import { issueContactToken, verifyContactToken, extractContactToken } from '../auth/contact-token.mjs';
 import { resolveTenantId } from '../tenant-scope.mjs';
 
 function decorate(row) {
   if (!row) return row;
   return { ...row, is_identified: !!row.is_identified };
+}
+
+// Pick the host-provided identifier, mirroring Chatwoot's `setUser(identifier)`.
+// Accept both top-level `identifier` (Chatwoot-compat) and nested
+// `metadata.external_id` (legacy widget data-attr). Strip prefixes that would
+// collide with Chatwoot migration pointers ("chatwoot:3:contact:xxxxx").
+function pickIdentifier(body) {
+  const direct = body?.identifier;
+  const fromMeta = body?.metadata?.external_id || body?.metadata?.identifier;
+  const raw = (direct != null ? String(direct) : (fromMeta != null ? String(fromMeta) : '')).trim();
+  if (!raw) return null;
+  if (raw.startsWith('chatwoot:')) return null; // reserved prefix, don't let widget set it
+  return raw.slice(0, 255);
 }
 
 export async function createContact(request, env, corsHeaders) {
@@ -17,14 +30,15 @@ export async function createContact(request, env, corsHeaders) {
   // Always server-generated — never trust body.id from a public widget endpoint.
   const id = uuid();
   const { email = null, phone = null, name = null, avatar_url = null } = body;
+  const externalId = pickIdentifier(body);
   const metadata = body.metadata ? JSON.stringify(body.metadata) : null;
-  const isIdentified = email || phone ? 1 : 0;
+  const isIdentified = (email || phone || externalId) ? 1 : 0;
 
   try {
     await env.DB.prepare(
-      `INSERT INTO contacts (id, tenant_id, email, phone, name, avatar_url, metadata, is_identified)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(id, tenantId, email, phone, name, avatar_url, metadata, isIdentified).run();
+      `INSERT INTO contacts (id, tenant_id, email, phone, name, avatar_url, metadata, is_identified, external_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(id, tenantId, email, phone, name, avatar_url, metadata, isIdentified, externalId).run();
     const row = await env.DB.prepare('SELECT * FROM contacts WHERE id = ?').bind(id).first();
     // Issue an ownership token — required on all subsequent widget calls.
     const contact_token = await issueContactToken(env, id);
@@ -33,6 +47,65 @@ export async function createContact(request, env, corsHeaders) {
     console.error('createContact:', e.message);
     return err('Internal error', 500, corsHeaders);
   }
+}
+
+// Runtime profile update — mirrors Chatwoot's `window.$chatwoot.setUser()`.
+// Requires the contact_token issued at createContact (same ownership check as
+// other widget endpoints). Only updates fields present in the body; null/empty
+// string values clear the column.
+export async function updateContact(request, env, corsHeaders, contactId) {
+  const token = extractContactToken(request);
+  const payload = await verifyContactToken(env, token);
+  if (!payload) return err('Unauthorized (widget contact token required)', 401, corsHeaders);
+  if (payload.cid !== contactId) return err('Forbidden (contact mismatch)', 403, corsHeaders);
+
+  const { body, response } = await parseJson(request, corsHeaders);
+  if (response) return response;
+
+  const sets = [];
+  const binds = [];
+  const apply = (col, val) => {
+    if (val === undefined) return; // field not present — leave unchanged
+    sets.push(`${col} = ?`);
+    binds.push(val === null || val === '' ? null : val);
+  };
+  apply('name',       body.name);
+  apply('email',      body.email);
+  apply('phone',      body.phone);
+  apply('avatar_url', body.avatar_url);
+
+  const newIdentifier = pickIdentifier(body);
+  if (body.identifier !== undefined || body.metadata?.external_id !== undefined || body.metadata?.identifier !== undefined) {
+    apply('external_id', newIdentifier);
+  }
+  if (body.metadata !== undefined) {
+    // Merge metadata with existing row so partial updates don't clobber prior keys.
+    const existing = await env.DB.prepare('SELECT metadata FROM contacts WHERE id = ?').bind(contactId).first();
+    let merged = {};
+    try { if (existing?.metadata) merged = JSON.parse(existing.metadata) || {}; } catch { /* keep empty */ }
+    if (body.metadata && typeof body.metadata === 'object') Object.assign(merged, body.metadata);
+    apply('metadata', JSON.stringify(merged));
+  }
+
+  // Re-compute is_identified if any identity-bearing field was touched.
+  if (sets.length) {
+    const row = await env.DB.prepare('SELECT email, phone, external_id FROM contacts WHERE id = ?').bind(contactId).first();
+    if (!row) return err('Contact not found', 404, corsHeaders);
+    const next = {
+      email: body.email !== undefined ? body.email : row.email,
+      phone: body.phone !== undefined ? body.phone : row.phone,
+      external_id: (body.identifier !== undefined || body.metadata?.external_id !== undefined) ? newIdentifier : row.external_id,
+    };
+    sets.push('is_identified = ?');
+    binds.push((next.email || next.phone || next.external_id) ? 1 : 0);
+    sets.push(`updated_at = datetime('now')`);
+    binds.push(contactId);
+    await env.DB.prepare(`UPDATE contacts SET ${sets.join(', ')} WHERE id = ?`).bind(...binds).run();
+  }
+
+  const updated = await env.DB.prepare('SELECT * FROM contacts WHERE id = ?').bind(contactId).first();
+  if (!updated) return err('Contact not found', 404, corsHeaders);
+  return ok({ success: true, contact: decorate(updated) }, corsHeaders);
 }
 
 export async function getContact(request, env, corsHeaders, id) {

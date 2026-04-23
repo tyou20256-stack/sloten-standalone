@@ -46,15 +46,43 @@ const bonusShortcuts = {
 // the webhook first, then chain to the menu.
 const handoffFallbackIds = new Set();
 function handoffOpts(msg, id) {
+  // Body formats mirror chatwoot-final-working/gas-webhooks.js so the same GAS
+  // bots (PayPay v3.0.x / bank-bot v2.0.x) work from sloten-standalone without
+  // modification. action= field is how GAS dispatches. contact_name / chat_id
+  // use {{contact.*}} placeholders resolved by the bot-flow engine at runtime.
   if (msg.handoff_to_gasbot) {
     return {
       kind: 'webhook',
       url: '{{env.GAS_BOT_WEBHOOK_URL}}',
-      body: { event: 'paypay_deposit_start', payment_method: msg.payment_method || null },
+      body: {
+        action: 'handoff',
+        payment_method: msg.payment_method || null,
+        contact_name: '{{contact.name}}',
+      },
     };
   }
   if (msg.handoff_to_bank_bot) {
-    return { kind: 'webhook', url: '{{env.BANK_TRANSFER_BOT_WEBHOOK_URL}}', body: { event: 'bank_transfer_start' } };
+    return {
+      kind: 'webhook',
+      url: '{{env.BANK_TRANSFER_BOT_WEBHOOK_URL}}',
+      body: {
+        action: 'bank_handoff',
+        contact_name: '{{contact.name}}',
+        chat_id: '{{contact.id}}',
+      },
+    };
+  }
+  if (msg.handoff_to_atm_bot) {
+    // ATM reuses BANK_TRANSFER_BOT_WEBHOOK_URL; distinguished by action.
+    return {
+      kind: 'webhook',
+      url: '{{env.BANK_TRANSFER_BOT_WEBHOOK_URL}}',
+      body: {
+        action: 'atm_handoff',
+        contact_name: '{{contact.name}}',
+        chat_id: '{{contact.id}}',
+      },
+    };
   }
   if (msg.ec_start) {
     // EC pipeline (multi-step account+amount+confirmation) is TBD; temporarily
@@ -88,17 +116,40 @@ for (const [id, msg] of Object.entries(messages)) {
   // The `id` slot is consumed by the handoff action (webhook or handoff step).
   if (handoff.kind === 'webhook') {
     const fallbackId = `${id}__handoff_fallback`;
-    steps.push({
-      id,
-      type: 'webhook',
-      url: handoff.url,
-      method: 'POST',
-      body: handoff.body,
-      timeout_ms: 8000,
-      on_error: fallbackId,
-      error_message: 'ただいま自動案内を準備しています。担当者にお繋ぎします。',
-      next: menuId,
-    });
+    if (!msg.items) {
+      // Terminal case (no menu to return to). Earlier we pushed a terminal
+      // message at `id`. Replace it: `id` becomes the entry message that
+      // shows content, then chains to the webhook step at `id__webhook`.
+      // Without this, dedup would kill the webhook (same id as the message).
+      const webhookId = `${id}__webhook`;
+      steps.pop(); // remove the prior terminal message at menuId === id
+      steps.push({ id, type: 'message', content, next: webhookId });
+      steps.push({
+        id: webhookId,
+        type: 'webhook',
+        url: handoff.url,
+        method: 'POST',
+        body: handoff.body,
+        timeout_ms: 8000,
+        on_error: fallbackId,
+        error_message: 'ただいま自動案内を準備しています。担当者にお繋ぎします。',
+        next: null,  // GAS takes over from here
+      });
+    } else {
+      // Has items: existing behavior — menu stays at `{id}__menu`, webhook
+      // takes the `id` slot and returns to the menu on success.
+      steps.push({
+        id,
+        type: 'webhook',
+        url: handoff.url,
+        method: 'POST',
+        body: handoff.body,
+        timeout_ms: 8000,
+        on_error: fallbackId,
+        error_message: 'ただいま自動案内を準備しています。担当者にお繋ぎします。',
+        next: menuId,
+      });
+    }
     if (!handoffFallbackIds.has(fallbackId)) {
       steps.push({
         id: fallbackId,
