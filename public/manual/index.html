@@ -1,0 +1,1016 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex" />
+  <title>Sloten-standalone 管理画面マニュアル</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #1e293b;
+      --surface: #f8fafc;
+      --border: #e2e8f0;
+      --text: #0f172a;
+      --muted: #64748b;
+      --accent: #2563eb;
+      --accent-light: #dbeafe;
+      --success: #10b981;
+      --warn: #f59e0b;
+      --danger: #ef4444;
+      --info: #8b5cf6;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Yu Gothic UI", sans-serif;
+      background: var(--surface);
+      color: var(--text);
+      line-height: 1.7;
+      font-size: 15px;
+    }
+    /* Header */
+    header.hero {
+      background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+      color: #fff;
+      padding: 40px 32px;
+    }
+    header.hero h1 { margin: 0 0 8px; font-size: 28px; font-weight: 700; }
+    header.hero .sub { color: #cbd5e1; font-size: 14px; }
+    header.hero .badge {
+      display: inline-block;
+      background: rgba(37, 99, 235, 0.2);
+      color: #93c5fd;
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 600;
+      margin-right: 8px;
+    }
+    /* Layout */
+    .layout { display: flex; max-width: 1400px; margin: 0 auto; }
+    nav.toc {
+      width: 280px;
+      flex: 0 0 280px;
+      background: #fff;
+      border-right: 1px solid var(--border);
+      padding: 24px 16px;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
+    }
+    nav.toc h3 { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin: 16px 0 8px; }
+    nav.toc h3:first-child { margin-top: 0; }
+    nav.toc a {
+      display: block;
+      padding: 6px 10px;
+      color: var(--text);
+      text-decoration: none;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    nav.toc a:hover { background: var(--accent-light); color: var(--accent); }
+    nav.toc a.active { background: var(--accent); color: #fff; }
+    main.content {
+      flex: 1;
+      padding: 32px 48px;
+      max-width: 1000px;
+    }
+    main.content h2 {
+      font-size: 24px;
+      font-weight: 700;
+      margin-top: 48px;
+      margin-bottom: 16px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--accent);
+    }
+    main.content h2:first-child { margin-top: 0; }
+    main.content h3 {
+      font-size: 18px;
+      font-weight: 600;
+      margin-top: 32px;
+      margin-bottom: 12px;
+      color: #1e3a8a;
+    }
+    main.content h4 { font-size: 15px; font-weight: 600; margin-top: 20px; margin-bottom: 8px; }
+    code {
+      background: #eef2ff;
+      color: #3730a3;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: ui-monospace, 'SF Mono', Monaco, monospace;
+      font-size: 13px;
+    }
+    pre {
+      background: #0f172a;
+      color: #e2e8f0;
+      padding: 14px 16px;
+      border-radius: 8px;
+      overflow-x: auto;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    pre code { background: transparent; color: #e2e8f0; padding: 0; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0;
+      font-size: 14px;
+    }
+    th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+    th { background: #f1f5f9; font-weight: 600; color: #334155; }
+    tr:hover td { background: #fafbfc; }
+    /* Alert boxes */
+    .note, .warn, .tip, .danger {
+      padding: 12px 16px;
+      border-radius: 6px;
+      margin: 16px 0;
+      border-left: 4px solid;
+    }
+    .note { background: #eff6ff; border-color: var(--accent); color: #1e40af; }
+    .warn { background: #fffbeb; border-color: var(--warn); color: #92400e; }
+    .tip  { background: #ecfdf5; border-color: var(--success); color: #065f46; }
+    .danger { background: #fef2f2; border-color: var(--danger); color: #991b1b; }
+    .note strong, .warn strong, .tip strong, .danger strong { font-weight: 700; }
+    /* Step list */
+    ol.steps { counter-reset: step; padding-left: 0; list-style: none; }
+    ol.steps li {
+      counter-increment: step;
+      padding: 10px 0 10px 48px;
+      position: relative;
+      border-bottom: 1px dashed var(--border);
+    }
+    ol.steps li:last-child { border-bottom: none; }
+    ol.steps li::before {
+      content: counter(step);
+      position: absolute;
+      left: 0; top: 10px;
+      width: 32px; height: 32px;
+      line-height: 32px; text-align: center;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 50%;
+      font-weight: 600;
+      font-size: 14px;
+    }
+    .screen-mock {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin: 16px 0;
+      overflow: hidden;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+    .screen-mock .title-bar {
+      background: #f1f5f9;
+      padding: 8px 14px;
+      font-size: 12px;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+    }
+    .screen-mock .title-bar .dot {
+      display: inline-block;
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: #ef4444;
+      margin-right: 5px;
+    }
+    .screen-mock .title-bar .dot.y { background: #eab308; }
+    .screen-mock .title-bar .dot.g { background: #22c55e; }
+    .screen-mock .body { padding: 14px 18px; font-size: 13px; font-family: ui-monospace, monospace; white-space: pre-wrap; }
+    /* Chip */
+    .chip {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 600;
+      margin-right: 6px;
+    }
+    .chip.p1 { background: #dbeafe; color: #1e40af; }
+    .chip.p2a { background: #fef3c7; color: #92400e; }
+    .chip.p2b { background: #fae8ff; color: #86198f; }
+    .chip.ok { background: #dcfce7; color: #166534; }
+    .chip.todo { background: #fee2e2; color: #991b1b; }
+    /* Link styles */
+    a.extlink {
+      color: var(--accent);
+      text-decoration: none;
+      border-bottom: 1px dotted;
+    }
+    a.extlink:hover { border-bottom-style: solid; }
+
+    @media (max-width: 900px) {
+      nav.toc { display: none; }
+      main.content { padding: 20px; }
+    }
+  </style>
+</head>
+<body>
+
+<header class="hero">
+  <h1>🎛️ Sloten-standalone 管理画面マニュアル</h1>
+  <div class="sub">
+    <span class="badge">staging-bk</span>
+    <span class="badge">v2026-04-23</span>
+    <span>Phase 1 + 2a + 2b 全機能対応</span>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="toc">
+    <h3>はじめに</h3>
+    <a href="#intro">1. 概要</a>
+    <a href="#login">2. ログイン</a>
+    <a href="#overview">3. 画面全体構成</a>
+
+    <h3>対話・運用</h3>
+    <a href="#conversations">4. 対話管理</a>
+    <a href="#bonus-codes">5. ボーナスコード</a>
+    <a href="#bonus-submissions">6. ボーナスコード申請履歴</a>
+    <a href="#templates">7. 返信テンプレート</a>
+    <a href="#labels">8. ラベル</a>
+
+    <h3>ナレッジ・FAQ</h3>
+    <a href="#knowledge">9. ナレッジソース</a>
+    <a href="#faq">10. FAQ</a>
+    <a href="#faq-candidates">11. FAQ 候補</a>
+
+    <h3>Bot 設定</h3>
+    <a href="#bot-flows">12. ボットフロー</a>
+    <a href="#bot-menus">13. ボットメニュー</a>
+
+    <h3>AI 分析 (Phase 1-2b)</h3>
+    <a href="#ai-logs">14. AI 回答ログ <span class="chip p1">P1</span></a>
+    <a href="#silent-failures">15. AI サイレント失敗 <span class="chip p1">P1</span></a>
+    <a href="#prompts">16. AI プロンプト A/B</a>
+    <a href="#golden-set">17. Golden Set <span class="chip p2a">P2a</span></a>
+    <a href="#shadow">18. Shadow Mode <span class="chip p2a">P2a</span></a>
+    <a href="#vectorize">19. Vectorize <span class="chip p2b">P2b</span></a>
+    <a href="#faq-clusters">20. FAQ 候補クラスタ <span class="chip p2b">P2b</span></a>
+
+    <h3>運用</h3>
+    <a href="#staff">21. スタッフ管理</a>
+    <a href="#teams">22. チーム</a>
+    <a href="#gas-urls">23. GAS URL 設定</a>
+    <a href="#webhook-test">24. Bot テスト</a>
+    <a href="#audit-log">25. 監査ログ</a>
+    <a href="#error-log">26. エラーログ</a>
+
+    <h3>ワークフロー</h3>
+    <a href="#workflow-bonus">27. 新コード追加手順</a>
+    <a href="#workflow-ai-review">28. 日次 AI レビュー</a>
+    <a href="#workflow-hybrid">29. Hybrid retrieval 有効化</a>
+    <a href="#workflow-eval">30. Golden Set 評価実行</a>
+
+    <h3>付録</h3>
+    <a href="#troubleshooting">31. トラブルシュート</a>
+    <a href="#glossary">32. 用語集</a>
+  </nav>
+
+  <main class="content">
+
+<!-- ========================================================= -->
+<section id="intro">
+<h2>1. 概要</h2>
+<p>sloten-standalone は <strong>Cloudflare Workers + D1</strong> で動作する、スロット天国のカスタマーサポート統合プラットフォームです。</p>
+
+<h3>機能カテゴリ</h3>
+<table>
+  <tr><th>カテゴリ</th><th>内容</th></tr>
+  <tr><td>対話</td><td>顧客 Widget + Operator UI + Bot Flow (109 steps)</td></tr>
+  <tr><td>ボーナスコード</td><td>25 種の検出 + 自動応答 + GAS スプシ記録</td></tr>
+  <tr><td>ナレッジ</td><td>FAQ 47 + knowledge_sources 23 + chunks 56 (FTS5 BM25)</td></tr>
+  <tr><td>AI 回答</td><td>Gemini 2.5 Flash Lite + RAG + 11 段階 pipeline</td></tr>
+  <tr><td>安全装置</td><td>escalation gate / 過剰約束フィルタ / 依存症対応 / PII masker</td></tr>
+  <tr><td>評価基盤</td><td>Golden Set 195 / Shadow mode / LLM-as-Judge</td></tr>
+  <tr><td>Hybrid RAG</td><td>BM25 + Vectorize + RRF fusion (opt-in)</td></tr>
+</table>
+
+<div class="note">
+<strong>対象読者</strong>: スロット天国カスタマーサポートの運用者・管理者。ITエンジニア向けではありません。
+</div>
+</section>
+
+<!-- ========================================================= -->
+<section id="login">
+<h2>2. ログイン</h2>
+
+<h3>2.1 ログイン URL</h3>
+<pre><code>https://sloten-standalone-staging-bk.rcc-aoki.workers.dev/admin/</code></pre>
+
+<h3>2.2 ログイン情報 (staging テスト用)</h3>
+<table>
+<tr><th>項目</th><th>値</th></tr>
+<tr><td>Email</td><td><code>test@staging.local</code></td></tr>
+<tr><td>Password</td><td><code>Lake-Star-3274</code></td></tr>
+<tr><td>権限</td><td>admin (全機能可)</td></tr>
+</table>
+
+<h3>2.3 ログイン手順</h3>
+<ol class="steps">
+  <li>上記 URL をブラウザで開く</li>
+  <li>ログイン画面で email + password を入力</li>
+  <li>「ログイン」ボタンを押す</li>
+  <li>Cookie ベースのセッションが 12 時間有効 (自動再ログイン不要)</li>
+</ol>
+
+<div class="warn">
+<strong>注意</strong>: 5 回連続でパスワードを間違えるとアカウントがロックされます (15 分後自動解除)。
+</div>
+
+<h3>2.4 ログアウト</h3>
+<p>右上のユーザーメニュー → 「ログアウト」で終了。Cookie 破棄されます。</p>
+</section>
+
+<!-- ========================================================= -->
+<section id="overview">
+<h2>3. 画面全体構成</h2>
+
+<div class="screen-mock">
+<div class="title-bar"><span class="dot"></span><span class="dot y"></span><span class="dot g"></span> Admin UI 全体レイアウト</div>
+<div class="body">
+┌─ 左サイドバー (ナビ) ──┬─ メインコンテンツエリア ──────────────┐
+│  🗣️ 対話・運用         │                                         │
+│  ├ 会話一覧            │                                         │
+│  ├ ボーナスコード      │                                         │
+│  ├ ボーナス申請履歴    │   [選択したセクションの詳細表示]         │
+│  └ 返信テンプレート    │                                         │
+│                        │                                         │
+│  📚 ナレッジ・FAQ      │                                         │
+│  ├ ナレッジソース      │                                         │
+│  ├ FAQ                 │                                         │
+│  └ FAQ 候補            │                                         │
+│                        │                                         │
+│  🤖 Bot 設定           │                                         │
+│  ├ ボットフロー        │                                         │
+│  ├ ボットメニュー      │                                         │
+│  └ メニュー・メッセージ│                                         │
+│                        │                                         │
+│  📊 分析・AI           │                                         │
+│  ├ AI 回答ログ         │                                         │
+│  ├ AI サイレント失敗   │                                         │
+│  ├ Golden Set          │                                         │
+│  ├ Shadow Mode         │                                         │
+│  ├ Vectorize           │                                         │
+│  ├ FAQ 候補クラスタ    │                                         │
+│  └ AI プロンプト (A/B) │                                         │
+│                        │                                         │
+│  ⚙️ 設定               │                                         │
+│  ├ 担当者              │                                         │
+│  ├ チーム              │                                         │
+│  ├ Bot テスト          │                                         │
+│  ├ GAS URL 設定        │                                         │
+│  ├ 監査ログ            │                                         │
+│  └ エラーログ          │                                         │
+└────────────────────────┴─────────────────────────────────────────┘
+</div>
+</div>
+</section>
+
+<!-- ========================================================= -->
+<section id="conversations">
+<h2>4. 対話管理</h2>
+
+<h3>4.1 目的</h3>
+<p>顧客との会話を一覧・検索・担当アサインする画面。Operator UI の会話アクセスと同じ内容が管理者視点で見られます。</p>
+
+<h3>4.2 アクセス</h3>
+<p>管理画面は <strong>Operator UI</strong> にリダイレクトして開く設計:</p>
+<pre><code>https://sloten-standalone-staging-bk.rcc-aoki.workers.dev/operator/</code></pre>
+
+<h3>4.3 主な操作</h3>
+<table>
+<tr><th>操作</th><th>手順</th></tr>
+<tr><td>会話を選ぶ</td><td>左のリストからクリック</td></tr>
+<tr><td>ラベル追加</td><td>右サイドバー「ラベル」セクションの既存ラベルから + ボタン</td></tr>
+<tr><td>新規ラベル作成</td><td>「+ 新規」→ 名前 + 色コード入力</td></tr>
+<tr><td>顧客情報閲覧</td><td>右サイドバー「ユーザー情報」— 識別子 / 名前 / メール / 電話 / 登録日時</td></tr>
+<tr><td>過去の会話</td><td>右サイドバー「過去の会話」リンクをクリック</td></tr>
+<tr><td>スヌーズ</td><td>会話ヘッダーの 🕐 ボタン → 終了日時選択</td></tr>
+</table>
+
+<div class="tip">
+<strong>Tips</strong>: 右サイドバーの「識別子」行には、スロ天サイトから <code>SlotenChat.setUser(id, info)</code> で渡されたアカウント ID が表示されます。未設定なら Telegram chat ID (metadata.chatwoot_identifier) が fallback 表示。
+</div>
+</section>
+
+<!-- ========================================================= -->
+<section id="bonus-codes">
+<h2>5. ボーナスコード</h2>
+
+<h3>5.1 目的</h3>
+<p>顧客がチャットで入力すると自動検出される 25 種のボーナスコードを管理。検出ロジック・応答メッセージ・GAS 記録先の設定。</p>
+
+<h3>5.2 画面</h3>
+<p>サイドバー「ボーナスコード」から開く。</p>
+
+<div class="screen-mock">
+<div class="title-bar"><span class="dot"></span><span class="dot y"></span><span class="dot g"></span> ボーナスコード 一覧</div>
+<div class="body">
++ 新規作成                                        [ 🔄 再読み込み ]
+─────────────────────────────────────────────────────────────
+id │ 種別 (type_key)        │ 表示名                 │ codes            │ source    │ 操作
+1  │ vamos                  │ バモスイボナ(HS)       │ ["バモスイボナ"] │ hardcoded │ 編集 削除
+2  │ akeome                 │ あけおめ(HS)           │ ["あけおめ"]     │ hardcoded │ 編集 削除
+...
+24 │ heavenday_daachin (新) │ HEAVEN DAY だっちゃん天国│ ["だっちゃん天国"]│ hardcoded │ 編集 削除
+25 │ sakura2026             │ 桜満開2026              │ ["SAKURA2026"]  │ dynamic   │ 編集 削除
+</div>
+</div>
+
+<h3>5.3 新規ボーナスコード追加 (Generic Handler 対応)</h3>
+<ol class="steps">
+  <li><strong>+ 新規作成</strong> ボタンをクリック</li>
+  <li><strong>type_key</strong>: 英小文字/数字/アンダースコア (例: <code>summer2026</code>)</li>
+  <li><strong>表示名</strong>: 運用内部の表示名 (例: <code>夏祭りキャンペーン</code>)</li>
+  <li><strong>受付コード</strong>: カンマ or 改行で複数可 (例: <code>夏祭り, summer</code>)</li>
+  <li><strong>照合方法</strong>: 「大文字小文字を区別しない」(推奨) or 「完全一致」</li>
+  <li><strong>成功メッセージ本文</strong>: 顧客に送る応答テキスト (改行可)</li>
+  <li><strong>成功メッセージ選択肢</strong>: 動的フォームで +/- ボタンで追加
+    <ul>
+      <li>タイトル: 表示する文字 (例: <code>↩️ メインメニューに戻る</code>)</li>
+      <li>値: 遷移先ステップ ID (例: <code>welcome_message</code>)</li>
+    </ul>
+  </li>
+  <li><strong>GAS type</strong>: BC_ 固定 + 任意 suffix (例: <code>夏祭り</code>) — 空欄なら GAS 記録なし</li>
+  <li><strong>受付後にオペレーター転送</strong>: チェック時はコード受付後に人間に引き継ぎ</li>
+  <li><strong>作成</strong> ボタンで保存</li>
+</ol>
+
+<div class="tip">
+<strong>v9.4 Generic Handler</strong>: GAS コード変更なしで動作します。Google Spreadsheet に <code>BC_夏祭り</code> タブを作成しておけば、自動で 4 列標準フォーマットで記録されます。
+</div>
+
+<h3>5.4 既存ボーナスコード編集</h3>
+<p>行の「編集」→ 同じフォームで変更 → 保存。</p>
+</section>
+
+<!-- ========================================================= -->
+<section id="bonus-submissions">
+<h2>6. ボーナスコード申請履歴</h2>
+
+<p>顧客が実際に入力したボーナスコード申請を最新 100 件表示。</p>
+<table>
+<tr><th>列</th><th>意味</th></tr>
+<tr><td>日時</td><td>申請時刻</td></tr>
+<tr><td>コード</td><td>顧客が入力した文字列</td></tr>
+<tr><td>種別</td><td>マッチした type_key</td></tr>
+<tr><td>コンタクト</td><td>顧客の名前・メール・ID</td></tr>
+<tr><td>GAS 転送</td><td>✓ なら GAS スプシに記録済み、- なら URL 未設定</td></tr>
+</table>
+
+<div class="warn">
+<strong>staging-bk 注意</strong>: <code>BONUS_CODE_WEBHOOK_URL</code> 未設定のため全件 "-" 表示。本番では設定済みの想定。
+</div>
+</section>
+
+<!-- ========================================================= -->
+<section id="templates">
+<h2>7. 返信テンプレート</h2>
+
+<p>オペレーターがよく使う定型返信を管理。Operator UI の「テンプレ」メニューから挿入可能。</p>
+<p>現在 staging-bk に 57 件登録済み。</p>
+</section>
+
+<section id="labels">
+<h2>8. ラベル</h2>
+<p>会話への付箋。現在 3 種 (色 + 名前)。</p>
+</section>
+
+<!-- ========================================================= -->
+<section id="knowledge">
+<h2>9. ナレッジソース</h2>
+
+<p>AI が回答生成に使う知識データベース。23 ソース (manual_kb 11 / real_faq 6 / text 6)。</p>
+
+<h3>主な操作</h3>
+<ol class="steps">
+  <li><strong>+ 新規</strong>: タイトル + 本文 (Markdown 可)</li>
+  <li><strong>編集</strong>: タイトル変更・本文更新</li>
+  <li><strong>Chunk 再生成</strong>: 本文が大きく変わったら <code>scripts/chunk-knowledge.mjs --apply</code> を CLI で再実行</li>
+</ol>
+
+<div class="note">
+<strong>FTS5 自動同期</strong>: knowledge_sources の INSERT/UPDATE/DELETE はトリガーで kb_fts に自動反映。admin UI で編集すると即座に検索に反映されます。
+</div>
+</section>
+
+<!-- ========================================================= -->
+<section id="faq">
+<h2>10. FAQ</h2>
+
+<p>質問 + 回答のペア。優先度 + 使用回数でランキング。</p>
+<table>
+<tr><th>列</th><th>意味</th></tr>
+<tr><td>質問</td><td>想定される顧客質問</td></tr>
+<tr><td>回答</td><td>標準回答</td></tr>
+<tr><td>カテゴリ</td><td>分類 (任意)</td></tr>
+<tr><td>priority</td><td>ランク上位優遇</td></tr>
+<tr><td>usage_count</td><td>このFAQが使われた回数 (自動カウント)</td></tr>
+</table>
+</section>
+
+<section id="faq-candidates">
+<h2>11. FAQ 候補</h2>
+
+<p>過去の会話から自動抽出された FAQ 候補。</p>
+<p>毎週日曜 18:00 UTC (月曜 03:00 JST) に <code>extract-faqs-from-messages.mjs</code> cron が実行され、新規候補が追加されます。</p>
+
+<h3>レビュー操作</h3>
+<ol class="steps">
+  <li>行の <strong>承認</strong> → FAQ 本体に昇格、AI 回答で使用開始</li>
+  <li>行の <strong>却下</strong> → 候補から除外</li>
+  <li>行の <strong>編集</strong> → 質問・回答を修正してから承認</li>
+  <li><strong>一括選択</strong> → 複数選択して一括承認/却下</li>
+</ol>
+
+<div class="tip">
+<strong>Phase 2b の Silver 層</strong>: 現状 606 候補のうち 587 が rejected。次回から <a href="#faq-clusters">FAQ 候補クラスタ</a> で意味的重複を ~80 cluster に圧縮して提示できます。
+</div>
+</section>
+
+<!-- ========================================================= -->
+<section id="bot-flows">
+<h2>12. ボットフロー</h2>
+
+<p>顧客の最初のメッセージから人間エスカレまでの対話ツリー。sloten-main が 109 ステップで全カスタマージャーニーをカバー。</p>
+
+<h3>ステップの種類</h3>
+<table>
+<tr><th>type</th><th>挙動</th></tr>
+<tr><td><code>message</code></td><td>テキストを送信 → 次ステップへ</td></tr>
+<tr><td><code>select</code></td><td>ボタン付きメニュー表示、ユーザー選択を待つ</td></tr>
+<tr><td><code>input</code></td><td>自由テキスト入力を var に捕捉 (validate 正規表現可)</td></tr>
+<tr><td><code>webhook</code></td><td>GAS or 外部 API を POST、応答を次ステップへ</td></tr>
+<tr><td><code>handoff</code></td><td>会話を status=open にして人間にエスカレ</td></tr>
+</table>
+
+<h3>主な操作</h3>
+<ol class="steps">
+  <li><strong>sloten-main</strong> 行の「編集」を開く</li>
+  <li>JSON エディタで steps 配列を編集</li>
+  <li><strong>保存</strong></li>
+</ol>
+
+<div class="danger">
+<strong>危険</strong>: sloten-main の構造を壊すと全顧客対応が止まります。<code>scripts/convert-agentbot-messages.mjs</code> で再生成する CLI 運用を推奨。
+</div>
+</section>
+
+<section id="bot-menus">
+<h2>13. ボットメニュー</h2>
+
+<p>キーワードで直接起動する短絡メニュー (bot_menus テーブル、3 件)。AI より優先度高。</p>
+</section>
+
+<!-- ========================================================= -->
+<section id="ai-logs">
+<h2>14. AI 回答ログ <span class="chip p1">Phase 1</span></h2>
+
+<h3>14.1 目的</h3>
+<p>Gemini が生成した全 AI 応答のログ。運用者が 3 秒で評価フィードバックを付ける。</p>
+
+<h3>14.2 画面</h3>
+<div class="screen-mock">
+<div class="title-bar"><span class="dot"></span><span class="dot y"></span><span class="dot g"></span> /admin/#ai-logs</div>
+<div class="body">
+📊 24h: 23 calls | 7d: 407 calls | errors: 0 | 平均 1339ms | 👍 0 / 👎 0
+
+[ フィルタ: status=all ▼ ] [ 📥 CSV ]
+
+日時      │ status  │ ms   │ tokens  │ input              │ retrieval │ feedback     │ 操作
+─────────────────────────────────────────────────────────────────────────────
+10:25:31  │ ok      │ 1120 │ 380/95  │ ライセンスは？     │ fts5_chun │ 👍0 / 👎0   │ 👍 👎 ⚠️ 詳細 ×
+10:24:18  │ ok      │ 820  │ 412/78  │ ボーナスコード入力 │ fts5      │ 👍0 / 👎0   │ 👍 👎 ⚠️ 詳細 ×
+10:22:05  │ escalated│ 0   │ -/-     │ 出金されない       │ esc:money │ 👍0 / 👎0   │ 👍 👎 ⚠️ 詳細 ×
+</div>
+</div>
+
+<h3>14.3 ワンクリック フィードバック</h3>
+<ol class="steps">
+  <li>AI ログの行で <strong>👍</strong> (良い) / <strong>👎</strong> (悪い) / <strong>⚠️</strong> (重大問題) を即クリック</li>
+  <li>Enter 確認不要、モーダル表示なし — 3 秒完了</li>
+  <li>👎 は後の改善サイクルで Golden Set 昇格候補に</li>
+</ol>
+
+<h3>14.4 詳細モーダル</h3>
+<p>行の「詳細」→ システムプロンプト / full 応答 / エラー / コメント付きフィードバックを編集可能。</p>
+
+<h3>14.5 CSV エクスポート</h3>
+<p><strong>📥 CSV</strong> で全ログをダウンロード。月次レビュー・オフライン分析に。</p>
+</section>
+
+<!-- ========================================================= -->
+<section id="silent-failures">
+<h2>15. AI サイレント失敗 <span class="chip p1">Phase 1</span></h2>
+
+<h3>15.1 目的</h3>
+<p>運用者が明示的に👎を押していない「隠れた失敗」を 3 種類の SQL ビューで自動検出。</p>
+
+<h3>15.2 3 タブ</h3>
+<table>
+<tr><th>タブ</th><th>検出条件</th><th>意味</th></tr>
+<tr><td>即エスカレーション (&lt;120s)</td><td>AI 応答後 120 秒以内に会話が open になった</td><td>AI 回答で顧客が納得せず即人間要求</td></tr>
+<tr><td>同じ質問 (10 分以内)</td><td>同一顧客が類似クエリを 10-600 秒以内に再送</td><td>AI 回答が伝わっていない</td></tr>
+<tr><td>怒り・不満ワード後続</td><td>AI 応答後 10 分以内に顧客が「違う」「詐欺」「返金」等を送信</td><td>AI 対応で炎上傾向</td></tr>
+</table>
+
+<h3>15.3 操作</h3>
+<ol class="steps">
+  <li>タブを選択</li>
+  <li>該当する AI ログの「詳細」で原因分析</li>
+  <li>必要に応じてプロンプト改善 / FAQ 追加 / escalation キーワード拡充</li>
+</ol>
+</section>
+
+<!-- ========================================================= -->
+<section id="prompts">
+<h2>16. AI プロンプト (A/B)</h2>
+
+<p>複数の system prompt を weighted random で選択。A/B テスト基盤。</p>
+
+<h3>現状 (staging-bk)</h3>
+<table>
+<tr><th>id</th><th>名前</th><th>weight</th><th>方針</th></tr>
+<tr><td>1</td><td>default-A-detailed</td><td>50</td><td>詳細・省略せず案内</td></tr>
+<tr><td>2</td><td>default-B-concise</td><td>50</td><td>1〜2文・要点のみ</td></tr>
+<tr><td>5</td><td>default-C-tiered</td><td>0 (待機)</td><td>3段エスカレ UX (Phase 2a)</td></tr>
+</table>
+
+<h3>新規プロンプト追加</h3>
+<ol class="steps">
+  <li>「+ 新規」</li>
+  <li>名前 (ユニーク) + description + system_prompt 本文</li>
+  <li>weight: 0 で追加 → shadow mode や Golden Set で評価 → 勝てば weight 増</li>
+  <li>is_active: true (off だと選ばれない)</li>
+</ol>
+
+<h3>A/B 切替例</h3>
+<pre><code>-- C-tiered を本番導入
+UPDATE ai_prompts SET weight = 30 WHERE name = 'default-C-tiered';
+UPDATE ai_prompts SET weight = 35 WHERE name = 'default-A-detailed';
+UPDATE ai_prompts SET weight = 35 WHERE name = 'default-B-concise';</code></pre>
+</section>
+
+<!-- ========================================================= -->
+<section id="golden-set">
+<h2>17. Golden Set (評価) <span class="chip p2a">Phase 2a</span></h2>
+
+<h3>17.1 目的</h3>
+<p>プロンプト・KB 変更時の accuracy regression 検出用ゴールデンセット。195 件の想定 Q&A ペア。</p>
+
+<h3>17.2 画面</h3>
+<p>sidebar「Golden Set (評価)」。カテゴリ別にグループ化され、 直近 30 日の LLM-as-Judge 評価サマリが上部に表示。</p>
+
+<h3>17.3 エントリ追加</h3>
+<ol class="steps">
+  <li><strong>+ 新規追加</strong></li>
+  <li>カテゴリ: 入出金 / ボーナス / アカウント / コンプライアンス / 雑談など</li>
+  <li>質問: 顧客想定入力 (例: <code>出金にかかる時間は？</code>)</li>
+  <li>模範回答 (任意): LLM-as-Judge が参考にする理想回答</li>
+  <li>必須含有キーワード (JSON): <code>["通常","1営業日"]</code></li>
+  <li>禁止ワード (JSON): <code>["必ず","絶対","24時間以内に"]</code></li>
+  <li>期待される挙動: <strong>人間エスカレ</strong> チェックを ON/OFF</li>
+  <li>作成</li>
+</ol>
+
+<h3>17.4 評価実行</h3>
+<p>CLI から Gemini を直叩きして全プロンプトを評価:</p>
+<pre><code>export GEMINI_API_KEY=&lt;staging-bk secret&gt;
+node scripts/eval-golden-set.mjs              # keyword only
+node scripts/eval-golden-set.mjs --judge      # LLM-as-Judge も
+node scripts/eval-golden-set.mjs --limit=30   # smoke test 30 件</code></pre>
+
+<h3>17.5 結果の見方</h3>
+<table>
+<tr><th>指標</th><th>目標</th><th>意味</th></tr>
+<tr><td>avg keyword</td><td>90%+</td><td>必須キーワード含有率</td></tr>
+<tr><td>violations</td><td>0</td><td>禁止ワード出現回数</td></tr>
+<tr><td>esc match</td><td>n/n</td><td>エスカレ判断の正答数/全件</td></tr>
+<tr><td>avg judge</td><td>4.0+</td><td>LLM判定スコア 1-5</td></tr>
+</table>
+</section>
+
+<!-- ========================================================= -->
+<section id="shadow">
+<h2>18. Shadow Mode <span class="chip p2a">Phase 2a</span></h2>
+
+<h3>18.1 目的</h3>
+<p>ユーザーに見せず候補プロンプトを並列実行してログだけ取る。2-3 本の新 prompt を本番顧客の質問に当てて比較評価。</p>
+
+<h3>18.2 画面</h3>
+<div class="screen-mock">
+<div class="title-bar"><span class="dot"></span><span class="dot y"></span><span class="dot g"></span> /admin/#shadow-settings</div>
+<div class="body">
+☐ Shadow mode 有効 (ai.shadow_mode.enabled)
+Shadow prompt IDs (カンマ区切り、最大 2 本): [          ]
+[ 💾 保存 ]
+
+利用可能なプロンプト:
+id │ 名前                │ active │ weight
+1  │ default-A-detailed  │ ✓      │ 50
+2  │ default-B-concise   │ ✓      │ 50
+5  │ default-C-tiered    │ ✓      │ 0
+</div>
+</div>
+
+<h3>18.3 有効化手順</h3>
+<ol class="steps">
+  <li><strong>Shadow mode 有効</strong> にチェック</li>
+  <li>Shadow prompt IDs に評価したい prompt ID をカンマ区切りで入力 (例: <code>5</code>)</li>
+  <li><strong>💾 保存</strong></li>
+  <li>以降、ユーザー応答は primary prompt (A or B) のまま、候補 prompt 5 が <code>ai_logs</code> に <code>is_shadow=1</code> で並列記録される</li>
+  <li>数日後、Golden Set eval で比較して勝敗判定</li>
+</ol>
+
+<div class="warn">
+<strong>コスト</strong>: LLM 呼び出しが 2-3 倍に。1 prompt shadow だと 2x, 2 prompt で 3x。Gemini Flash Lite なので月 $1 未満だが OFF がデフォルト。
+</div>
+</section>
+
+<!-- ========================================================= -->
+<section id="vectorize">
+<h2>19. Vectorize (Hybrid RAG) <span class="chip p2b">Phase 2b</span></h2>
+
+<h3>19.1 目的</h3>
+<p>Workers AI の <code>@cf/baai/bge-m3</code> で KB chunks を密ベクトル化し、BM25 と RRF 融合で言い換え対応 retrieval。</p>
+
+<h3>19.2 画面</h3>
+<div class="screen-mock">
+<div class="title-bar"><span class="dot"></span><span class="dot y"></span><span class="dot g"></span> /admin/#vectorize</div>
+<div class="body">
+AI binding:           ✅ 有効
+Vectorize binding:    ✅ 有効
+use_vectorize flag:   ⚪ OFF (BM25 only)
+use_chunks flag:      🟢 ON
+
+kind           │ items │ model        │ dim  │ last reindex │ notes
+kb_chunks      │ 0     │ —            │ —    │ —            │ —
+faq_candidates │ 0     │ —            │ —    │ —            │ —
+
+[ 📤 KB chunks を reindex ] [ 🔍 Query テスト ] [ 🟢 Hybrid ON ] [ ⚪ Hybrid OFF ]
+</div>
+</div>
+
+<h3>19.3 初回セットアップ手順</h3>
+<ol class="steps">
+  <li><strong>📤 KB chunks を reindex</strong> クリック</li>
+  <li>確認ダイアログで Yes</li>
+  <li>56 chunks が Workers AI で embed → Vectorize に push (約 30 秒)</li>
+  <li>状態表示が <code>items: 56, model: @cf/baai/bge-m3, dim: 1024</code> に更新</li>
+  <li><strong>🔍 Query テスト</strong> で任意のクエリを入れてヒット具合を確認</li>
+  <li>問題なければ <strong>🟢 Hybrid ON</strong> → feature flag ON</li>
+  <li>以降、全 AI 回答が hybrid_rrf retrieval 経由</li>
+</ol>
+
+<h3>19.4 コスト目安</h3>
+<table>
+<tr><th>項目</th><th>コスト</th></tr>
+<tr><td>初回 reindex (56 chunks × 500 tokens)</td><td>約 $0.0003 (ワンタイム)</td></tr>
+<tr><td>クエリ embed (月 500 req × 50 tokens)</td><td>約 $0.0003 / 月</td></tr>
+<tr><td>Vectorize 保存・クエリ</td><td>1M まで無料枠</td></tr>
+</table>
+
+<h3>19.5 Hybrid OFF に戻す</h3>
+<p><strong>⚪ Hybrid OFF</strong> → BM25 のみに戻る。Vectorize index はそのまま残る。</p>
+</section>
+
+<!-- ========================================================= -->
+<section id="faq-clusters">
+<h2>20. FAQ 候補クラスタ <span class="chip p2b">Phase 2b</span></h2>
+
+<h3>20.1 目的</h3>
+<p>606 の FAQ 候補を意味的クラスタに圧縮して reviewer 負荷を下げる。同じ質問の言い換え バリエーションを 1 つの代表に統合。</p>
+
+<h3>20.2 画面</h3>
+<pre><code>[ 🔄 再クラスタリング ] [ 👁️ Dry-run プレビュー ] [ すべて ] [ promoted のみ ]
+
+id │ 代表質問                      │ size │ 類似度 │ 状態         │ 操作
+1  │ 出金にかかる時間は？          │ 24   │ 0.918  │ 🟢 promoted │ メンバー
+2  │ 入金方法を教えてください       │ 18   │ 0.892  │ 🟢 promoted │ メンバー
+3  │ ログインできない              │ 12   │ 0.874  │ 🟢 promoted │ メンバー
+...
+80 │ (single member)               │ 1    │ 1.000  │ ⚪ small    │ メンバー</code></pre>
+
+<h3>20.3 実行手順</h3>
+<ol class="steps">
+  <li><strong>👁️ Dry-run プレビュー</strong> で効果を先に確認 (予想: 606 → ~80 clusters)</li>
+  <li>問題なければ <strong>🔄 再クラスタリング</strong> で本適用</li>
+  <li><strong>promoted のみ</strong> タブで size ≥ 3 の cluster だけ表示 (レビュー対象)</li>
+  <li>各 cluster の <strong>メンバー</strong> でバリエーションを確認</li>
+  <li>代表質問に基づいて FAQ 作成 or 既存 FAQ に追記</li>
+</ol>
+
+<div class="tip">
+<strong>期待効果</strong> (Data Engineer 専門家試算): FAQ 採択率 3% (19/606) → 40%+ に改善。
+</div>
+</section>
+
+<!-- ========================================================= -->
+<section id="staff">
+<h2>21. スタッフ管理</h2>
+
+<p>オペレーター/管理者アカウントの CRUD。現在 5 人。</p>
+<table>
+<tr><th>Role</th><th>権限</th></tr>
+<tr><td>admin</td><td>全機能</td></tr>
+<tr><td>agent</td><td>会話対応 + ラベル + テンプレ (書込 admin のみ)</td></tr>
+<tr><td>viewer</td><td>閲覧のみ</td></tr>
+</table>
+</section>
+
+<section id="teams">
+<h2>22. チーム</h2>
+<p>スタッフのグループ化 (将来の会話自動アサイン用)。現在 1 チーム。</p>
+</section>
+
+<!-- ========================================================= -->
+<section id="gas-urls">
+<h2>23. GAS URL 設定</h2>
+
+<h3>23.1 目的</h3>
+<p>4 種の GAS Webhook URL をデプロイなしで切り替え。env_overrides テーブルで管理、30 秒キャッシュ + 書込時即反映。</p>
+
+<h3>23.2 対象 URL (allowlist)</h3>
+<table>
+<tr><th>key</th><th>用途</th></tr>
+<tr><td><code>GAS_BOT_WEBHOOK_URL</code></td><td>PayPay 入金 (gas-paypay-bot-v3.0.3)</td></tr>
+<tr><td><code>BANK_TRANSFER_BOT_WEBHOOK_URL</code></td><td>銀行振込 + ATM (gas-bank-bot-v2.0)</td></tr>
+<tr><td><code>EC_DEPOSIT_BOT_WEBHOOK_URL</code></td><td>コンビニ (gas-ec-bot-v2.3)</td></tr>
+<tr><td><code>BONUS_CODE_WEBHOOK_URL</code></td><td>ボーナス (gas-bonus-code-v9.4)</td></tr>
+<tr><td><code>OPERATOR_ATTACHMENT_WEBHOOK_URL</code></td><td>操作者添付通知 (内部)</td></tr>
+</table>
+
+<h3>23.3 更新手順</h3>
+<ol class="steps">
+  <li>key の右「編集」</li>
+  <li>新 URL を入力</li>
+  <li>保存 → 全 Worker instance に 30 秒以内に伝播</li>
+  <li><strong>🩺 Ping</strong> ボタンで到達確認</li>
+</ol>
+</section>
+
+<!-- ========================================================= -->
+<section id="webhook-test">
+<h2>24. Bot テスト</h2>
+<p>任意のテキストを bot 判定 pipeline に流して動作確認するデバッグツール。</p>
+</section>
+
+<section id="audit-log">
+<h2>25. 監査ログ</h2>
+<p>管理者操作 (test_bot / backup / gas_url.update 等) の履歴 188 件。GDPR・SOC2 対応。</p>
+</section>
+
+<section id="error-log">
+<h2>26. エラーログ</h2>
+<p>Worker 内で発生したエラー (Gemini 503 / webhook 失敗 / etc) の履歴。週次レビュー推奨。</p>
+</section>
+
+<!-- ========================================================= -->
+<section id="workflow-bonus">
+<h2>27. ワークフロー: 新コード追加手順 (完全版)</h2>
+
+<ol class="steps">
+  <li><strong>Admin UI 「ボーナスコード」</strong> → <strong>+ 新規作成</strong></li>
+  <li>type_key, 表示名, 受付コード, 成功メッセージ本文, 選択肢 を入力</li>
+  <li>GAS type に BC_ + suffix (例: 夏祭り) を入力</li>
+  <li><strong>作成</strong></li>
+  <li>Google Spreadsheet を開く → 新タブ <code>BC_夏祭り</code> を作成 (行1:タイトル, 行2:ヘッダー)</li>
+  <li>顧客として widget で該当コードを入力 → 動作確認</li>
+  <li>Spreadsheet に記録されることを確認</li>
+  <li>完了</li>
+</ol>
+
+<div class="tip">
+<strong>v9.4 Generic Handler</strong>: GAS 側コード変更・再デプロイ は <strong>不要</strong>。タブ作成だけで OK。
+</div>
+</section>
+
+<!-- ========================================================= -->
+<section id="workflow-ai-review">
+<h2>28. ワークフロー: 日次 AI レビュー</h2>
+
+<ol class="steps">
+  <li>朝一で <strong>/admin/#ai-logs</strong> を開く</li>
+  <li>「status = error」でフィルタ → 前日の失敗を確認</li>
+  <li><strong>/admin/#ai-silent-failures</strong> の 3 タブを巡回:
+    <ul>
+      <li>即エスカレーション → AI 回答で納得しなかった顧客</li>
+      <li>同じ質問 → AI 回答が伝わらなかったパターン</li>
+      <li>怒り後続 → 炎上リスク</li>
+    </ul>
+  </li>
+  <li>👎 や ⚠️ を適宜付与</li>
+  <li>週次: 👎 ログのクラスタリング → プロンプト改善 or FAQ 追加</li>
+</ol>
+</section>
+
+<!-- ========================================================= -->
+<section id="workflow-hybrid">
+<h2>29. ワークフロー: Hybrid retrieval 有効化</h2>
+
+<ol class="steps">
+  <li><strong>/admin/#vectorize</strong> を開く</li>
+  <li>AI binding + Vectorize binding が ✅ 有効になっていることを確認</li>
+  <li><strong>📤 KB chunks を reindex</strong></li>
+  <li>完了メッセージ (items: 56) を確認</li>
+  <li><strong>🔍 Query テスト</strong> で「入金方法」等を試して妥当な chunk が返ることを確認</li>
+  <li><strong>🟢 Hybrid ON</strong></li>
+  <li>Widget で数件試行 → <strong>/admin/#ai-logs</strong> の retrieval 列が <code>hybrid_rrf</code> になることを確認</li>
+  <li>1 週間モニタリング → 成果指標を比較 → Golden Set で評価</li>
+</ol>
+</section>
+
+<!-- ========================================================= -->
+<section id="workflow-eval">
+<h2>30. ワークフロー: Golden Set 評価実行</h2>
+
+<ol class="steps">
+  <li>ローカル shell で GEMINI_API_KEY を設定
+    <pre><code>export GEMINI_API_KEY=&lt;staging-bk secret の値&gt;</code></pre>
+  </li>
+  <li>smoke test (30 件):
+    <pre><code>node scripts/eval-golden-set.mjs --limit=30</code></pre>
+  </li>
+  <li>結果サマリを確認 → 致命的な数字 (violations > 0 等) がなければ進む</li>
+  <li>本評価 (全 195 件 + LLM-as-Judge):
+    <pre><code>node scripts/eval-golden-set.mjs --judge</code></pre>
+  </li>
+  <li><strong>/admin/#golden-set</strong> の「直近 30 日評価サマリ」で prompt 別の avg keyword / judge スコア確認</li>
+  <li>勝ち prompt を weight 増、負け prompt を weight 減</li>
+</ol>
+</section>
+
+<!-- ========================================================= -->
+<section id="troubleshooting">
+<h2>31. トラブルシュート</h2>
+
+<table>
+<tr><th>症状</th><th>原因・対処</th></tr>
+<tr><td>ログインできない</td><td>パスワード確認 → 5 回失敗ロック中なら 15 分待つ → それでもダメなら <code>init-admin.mjs</code> で再発行</td></tr>
+<tr><td>AI が「担当者におつなぎ」ばかり返す</td><td>(1) GEMINI_API_KEY 設定確認 (2) escalation 辞書が過剰でないか /admin/#ai-silent-failures で確認</td></tr>
+<tr><td>ボーナスコードが反応しない</td><td>(1) 管理画面で該当コードが is_active 確認 (2) Flow state が bonus submission を block していないか (deposit sub-flow 中は suppress)</td></tr>
+<tr><td>GAS への記録が0件</td><td>(1) GAS URL 設定確認 (2) 🩺 Ping で疎通確認 (3) GAS 側の実行ログ確認</td></tr>
+<tr><td>Vectorize reindex が失敗</td><td>Workers AI 有効なアカウントか確認 → アカウントの AI 有効化が必要</td></tr>
+<tr><td>AI 回答が遅い (&gt; 3s)</td><td>(1) Gemini 側の負荷 (retry) (2) KB chunks が多すぎて context 肥大 → MAX_CONTEXT_FAQ/KB を調整</td></tr>
+<tr><td>Widget が開かない</td><td>(1) CORS 設定確認 (埋込先ドメインが allowlist にあるか) (2) widget.js の version 番号が最新か</td></tr>
+</table>
+</section>
+
+<!-- ========================================================= -->
+<section id="glossary">
+<h2>32. 用語集</h2>
+
+<table>
+<tr><th>用語</th><th>意味</th></tr>
+<tr><td>BM25</td><td>テキスト検索の古典的ランキングアルゴリズム (SQLite FTS5 で利用)</td></tr>
+<tr><td>RRF</td><td>Reciprocal Rank Fusion — 複数検索結果の統合手法</td></tr>
+<tr><td>Vectorize</td><td>Cloudflare の密ベクトル検索サービス</td></tr>
+<tr><td>bge-m3</td><td>Workers AI 多言語埋め込みモデル (1024 次元)</td></tr>
+<tr><td>Shadow mode</td><td>候補 prompt を並列実行・ログ取得 (ユーザー非表示)</td></tr>
+<tr><td>Escalation gate</td><td>AI 前に特定キーワードを検出して人間にエスカレ</td></tr>
+<tr><td>RG (Responsible Gambling)</td><td>依存症対策対応。法規制要対応</td></tr>
+<tr><td>Dead-loop</td><td>顧客が同じ質問を繰り返す状態 (AI 回答が伝わっていない)</td></tr>
+<tr><td>Silver 層</td><td>Bronze (raw) → Silver (cleansed/clustered) → Gold (reviewer-approved) の ETL 中間層</td></tr>
+<tr><td>LLM-as-Judge</td><td>別 LLM を使って回答品質を 1-5 で採点する評価手法</td></tr>
+<tr><td>FTS5</td><td>SQLite の全文検索拡張</td></tr>
+<tr><td>PBKDF2</td><td>パスワードハッシュアルゴリズム (100k iterations 使用)</td></tr>
+<tr><td>PII masker</td><td>メール/電話/口座番号等の個人情報を LLM 送信前にマスク</td></tr>
+</table>
+</section>
+
+<footer style="margin-top: 80px; padding-top: 32px; border-top: 1px solid var(--border); color: var(--muted); font-size: 13px;">
+<p>📖 Manual version: 2026-04-23 | Phase 1 + 2a + 2b 対応 | Worker version: c2b63b1c-...</p>
+<p>📂 関連ドキュメント:</p>
+<ul>
+  <li><a class="extlink" href="https://sloten-standalone-staging-bk.rcc-aoki.workers.dev/admin/">/admin/ (管理画面)</a></li>
+  <li><a class="extlink" href="https://sloten-standalone-staging-bk.rcc-aoki.workers.dev/operator/">/operator/ (オペレータ UI)</a></li>
+  <li><a class="extlink" href="https://sloten-standalone-staging-bk.rcc-aoki.workers.dev/widget/">/widget/ (顧客チャット)</a></li>
+</ul>
+</footer>
+
+  </main>
+</div>
+
+<script>
+  // Highlight active section in TOC on scroll
+  const sections = document.querySelectorAll('section[id]');
+  const tocLinks = document.querySelectorAll('nav.toc a');
+  function updateActive() {
+    let active = null;
+    const scrollPos = window.scrollY + 100;
+    for (const s of sections) {
+      if (s.offsetTop <= scrollPos) active = s.id;
+    }
+    tocLinks.forEach(l => {
+      l.classList.toggle('active', l.getAttribute('href') === '#' + active);
+    });
+  }
+  window.addEventListener('scroll', updateActive);
+  updateActive();
+</script>
+
+</body>
+</html>

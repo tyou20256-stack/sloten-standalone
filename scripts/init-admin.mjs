@@ -1,17 +1,24 @@
 #!/usr/bin/env node
 // Create (or reset) an admin staff_member.
 // Usage:
-//   node scripts/init-admin.mjs admin@example.com [--remote]
+//   node scripts/init-admin.mjs admin@example.com [--remote] [--config=wrangler.staging-bk.toml]
 //
 // Generates a random 22-char password, PBKDF2-hashes it, upserts the row,
 // and prints the password to stdout once. Save it — it's not retrievable later.
+//
+// Target DB is inferred from --config: staging-bk.toml → sloten_standalone_db_staging_bk,
+// otherwise default sloten_standalone_db (production).
 
 import { execSync } from 'node:child_process';
 
 const args = process.argv.slice(2);
 const remote = args.includes('--remote');
 const email = args.find((a) => !a.startsWith('--'));
-const DB = 'sloten_standalone_db';
+const configArg = args.find((a) => a.startsWith('--config=')) || args.find((a) => a.startsWith('--config '));
+const configPath = configArg ? configArg.replace(/^--config=?/, '').trim() : null;
+const DB = configPath && configPath.includes('staging-bk')
+  ? 'sloten_standalone_db_staging_bk'
+  : 'sloten_standalone_db';
 
 if (!email || !email.includes('@')) {
   console.error('Usage: node scripts/init-admin.mjs admin@example.com [--remote]');
@@ -58,8 +65,9 @@ ON CONFLICT(email) DO UPDATE SET
 `.trim();
 
   const flags = remote ? '--remote' : '--local';
+  const configFlag = configPath ? ` --config ${configPath}` : '';
   try {
-    execSync(`wrangler d1 execute ${DB} ${flags} --command=${JSON.stringify(sql)}`, { stdio: 'pipe' });
+    execSync(`wrangler d1 execute ${DB}${configFlag} ${flags} --command=${JSON.stringify(sql)}`, { stdio: 'pipe' });
   } catch (e) {
     console.error('DB execute failed:', e.stdout?.toString() || e.message);
     process.exit(1);
