@@ -8,10 +8,13 @@ import { recordAiCall } from './handlers/ai-logs.mjs';
 import { pickActivePrompt } from './handlers/ai-prompts.mjs';
 import { findKeywordMenu, findFallbackMenu, menuToMessagePayload } from './handlers/bot-menus.mjs';
 import { maskPII } from './pii-masker.mjs';
-import { filterResponse, detectInputThreat } from './responseFilter.mjs';
+import { filterResponse, detectInputThreat, detectOverPromise, detectPersonalDataRequest } from './responseFilter.mjs';
+import { retrieveContext } from './retrieval.mjs';
+import { decideEscalation } from './escalation.mjs';
+import { scheduleShadowCalls } from './shadow.mjs';
 
-const MAX_CONTEXT_FAQ = 15;
-const MAX_CONTEXT_KB = 8;
+const MAX_CONTEXT_FAQ = 10;   // FTS5 top-K — lower than legacy 15 to raise density
+const MAX_CONTEXT_KB = 6;     // FTS5 top-K — lower than legacy 8 to raise density
 
 function buildSystemPrompt(faqRows, kbRows, header) {
   const faqText = faqRows.slice(0, MAX_CONTEXT_FAQ)
@@ -49,16 +52,14 @@ function buildSystemPrompt(faqRows, kbRows, header) {
   ].join('\n');
 }
 
-async function loadContext(env, tenantId) {
-  const [faq, kb] = await Promise.all([
-    env.DB.prepare(
-      'SELECT question, answer, category FROM faq WHERE tenant_id = ? AND is_active = 1 ORDER BY priority DESC, usage_count DESC LIMIT ?'
-    ).bind(tenantId, MAX_CONTEXT_FAQ * 2).all(),
-    env.DB.prepare(
-      'SELECT title, content FROM knowledge_sources WHERE is_active = 1 ORDER BY priority DESC, id DESC LIMIT ?'
-    ).bind(MAX_CONTEXT_KB * 2).all(),
-  ]);
-  return { faqRows: faq.results || [], kbRows: kb.results || [] };
+// Retrieval moved to src/retrieval.mjs — FTS5 BM25 when available, priority
+// fallback otherwise. This function is kept as a thin wrapper so the adapter
+// has a single call site.
+async function loadContext(env, tenantId, userQuery) {
+  return retrieveContext(env, tenantId, userQuery, {
+    faqLimit: MAX_CONTEXT_FAQ,
+    kbLimit: MAX_CONTEXT_KB,
+  });
 }
 
 async function callGemini(apiKey, system, userMessage, model = 'gemini-2.5-flash-lite') {
@@ -75,8 +76,14 @@ async function callGemini(apiKey, system, userMessage, model = 'gemini-2.5-flash
   });
   if (!r.ok) throw new Error(`Gemini HTTP ${r.status}: ${await r.text()}`);
   const data = await r.json();
-  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-  return text.trim();
+  const text = (data?.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
+  // Capture token usage for cost tracking and per-prompt analysis.
+  const usage = data?.usageMetadata || {};
+  return {
+    text,
+    tokens_in: usage.promptTokenCount ?? null,
+    tokens_out: usage.candidatesTokenCount ?? null,
+  };
 }
 
 async function callAnthropic(apiKey, system, userMessage, model = 'claude-haiku-4-5') {
@@ -96,11 +103,46 @@ async function callAnthropic(apiKey, system, userMessage, model = 'claude-haiku-
   });
   if (!r.ok) throw new Error(`Anthropic HTTP ${r.status}: ${await r.text()}`);
   const data = await r.json();
-  const text = data?.content?.[0]?.text || '';
-  return text.trim();
+  const text = (data?.content?.[0]?.text || '').trim();
+  return {
+    text,
+    tokens_in: data?.usage?.input_tokens ?? null,
+    tokens_out: data?.usage?.output_tokens ?? null,
+  };
 }
 
-export async function generateBotReply(env, { conversationId, tenantId, customerMessage, ctx }) {
+export async function generateBotReply(env, { conversationId, tenantId, customerMessage, ctx, history }) {
+  // 0) Hard escalation — money / legal / account-freeze / RG / anger keywords
+  //    bypass AI entirely and return a canned safe response. The caller is
+  //    expected to also flip conversation.status → 'open' on handoff=true.
+  const escalation = decideEscalation(customerMessage, history || []);
+  if (escalation.shouldEscalate) {
+    // Record this as an ai_log even though we skipped the LLM — so operators
+    // can see why escalation fired and build Golden Set from it.
+    const logPromise = recordAiCall(env, {
+      tenant_id: tenantId,
+      conversation_id: conversationId,
+      provider: 'n/a',
+      model: 'escalation',
+      system_prompt: 'escalation',
+      input: maskPII(customerMessage || ''),
+      output: escalation.responseText,
+      latency_ms: 0,
+      status: 'escalated',
+      error_message: null,
+      prompt_id: null,
+      escalation_reason: escalation.reason,
+    });
+    if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(logPromise);
+    else await logPromise;
+    return {
+      content: escalation.responseText,
+      content_type: 'text',
+      handoff: true,
+      escalation_reason: escalation.reason,
+    };
+  }
+
   // 1) Keyword menu short-circuit — if the user's message matches a configured
   //    regex, skip the LLM entirely and return a menu instead. Much faster and
   //    zero AI cost for well-known intents.
@@ -116,7 +158,9 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
   const model = provider === 'anthropic'
     ? (env.ANTHROPIC_MODEL || 'claude-haiku-4-5')
     : (env.GEMINI_MODEL || 'gemini-2.5-flash-lite');
-  const { faqRows, kbRows } = await loadContext(env, tenantId);
+  // FTS5 BM25 retrieval (or priority fallback). User query drives relevance.
+  const retrieval = await loadContext(env, tenantId, customerMessage);
+  const { faqRows, kbRows } = retrieval;
 
   // Choose active prompt via weighted random (A/B testing). Fall back to hard-coded.
   let promptRow = null;
@@ -136,32 +180,57 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
 
   const started = Date.now();
   let text = '';
+  let tokensIn = null;
+  let tokensOut = null;
   let status = 'ok';
   let errorMessage = null;
+  let overPromiseHits = null;
+  let outputBlockedCategory = null;
 
   try {
     // PII-masked input is sent to the LLM too — never forward raw emails/
     // phone numbers / account IDs to third-party providers.
+    let result;
     if (provider === 'anthropic') {
       if (!env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY not set');
-      text = await callAnthropic(env.ANTHROPIC_API_KEY, system, maskedInput, model);
+      result = await callAnthropic(env.ANTHROPIC_API_KEY, system, maskedInput, model);
     } else {
       if (!env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not set');
-      text = await callGemini(env.GEMINI_API_KEY, system, maskedInput, model);
+      result = await callGemini(env.GEMINI_API_KEY, system, maskedInput, model);
     }
+    text = result.text || '';
+    tokensIn = result.tokens_in;
+    tokensOut = result.tokens_out;
     if (!text) status = 'empty';
   } catch (e) {
     status = 'error';
     errorMessage = e.message;
   }
 
-  // Log (best-effort — never block reply on log failure)
-  // system_prompt is NOT persisted verbatim to avoid KB content leaking via
-  // CSV exports. The prompt_id + truncated header snippet is enough to
-  // reconstruct which variant was used.
-  // Use ctx.waitUntil so the write survives response return on short-lived
-  // Worker isolates; if ctx isn't provided, fall back to awaiting inline.
-  const logPromise = recordAiCall(env, {
+  // Output safety filter — block LLM responses that mention competitors,
+  // leak internal info, or provide gambling/legal advice. Soft-mask also
+  // runs to replace over-promise words (必ず/100% etc.) inline.
+  if (text) {
+    const filtered = filterResponse(text);
+    if (!filtered.safe) {
+      text = filtered.response;
+      outputBlockedCategory = filtered.blockedCategory;
+      status = 'filtered';
+    } else if (filtered.blockedCategory === 'over_promise_soft_mask') {
+      text = filtered.response;
+      overPromiseHits = filtered.overPromiseHits;
+    }
+    // Additional guard: AI shouldn't ask for passwords / card numbers.
+    if (detectPersonalDataRequest(text)) {
+      text = 'セキュリティ上、機密情報はチャットではお預かりできません。担当者におつなぎいたします。';
+      outputBlockedCategory = 'personal_data_request';
+      status = 'filtered';
+    }
+  }
+
+  // Record primary with retrieval trace + tokens + over-promise audit.
+  // We await this (not waitUntil) so primaryLogId is known for shadow linking.
+  const primaryLogId = await recordAiCall(env, {
     tenant_id: tenantId,
     conversation_id: conversationId,
     provider,
@@ -173,20 +242,30 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
     status,
     error_message: errorMessage,
     prompt_id: promptRow?.id || null,
+    tokens_in: tokensIn,
+    tokens_out: tokensOut,
+    retrieval_trace: JSON.stringify({
+      ...retrieval.trace,
+      over_promise_hits: overPromiseHits,
+      output_blocked: outputBlockedCategory,
+    }),
   });
-  if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(logPromise);
-  else await logPromise;
+
+  // Shadow mode (Phase 2 D): fire-and-forget candidate prompt evaluation.
+  // Uses ctx.waitUntil so user latency is unaffected. Off by default —
+  // toggle via feature_flags `ai.shadow_mode.enabled` = '1'.
+  scheduleShadowCalls(env, ctx, {
+    primaryLogId,
+    tenantId,
+    conversationId,
+    activePromptId: promptRow?.id || null,
+    buildSystemPrompt: (header) => buildSystemPrompt(faqRows, kbRows, header),
+    maskedInput,
+    provider,
+    model,
+  });
 
   if (status === 'error') throw new Error(errorMessage);
-
-  // Output safety filter — block LLM responses that mention competitors,
-  // leak internal info, or provide gambling/legal advice.
-  if (text) {
-    const filtered = filterResponse(text);
-    if (!filtered.safe) {
-      text = filtered.response; // Replace with safe fallback
-    }
-  }
 
   if (!text) {
     // 2) Empty AI response — try fallback menu, otherwise plain handoff text.

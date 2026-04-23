@@ -1,0 +1,205 @@
+// src/handlers/vectorize.mjs
+// Workers AI + Vectorize integration (HANDOFF/ai-accuracy-discussion/01-ai-engineer-rag.md §B, §C)
+//
+// Phase 2b provides:
+//   POST /api/admin/vectorize/reindex  — (re)embed knowledge_chunks + upsert
+//   POST /api/admin/vectorize/query    — dev/test endpoint for BM25 vs vector compare
+//   GET  /api/admin/vectorize/state    — index status (last reindex, count, dim)
+//
+// All endpoints are admin-only (index.mjs wires via requireAdminRole).
+
+import { ok, err, parseJson } from '../json.mjs';
+
+const EMBED_MODEL = '@cf/baai/bge-m3';
+const EMBED_DIM = 1024;
+const BATCH_SIZE = 50;  // Workers AI tolerates up to 100/request, 50 keeps memory bounded.
+
+async function embed(env, texts) {
+  if (!env.AI) throw new Error('Workers AI binding (env.AI) not configured');
+  if (!Array.isArray(texts) || texts.length === 0) return [];
+  // env.AI.run returns { data: number[][] } for embedding models.
+  const resp = await env.AI.run(EMBED_MODEL, { text: texts });
+  const out = resp?.data || [];
+  if (out.length !== texts.length) {
+    throw new Error(`embed shape mismatch: expected ${texts.length}, got ${out.length}`);
+  }
+  return out;
+}
+
+// POST /api/admin/vectorize/reindex
+//   body: { kind: 'kb_chunks' | 'faq_candidates', force?: boolean }
+export async function vectorizeReindex(request, env, corsHeaders) {
+  if (!env.VECTORIZE) return err('Vectorize binding not configured', 500, corsHeaders);
+  const { body, response } = await parseJson(request, corsHeaders);
+  if (response) return response;
+  const kind = body.kind || 'kb_chunks';
+  const force = !!body.force;
+
+  let rows = [];
+  if (kind === 'kb_chunks') {
+    const { results } = await env.DB.prepare(
+      `SELECT id, content, heading_path, content_hash FROM knowledge_chunks
+        WHERE content IS NOT NULL AND length(content) > 50`,
+    ).all();
+    rows = (results || []).map((r) => ({
+      id: `kb_${r.id}`,
+      text: r.content,
+      metadata: {
+        kind: 'kb_chunk',
+        source_id: r.id,
+        heading: r.heading_path || '',
+      },
+      hashColumn: 'content_hash',
+      dbId: r.id,
+    }));
+  } else if (kind === 'faq_candidates') {
+    const { results } = await env.DB.prepare(
+      `SELECT id, question, embedding_hash FROM faq_candidates
+        WHERE question IS NOT NULL AND length(question) > 4 AND status = 'pending'`,
+    ).all();
+    rows = (results || []).map((r) => ({
+      id: `faq_${r.id}`,
+      text: r.question,
+      metadata: { kind: 'faq_candidate', candidate_id: r.id },
+      hashColumn: 'embedding_hash',
+      dbId: r.id,
+    }));
+  } else {
+    return err('kind must be kb_chunks or faq_candidates', 400, corsHeaders);
+  }
+
+  if (rows.length === 0) {
+    return ok({ success: true, kind, embedded: 0, note: 'nothing to embed' }, corsHeaders);
+  }
+
+  // Batched embedding + upsert
+  let totalEmbedded = 0;
+  let totalTokens = 0;
+  const errors = [];
+  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+    const batch = rows.slice(i, i + BATCH_SIZE);
+    try {
+      const vectors = await embed(env, batch.map((r) => r.text.slice(0, 2000)));
+      const upsertPayload = batch.map((r, idx) => ({
+        id: r.id,
+        values: vectors[idx],
+        metadata: r.metadata,
+      }));
+      await env.VECTORIZE.upsert(upsertPayload);
+      totalEmbedded += batch.length;
+      totalTokens += batch.reduce((s, r) => s + Math.ceil(r.text.length * 0.65), 0);
+    } catch (e) {
+      errors.push({ batch_start: i, error: e.message });
+      console.warn('[vectorize:reindex]', e.message);
+    }
+  }
+
+  // Record state
+  await env.DB.prepare(
+    `UPDATE vectorize_index_state
+        SET last_reindex_at = datetime('now'),
+            item_count = ?,
+            embedding_model = ?,
+            embedding_dim = ?,
+            notes = ?
+      WHERE kind = ?`,
+  ).bind(
+    totalEmbedded,
+    EMBED_MODEL,
+    EMBED_DIM,
+    errors.length ? `partial: ${errors.length} batch errors` : 'ok',
+    kind,
+  ).run();
+
+  return ok({
+    success: true,
+    kind,
+    embedded: totalEmbedded,
+    total: rows.length,
+    tokens_approx: totalTokens,
+    errors: errors.length ? errors : undefined,
+    model: EMBED_MODEL,
+  }, corsHeaders);
+}
+
+// POST /api/admin/vectorize/query
+//   body: { text: string, top_k?: number, kind?: 'kb_chunk' | 'faq_candidate' }
+export async function vectorizeQuery(request, env, corsHeaders) {
+  if (!env.VECTORIZE || !env.AI) return err('AI/Vectorize bindings not configured', 500, corsHeaders);
+  const { body, response } = await parseJson(request, corsHeaders);
+  if (response) return response;
+  const text = String(body.text || '').trim();
+  if (!text) return err('text required', 400, corsHeaders);
+  const topK = Math.min(body.top_k || 8, 30);
+  const filter = body.kind ? { kind: body.kind } : undefined;
+
+  try {
+    const [embeddings] = await embed(env, [text]);
+    const result = await env.VECTORIZE.query(embeddings, { topK, filter, returnMetadata: 'all' });
+    return ok({
+      success: true,
+      matches: (result?.matches || []).map((m) => ({
+        id: m.id,
+        score: m.score,
+        metadata: m.metadata,
+      })),
+    }, corsHeaders);
+  } catch (e) {
+    return err(`vectorize query failed: ${e.message}`, 500, corsHeaders);
+  }
+}
+
+// GET /api/admin/vectorize/state
+export async function vectorizeState(request, env, corsHeaders) {
+  const { results } = await env.DB.prepare(
+    `SELECT kind, last_reindex_at, item_count, embedding_model, embedding_dim, notes
+       FROM vectorize_index_state`,
+  ).all();
+  const flags = await env.DB.prepare(
+    `SELECT key, value FROM feature_flags
+       WHERE key IN ('retrieval.use_vectorize', 'retrieval.use_chunks')`,
+  ).all();
+  const flagMap = {};
+  for (const r of (flags.results || [])) flagMap[r.key] = r.value;
+  return ok({
+    success: true,
+    ai_binding: !!env.AI,
+    vectorize_binding: !!env.VECTORIZE,
+    state: results || [],
+    flags: flagMap,
+  }, corsHeaders);
+}
+
+// POST /api/admin/vectorize/flags — toggle retrieval strategy flags.
+export async function setVectorizeFlags(request, env, corsHeaders) {
+  const { body, response } = await parseJson(request, corsHeaders);
+  if (response) return response;
+  const allowed = ['retrieval.use_vectorize', 'retrieval.use_chunks'];
+  for (const k of Object.keys(body || {})) {
+    if (!allowed.includes(k)) continue;
+    const val = body[k] === true || body[k] === '1' ? '1' : '0';
+    await env.DB.prepare(
+      `INSERT INTO feature_flags (key, value, updated_at) VALUES (?, ?, datetime('now'))
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+    ).bind(k, val).run();
+  }
+  return ok({ success: true }, corsHeaders);
+}
+
+// Internal helper — called from retrieval.mjs when hybrid mode is on.
+// Returns an array of { id, score, metadata } from Vectorize.
+export async function vectorizeQueryInternal(env, text, opts = {}) {
+  if (!env.VECTORIZE || !env.AI || !text) return null;
+  try {
+    const [vec] = await embed(env, [String(text).slice(0, 2000)]);
+    const result = await env.VECTORIZE.query(vec, {
+      topK: opts.topK || 8,
+      filter: opts.filter,
+      returnMetadata: 'all',
+    });
+    return result?.matches || [];
+  } catch (e) {
+    console.warn('[vectorize:internal]', e.message);
+    return null;
+  }
+}

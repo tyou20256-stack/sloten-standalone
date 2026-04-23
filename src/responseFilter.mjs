@@ -88,7 +88,65 @@ export function filterResponse(aiResponse) {
       }
     }
   }
+  // Secondary pass: over-promise / 景表法 words that don't block the whole reply
+  // but signal quality concern for auditing. We replace inline rather than
+  // swapping the entire message — breaks "必ず" promises without being jarring.
+  const overPromise = detectOverPromise(aiResponse);
+  if (overPromise.detected) {
+    return {
+      safe: true,
+      response: overPromise.masked,
+      overPromiseHits: overPromise.hits,
+      blockedCategory: 'over_promise_soft_mask',
+    };
+  }
   return { safe: true, response: aiResponse };
+}
+
+// --- Phase 1: 過剰約束ワード (景表法優良誤認 / 法的断定 / RG) ------------
+// Rationale: HANDOFF/ai-accuracy-discussion/07-support-responder.md § 3
+// "必ず / 絶対 / 100% / 保証 / 〜円もらえます / 24時間以内に / 即時 / すぐに反映"
+// These should not appear in AI-generated CS replies; if they do, replace with
+// softer hedged wording and log for audit.
+export const OVER_PROMISE_PATTERNS = [
+  { find: /必ず(?=[^\s。、])/g,          replace: '通常は' },
+  { find: /絶対(?:に)?/g,                replace: '基本的に' },
+  { find: /確実に/g,                     replace: '原則として' },
+  { find: /100%/g,                       replace: 'ほぼ' },
+  { find: /保証(?:い?たします|します)/g, replace: 'ご案内いたします' },
+  { find: /即時(?:反映|処理)/g,          replace: 'お早めに反映' },
+  { find: /すぐに反映/g,                 replace: 'お早めに反映' },
+  { find: /24時間以内に/g,               replace: '通常 1 営業日を目安に' },
+  { find: /(?:当選|勝利|勝て|儲か)(?:します|る)/g, replace: 'チャンスがあります' },
+  { find: /\d+円(?:もらえ|差し上げ)/g,   replace: '特典をご案内' },
+];
+
+export function detectOverPromise(text) {
+  if (!text || typeof text !== 'string') return { detected: false, hits: [], masked: text };
+  const hits = [];
+  let masked = text;
+  for (const { find, replace } of OVER_PROMISE_PATTERNS) {
+    const matches = masked.match(find);
+    if (matches && matches.length) {
+      hits.push(...matches.map((m) => ({ match: m, replacement: replace })));
+      masked = masked.replace(find, replace);
+    }
+  }
+  return { detected: hits.length > 0, hits, masked };
+}
+
+// --- Phase 1: Personal data demand — AI が顧客に個人情報を要求するのを防ぐ
+// e.g. "パスワードを教えてください" を AI 出力に含ませない
+export const PERSONAL_DATA_REQUEST_PATTERNS = [
+  /パスワード.{0,10}(?:教え|お伝え|ご記入|送信|入力)/,
+  /暗証番号.{0,10}(?:教え|お伝え|ご記入|送信|入力)/,
+  /(?:銀行)?口座番号.{0,10}(?:教え|お伝え|ご記入|送信)/,
+  /カード番号.{0,10}(?:教え|お伝え|ご記入|送信)/,
+];
+
+export function detectPersonalDataRequest(text) {
+  if (!text) return false;
+  return PERSONAL_DATA_REQUEST_PATTERNS.some((p) => p.test(text));
 }
 
 // ============================================

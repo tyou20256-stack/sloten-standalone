@@ -16,7 +16,7 @@ import {
   handleKnowledgeSourcesPost, handleKnowledgeSourcesPut, handleKnowledgeSourcesDelete,
 } from './handlers/knowledge-sources.mjs';
 import {
-  createContact, getContact, listContacts, listContactConversations,
+  createContact, getContact, listContacts, listContactConversations, updateContact,
 } from './handlers/contacts-native.mjs';
 import {
   createConversation, listConversations, getConversation, updateConversation, markRead,
@@ -28,7 +28,17 @@ import {
 } from './handlers/staff-admin.mjs';
 import { dashboardStats } from './handlers/dashboard.mjs';
 import { exportCsv } from './handlers/export.mjs';
-import { listAiLogs, getAiLog, deleteAiLog, submitFeedback, aiStats } from './handlers/ai-logs.mjs';
+import { listAiLogs, getAiLog, deleteAiLog, submitFeedback, aiStats, listSilentFailures } from './handlers/ai-logs.mjs';
+import {
+  listGoldenSet, createGoldenRow, updateGoldenRow, deleteGoldenRow, evalResults,
+  getShadowConfig, setShadowConfig,
+} from './handlers/golden-set.mjs';
+import {
+  vectorizeReindex, vectorizeQuery, vectorizeState, setVectorizeFlags,
+} from './handlers/vectorize.mjs';
+import {
+  clusterFaqCandidates, listClusters, clusterMembers,
+} from './handlers/faq-clustering.mjs';
 import {
   listTeams, createTeam, updateTeam, deleteTeam, addTeamMember, removeTeamMember,
 } from './handlers/teams.mjs';
@@ -283,6 +293,13 @@ export default {
       // require a contact_token (because the caller doesn't have one yet).
       if (path === '/api/widget/contacts' && method === 'POST') return createContact(request, env, corsHeaders);
 
+      // PATCH /api/widget/contacts/:id — runtime profile update (Chatwoot
+      // `$chatwoot.setUser()` equivalent). Requires contact_token ownership.
+      {
+        const m = path.match(/^\/api\/widget\/contacts\/([^/]+)$/);
+        if (m && method === 'PATCH') return updateContact(request, env, corsHeaders, m[1]);
+      }
+
       // Helper: verify contact_token matches the conversation's contact_id.
       async function verifyWidgetOwnership(conversationId) {
         const token = extractContactToken(request);
@@ -468,6 +485,33 @@ export default {
       // AI logs + feedback (admin only)
       if (path === '/api/ai-logs' && method === 'GET') return requireAdminRole(listAiLogs)(request, env, corsHeaders);
       if (path === '/api/ai-logs/stats' && method === 'GET') return requireAdminRole(aiStats)(request, env, corsHeaders);
+      if (path === '/api/ai-logs/silent-failures' && method === 'GET') return requireAdminRole(listSilentFailures)(request, env, corsHeaders);
+
+      // Phase 2: Golden Set CRUD + eval results + shadow mode settings
+      if (path === '/api/golden-set' && method === 'GET')  return requireAdminRole(listGoldenSet)(request, env, corsHeaders);
+      if (path === '/api/golden-set' && method === 'POST') return requireAdminRole(createGoldenRow)(request, env, corsHeaders);
+      {
+        const m = path.match(/^\/api\/golden-set\/(\d+)$/);
+        if (m && method === 'PATCH')  return requireAdminRole(updateGoldenRow)(request, env, corsHeaders, parseInt(m[1], 10));
+        if (m && method === 'DELETE') return requireAdminRole(deleteGoldenRow)(request, env, corsHeaders, parseInt(m[1], 10));
+      }
+      if (path === '/api/golden-eval' && method === 'GET') return requireAdminRole(evalResults)(request, env, corsHeaders);
+      if (path === '/api/admin/shadow-config' && method === 'GET')  return requireAdminRole(getShadowConfig)(request, env, corsHeaders);
+      if (path === '/api/admin/shadow-config' && method === 'POST') return requireAdminRole(setShadowConfig)(request, env, corsHeaders);
+
+      // Phase 2b: Vectorize reindex + query + state
+      if (path === '/api/admin/vectorize/reindex' && method === 'POST') return requireAdminRole(vectorizeReindex)(request, env, corsHeaders);
+      if (path === '/api/admin/vectorize/query'   && method === 'POST') return requireAdminRole(vectorizeQuery)(request, env, corsHeaders);
+      if (path === '/api/admin/vectorize/state'   && method === 'GET')  return requireAdminRole(vectorizeState)(request, env, corsHeaders);
+      if (path === '/api/admin/vectorize/flags'   && method === 'POST') return requireAdminRole(setVectorizeFlags)(request, env, corsHeaders);
+
+      // Phase 2b: FAQ candidates Silver (clustering)
+      if (path === '/api/admin/faq-candidates/cluster'  && method === 'POST') return requireAdminRole(clusterFaqCandidates)(request, env, corsHeaders);
+      if (path === '/api/admin/faq-candidates/clusters' && method === 'GET')  return requireAdminRole(listClusters)(request, env, corsHeaders);
+      {
+        const m = path.match(/^\/api\/admin\/faq-candidates\/clusters\/(\d+)\/members$/);
+        if (m && method === 'GET') return requireAdminRole(clusterMembers)(request, env, corsHeaders, parseInt(m[1], 10));
+      }
       {
         const m = path.match(/^\/api\/ai-logs\/(\d+)$/);
         if (m && method === 'GET') return requireAdminRole(getAiLog)(request, env, corsHeaders, parseInt(m[1], 10));

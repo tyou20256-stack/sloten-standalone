@@ -11,6 +11,9 @@ import { runFlowForCustomerMessage } from './bot-flows.mjs';
 import { linkAttachmentToMessage, fetchAttachmentsForMessages } from './attachments.mjs';
 import { signAttachmentUrl, baseUrlOf } from '../auth/attachment-signature.mjs';
 import { matchBonusCode, getBonusReply, recordSubmission, forwardToGas } from '../bonus-codes.mjs';
+import { decideEscalation } from '../escalation.mjs';
+import { recordAiCall } from './ai-logs.mjs';
+import { maskPII } from '../pii-masker.mjs';
 import { logError } from '../audit.mjs';
 
 const VALID_SENDER = new Set(['customer', 'bot', 'staff', 'system']);
@@ -174,6 +177,60 @@ export async function sendMessage(request, env, corsHeaders, conversationId, opt
         const fresh = await env.DB.prepare('SELECT * FROM conversations WHERE id = ?').bind(conversationId).first();
         const contact = fresh?.contact_id ? await env.DB.prepare('SELECT * FROM contacts WHERE id = ?').bind(fresh.contact_id).first() : null;
 
+        // 0. Escalation gate (Phase 1+2) — hard keywords / RG / anger / sentiment /
+        //    dead-loop trigger immediate handoff regardless of flow state or
+        //    bonus code match. Dead-loop detection needs the last 3 customer
+        //    messages, so we fetch them here (cheap — indexed query on
+        //    conversation_id + created_at).
+        let escHistory = [];
+        try {
+          const { results } = await env.DB.prepare(
+            `SELECT sender_type, content FROM messages
+              WHERE conversation_id = ? AND sender_type = 'customer'
+              ORDER BY created_at DESC LIMIT 5`,
+          ).bind(conversationId).all();
+          escHistory = (results || []).reverse();
+        } catch (_) { /* best-effort */ }
+        const escalation = decideEscalation(content, escHistory);
+        if (escalation.shouldEscalate) {
+          // Clear any flow_state so the operator starts from a clean slate.
+          if (fresh.flow_state) {
+            await env.DB.prepare(
+              `UPDATE conversations SET flow_state=NULL, status='open', updated_at=datetime('now') WHERE id=?`,
+            ).bind(conversationId).run();
+          } else {
+            await env.DB.prepare(
+              `UPDATE conversations SET status='open', updated_at=datetime('now') WHERE id=?`,
+            ).bind(conversationId).run();
+          }
+          const botMsg = await insertMessage(env, {
+            conversationId,
+            tenantId: conv.tenant_id,
+            senderType: 'bot', senderId: null,
+            content: escalation.responseText,
+            contentType: 'text',
+            contentAttributes: null,
+            isPrivate: false,
+          });
+          botReplies.push(botMsg);
+          // Log the escalation decision for audit (best-effort).
+          const logPromise = recordAiCall(env, {
+            tenant_id: conv.tenant_id,
+            conversation_id: conversationId,
+            provider: 'n/a',
+            model: 'escalation',
+            system_prompt: 'escalation-gate',
+            input: maskPII(content),
+            output: escalation.responseText,
+            latency_ms: 0,
+            status: 'escalated',
+            escalation_reason: escalation.reason,
+          });
+          if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(logPromise);
+          else await logPromise;
+          return created({ success: true, message: msg, bot_reply: botMsg, bot_replies: botReplies }, corsHeaders);
+        }
+
         // 1. Bonus code match — highest priority. Runs even when inside a
         //    flow, because customers are told to "type bonus codes directly
         //    in the chat" even from the menu (see bonus_code_request step).
@@ -273,11 +330,22 @@ export async function sendMessage(request, env, corsHeaders, conversationId, opt
           botReply = botReplies[botReplies.length - 1] || null;
         } else {
           // No flow active — fall back to AI chat.
+          // Load last 6 messages as escalation history (for dead-loop detection).
+          let history = [];
+          try {
+            const { results } = await env.DB.prepare(
+              `SELECT sender_type, content FROM messages
+                WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 6`,
+            ).bind(conversationId).all();
+            history = (results || []).reverse();
+          } catch (_) { /* best-effort */ }
+
           const reply = await generateBotReply(env, {
             conversationId,
             tenantId: conv.tenant_id,
             customerMessage: content,
             ctx,
+            history,
           });
           if (reply && reply.content) {
             botReply = await insertMessage(env, {
@@ -290,6 +358,13 @@ export async function sendMessage(request, env, corsHeaders, conversationId, opt
               isPrivate: false,
             });
             botReplies.push(botReply);
+            // Phase 1: if AI decided escalation, flip conversation to open so
+            // operators pick it up immediately.
+            if (reply.handoff) {
+              await env.DB.prepare(
+                `UPDATE conversations SET status='open', updated_at=datetime('now') WHERE id=?`,
+              ).bind(conversationId).run();
+            }
           }
         }
       } catch (e) {

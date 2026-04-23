@@ -1,0 +1,308 @@
+// src/retrieval.mjs
+// Hybrid retrieval: FTS5 BM25 + (optional) Vectorize dense + RRF fusion.
+// See:
+//   HANDOFF/ai-accuracy-discussion/01-ai-engineer-rag.md §A (BM25), §B (Vectorize), §C (Hybrid RRF)
+//
+// Strategies (in order of preference):
+//   1. hybrid_rrf  — FTS5 + Vectorize, merged via Reciprocal Rank Fusion
+//   2. fts5_chunks — BM25 over knowledge_chunks (finer grain than docs)
+//   3. fts5        — BM25 over faq + knowledge_sources whole-doc
+//   4. legacy      — priority ORDER BY, fallback when FTS missing
+//
+// Feature flags decide which is active:
+//   retrieval.use_vectorize = '1'  → allow hybrid RRF
+//   retrieval.use_chunks    = '1'  → prefer kb_chunks_fts over kb_fts
+
+import { vectorizeQueryInternal } from './handlers/vectorize.mjs';
+
+const FTS_QUERY_MAX_LEN = 200;
+
+// FTS5 tokens: strip punctuation that would be interpreted as operators,
+// lowercase ASCII, and limit length. Individual CJK bigrams handled by the
+// `unicode61 remove_diacritics 2` tokenizer in migration 019.
+function sanitizeFtsQuery(text) {
+  if (!text) return '';
+  const cleaned = String(text)
+    .replace(/["'(){}\[\]\*\^:]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, FTS_QUERY_MAX_LEN);
+  if (!cleaned) return '';
+  // Use each whitespace-separated token as an OR-joined FTS5 query so a user
+  // query like "入金 PayPay 手数料" matches rows mentioning any of the terms.
+  const tokens = cleaned.split(' ').filter((t) => t.length >= 1);
+  if (!tokens.length) return '';
+  return tokens.map((t) => `"${t.replace(/"/g, '""')}"`).join(' OR ');
+}
+
+async function ftsAvailable(env) {
+  try {
+    const r = await env.DB.prepare(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='faq_fts'`,
+    ).first();
+    return !!r;
+  } catch {
+    return false;
+  }
+}
+
+// Phase 2 B: prefer chunk-level retrieval when chunks have been populated
+// (scripts/chunk-knowledge.mjs --apply). Falls back to whole-document kb_fts
+// when the chunks table is empty.
+async function chunksAvailable(env) {
+  try {
+    const flag = await env.DB.prepare(
+      `SELECT value FROM feature_flags WHERE key = 'retrieval.use_chunks'`,
+    ).first();
+    if (flag?.value !== '1') return false;
+    const tbl = await env.DB.prepare(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='kb_chunks_fts'`,
+    ).first();
+    if (!tbl) return false;
+    const cnt = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM knowledge_chunks`,
+    ).first();
+    return (cnt?.n || 0) > 0;
+  } catch {
+    return false;
+  }
+}
+
+// Phase 2b C: hybrid with Vectorize dense retrieval when flag is on.
+async function vectorizeAvailable(env) {
+  if (!env.VECTORIZE || !env.AI) return false;
+  try {
+    const flag = await env.DB.prepare(
+      `SELECT value FROM feature_flags WHERE key = 'retrieval.use_vectorize'`,
+    ).first();
+    if (flag?.value !== '1') return false;
+    const state = await env.DB.prepare(
+      `SELECT item_count FROM vectorize_index_state WHERE kind = 'kb_chunks'`,
+    ).first();
+    return (state?.item_count || 0) > 0;
+  } catch {
+    return false;
+  }
+}
+
+// Reciprocal Rank Fusion — merges 2+ ranked lists into one by summing
+// 1/(k + rank) across sources. k=60 is standard. Output is stable ranking
+// over items present in any input list.
+function rrfFuse(rankedLists, k = 60) {
+  const scores = new Map();
+  const meta = new Map();
+  for (const list of rankedLists) {
+    for (let i = 0; i < list.length; i++) {
+      const item = list[i];
+      const key = item.key;
+      scores.set(key, (scores.get(key) || 0) + 1 / (k + i + 1));
+      if (!meta.has(key)) meta.set(key, item);
+    }
+  }
+  return [...scores.entries()]
+    .map(([key, score]) => ({ ...meta.get(key), rrf_score: score }))
+    .sort((a, b) => b.rrf_score - a.rrf_score);
+}
+
+// Fetch knowledge_chunks by ids in bulk for hybrid path.
+async function fetchChunksById(env, ids) {
+  if (!ids || ids.length === 0) return [];
+  const placeholders = ids.map(() => '?').join(',');
+  const { results } = await env.DB.prepare(
+    `SELECT id, heading_path AS title, content FROM knowledge_chunks WHERE id IN (${placeholders})`,
+  ).bind(...ids).all();
+  // Preserve input order
+  const byId = new Map((results || []).map((r) => [r.id, r]));
+  return ids.map((id) => byId.get(id)).filter(Boolean);
+}
+
+// Legacy retrieval — priority-based top-N. Used as fallback.
+export async function retrievalLegacy(env, tenantId, faqLimit, kbLimit) {
+  const [faq, kb] = await Promise.all([
+    env.DB.prepare(
+      `SELECT id, question, answer, category
+         FROM faq WHERE tenant_id = ? AND is_active = 1
+         ORDER BY priority DESC, usage_count DESC LIMIT ?`,
+    ).bind(tenantId, faqLimit).all(),
+    env.DB.prepare(
+      `SELECT id, title, content
+         FROM knowledge_sources WHERE is_active = 1
+         ORDER BY priority DESC, id DESC LIMIT ?`,
+    ).bind(kbLimit).all(),
+  ]);
+  return {
+    faqRows: faq.results || [],
+    kbRows: kb.results || [],
+    strategy: 'legacy',
+  };
+}
+
+// FTS5 BM25 retrieval — top-K relevance-ranked by user query. Negative
+// bm25() score = more relevant.
+async function retrievalFts5(env, tenantId, userQuery, faqLimit, kbLimit, useChunks = false) {
+  const q = sanitizeFtsQuery(userQuery);
+  if (!q) return null;
+
+  try {
+    const kbQuery = useChunks
+      ? env.DB.prepare(
+          `SELECT c.id, c.heading_path AS title, c.content, bm25(kb_chunks_fts) AS score
+             FROM kb_chunks_fts
+             JOIN knowledge_chunks c ON c.id = kb_chunks_fts.rowid
+            WHERE kb_chunks_fts MATCH ?
+            ORDER BY score LIMIT ?`,
+        ).bind(q, kbLimit)
+      : env.DB.prepare(
+          `SELECT k.id, k.title, k.content, bm25(kb_fts) AS score
+             FROM kb_fts
+             JOIN knowledge_sources k ON k.id = kb_fts.rowid
+            WHERE kb_fts MATCH ?
+              AND k.is_active = 1
+            ORDER BY score LIMIT ?`,
+        ).bind(q, kbLimit);
+
+    const [faq, kb] = await Promise.all([
+      env.DB.prepare(
+        `SELECT f.id, f.question, f.answer, f.category, bm25(faq_fts) AS score
+           FROM faq_fts
+           JOIN faq f ON f.id = faq_fts.rowid
+          WHERE faq_fts MATCH ?
+            AND f.tenant_id = ?
+            AND f.is_active = 1
+          ORDER BY score LIMIT ?`,
+      ).bind(q, tenantId, faqLimit).all(),
+      kbQuery.all(),
+    ]);
+    return {
+      faqRows: faq.results || [],
+      kbRows: kb.results || [],
+      strategy: useChunks ? 'fts5_chunks' : 'fts5',
+      query: q,
+    };
+  } catch (e) {
+    // malformed query — e.g. single control char survived sanitize; fall back
+    console.warn('[retrieval:fts5]', e?.message);
+    return null;
+  }
+}
+
+// Phase 2b: Hybrid retrieval — FTS5 BM25 + Vectorize dense, fused via RRF.
+// Works on knowledge_chunks (kb_chunks_fts + Vectorize index). FAQ still uses
+// FTS5-only (smaller corpus, no embedding investment needed yet).
+async function retrievalHybrid(env, tenantId, userQuery, faqLimit, kbLimit) {
+  const q = sanitizeFtsQuery(userQuery);
+  if (!q) return null;
+  try {
+    // Dense query
+    const denseMatches = await vectorizeQueryInternal(env, userQuery, {
+      topK: kbLimit * 2,
+      filter: { kind: 'kb_chunk' },
+    });
+    // BM25 on chunks
+    const { results: chunkBm25 } = await env.DB.prepare(
+      `SELECT c.id, c.heading_path AS title, c.content, bm25(kb_chunks_fts) AS score
+         FROM kb_chunks_fts
+         JOIN knowledge_chunks c ON c.id = kb_chunks_fts.rowid
+        WHERE kb_chunks_fts MATCH ?
+        ORDER BY score LIMIT ?`,
+    ).bind(q, kbLimit * 2).all();
+    // FAQ FTS5 (unchanged — small corpus)
+    const { results: faqRes } = await env.DB.prepare(
+      `SELECT f.id, f.question, f.answer, f.category, bm25(faq_fts) AS score
+         FROM faq_fts
+         JOIN faq f ON f.id = faq_fts.rowid
+        WHERE faq_fts MATCH ?
+          AND f.tenant_id = ?
+          AND f.is_active = 1
+        ORDER BY score LIMIT ?`,
+    ).bind(q, tenantId, faqLimit).all();
+
+    // RRF fusion on KB chunks
+    const bm25Ranked = (chunkBm25 || []).map((r, i) => ({ key: r.id, rank: i, source: 'bm25' }));
+    const denseRanked = (denseMatches || [])
+      .map((m, i) => ({ key: parseInt(String(m.id).replace(/^kb_/, ''), 10), rank: i, source: 'dense', vec_score: m.score }))
+      .filter((m) => Number.isFinite(m.key));
+    const fused = rrfFuse([bm25Ranked, denseRanked]).slice(0, kbLimit);
+    const fusedIds = fused.map((f) => f.key);
+    const kbRows = await fetchChunksById(env, fusedIds);
+
+    return {
+      faqRows: faqRes || [],
+      kbRows,
+      strategy: 'hybrid_rrf',
+      query: q,
+      trace: {
+        strategy: 'hybrid_rrf',
+        faq_ids: (faqRes || []).map((r) => r.id),
+        kb_ids: fusedIds,
+        query: q,
+        bm25_count: bm25Ranked.length,
+        dense_count: denseRanked.length,
+        top_rrf_score: fused[0]?.rrf_score || 0,
+      },
+    };
+  } catch (e) {
+    console.warn('[retrieval:hybrid]', e.message);
+    return null;
+  }
+}
+
+/**
+ * Top-level retrieval. Uses FTS5 if available and query has content;
+ * falls back to priority-based when FTS misses or on any error.
+ * Returns { faqRows, kbRows, strategy: 'fts5'|'legacy'|'hybrid', trace }.
+ *
+ * trace: { faq_ids: [...], kb_ids: [...], strategy: '...' } — written to
+ * ai_logs.retrieval_trace JSON for later analysis (§ AI Engineer finding D).
+ */
+export async function retrieveContext(env, tenantId, userQuery, opts = {}) {
+  const faqLimit = opts.faqLimit || 10;
+  const kbLimit = opts.kbLimit || 6;
+
+  // Phase 2b: Hybrid RRF path — only when Vectorize + chunks are both active.
+  if (await vectorizeAvailable(env) && await chunksAvailable(env)) {
+    const hybrid = await retrievalHybrid(env, tenantId, userQuery, faqLimit, kbLimit);
+    if (hybrid) return hybrid;
+    // fall through to FTS-only on hybrid failure
+  }
+
+  if (await ftsAvailable(env)) {
+    const useChunks = await chunksAvailable(env);
+    const fts = await retrievalFts5(env, tenantId, userQuery, faqLimit, kbLimit, useChunks);
+    // If FTS returned at least one result we trust it. Otherwise blend with
+    // priority fallback so the LLM still has general-purpose context.
+    if (fts && (fts.faqRows.length > 0 || fts.kbRows.length > 0)) {
+      return {
+        ...fts,
+        trace: {
+          strategy: 'fts5',
+          faq_ids: fts.faqRows.map((r) => r.id),
+          kb_ids: fts.kbRows.map((r) => r.id),
+          query: fts.query,
+        },
+      };
+    }
+    // FTS empty — blend: keep legacy priority top-K so the LLM has something
+    // rather than no grounding at all.
+    const legacy = await retrievalLegacy(env, tenantId, faqLimit, kbLimit);
+    return {
+      ...legacy,
+      strategy: 'hybrid_fts_miss',
+      trace: {
+        strategy: 'hybrid_fts_miss',
+        faq_ids: legacy.faqRows.map((r) => r.id),
+        kb_ids: legacy.kbRows.map((r) => r.id),
+      },
+    };
+  }
+
+  const legacy = await retrievalLegacy(env, tenantId, faqLimit, kbLimit);
+  return {
+    ...legacy,
+    trace: {
+      strategy: 'legacy',
+      faq_ids: legacy.faqRows.map((r) => r.id),
+      kb_ids: legacy.kbRows.map((r) => r.id),
+    },
+  };
+}

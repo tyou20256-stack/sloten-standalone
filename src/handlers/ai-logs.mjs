@@ -60,7 +60,8 @@ export async function submitFeedback(request, env, corsHeaders, logId) {
   const { body, response } = await parseJson(request, corsHeaders);
   if (response) return response;
   const rating = parseInt(body.rating, 10);
-  if (rating !== 1 && rating !== -1) return err('rating must be 1 or -1', 400, corsHeaders);
+  // Phase 1: accept -2 for ⚠️ (critical) in addition to 1/-1.
+  if (![1, -1, -2].includes(rating)) return err('rating must be 1, -1, or -2', 400, corsHeaders);
   // Require an identifiable staff; otherwise the ON CONFLICT unique key is NULL
   // and rows accumulate without upsert. Bearer-token callers must supply
   // `?staff_id=` explicitly, else fail.
@@ -104,14 +105,17 @@ export async function aiStats(request, env, corsHeaders) {
   }, corsHeaders);
 }
 
-// Internal helper — called from ai-chat-adapter.
+// Internal helper — called from ai-chat-adapter + shadow.mjs.
+// Returns the inserted row id (or null on failure). Callers who need the id
+// — e.g. shadow mode, which links shadow_of → primary — await the return.
 export async function recordAiCall(env, entry) {
   try {
-    await env.DB.prepare(
+    const r = await env.DB.prepare(
       `INSERT INTO ai_logs
         (tenant_id, conversation_id, message_id, provider, model, system_prompt, input, output,
-         tokens_in, tokens_out, latency_ms, status, error_message, prompt_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         tokens_in, tokens_out, latency_ms, status, error_message, prompt_id,
+         retrieval_trace, escalation_reason, is_shadow, shadow_of)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       entry.tenant_id || 'tenant_default',
       entry.conversation_id || null,
@@ -126,9 +130,38 @@ export async function recordAiCall(env, entry) {
       entry.latency_ms ?? null,
       entry.status || 'ok',
       entry.error_message || null,
-      entry.prompt_id ?? null
+      entry.prompt_id ?? null,
+      entry.retrieval_trace ?? null,
+      entry.escalation_reason ?? null,
+      entry.is_shadow ? 1 : 0,
+      entry.shadow_of ?? null,
     ).run();
+    return r?.meta?.last_row_id ?? null;
   } catch (e) {
     console.warn('[ai-logs] record failed:', e.message);
+    return null;
+  }
+}
+
+// Phase 1: Silent-failure view endpoints — read from the 3 views created in
+// migration 018. Used by admin UI to surface problems without explicit feedback.
+export async function listSilentFailures(request, env, corsHeaders) {
+  const url = new URL(request.url);
+  const view = url.searchParams.get('view') || 'escalation'; // escalation | repeat | anger
+  const limit = Math.min(parseInt(url.searchParams.get('limit') || '50', 10), MAX_LIMIT);
+  const viewMap = {
+    escalation: 'v_ai_silent_escalation',
+    repeat: 'v_ai_repeat_question',
+    anger: 'v_ai_anger_followup',
+  };
+  const viewName = viewMap[view];
+  if (!viewName) return err('invalid view (escalation|repeat|anger)', 400, corsHeaders);
+  try {
+    const { results } = await env.DB.prepare(
+      `SELECT * FROM ${viewName} ORDER BY ai_created_at DESC LIMIT ?`
+    ).bind(limit).all();
+    return ok({ success: true, view, rows: results || [] }, corsHeaders);
+  } catch (e) {
+    return err(`view not ready (run migration 018): ${e.message}`, 500, corsHeaders);
   }
 }
