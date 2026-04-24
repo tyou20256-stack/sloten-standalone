@@ -314,6 +314,63 @@ export async function sendMessage(request, env, corsHeaders, conversationId, opt
         }
 
         const flowResult = await runFlowForCustomerMessage(env, fresh, contact, content, ctx, contentAttributes);
+
+        // Fix 1: Flow asked for AI fallback — user typed free-form text on a
+        // select step. Call AI for the actual answer, then re-offer the menu.
+        if (flowResult.ai_fallback) {
+          let history = [];
+          try {
+            const { results } = await env.DB.prepare(
+              `SELECT sender_type, content FROM messages
+                WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 6`,
+            ).bind(conversationId).all();
+            history = (results || []).reverse();
+          } catch (_) {}
+
+          const aiReply = await generateBotReply(env, {
+            conversationId,
+            tenantId: conv.tenant_id,
+            customerMessage: flowResult.ai_fallback,
+            ctx,
+            history,
+          });
+          if (aiReply && aiReply.content) {
+            const aiMsg = await insertMessage(env, {
+              conversationId,
+              tenantId: conv.tenant_id,
+              senderType: 'bot', senderId: null,
+              content: aiReply.content,
+              contentType: aiReply.content_type || 'text',
+              contentAttributes: aiReply.content_attributes || null,
+              isPrivate: false,
+            });
+            botReplies.push(aiMsg);
+            // If AI decided to handoff (internal escalation), flip status.
+            if (aiReply.handoff) {
+              await env.DB.prepare(
+                `UPDATE conversations SET status='open', updated_at=datetime('now') WHERE id=?`,
+              ).bind(conversationId).run();
+            }
+          }
+          // Re-offer the current menu so the user can jump back into the
+          // flow with one click. Preserved flow_state means any button press
+          // continues the conversation.
+          if (!aiReply?.handoff && flowResult.current_menu?.items?.length) {
+            const menuMsg = await insertMessage(env, {
+              conversationId,
+              tenantId: conv.tenant_id,
+              senderType: 'bot', senderId: null,
+              content: '他にご質問があればメニューからもお選びいただけます。',
+              contentType: 'input_select',
+              contentAttributes: { items: flowResult.current_menu.items },
+              isPrivate: false,
+            });
+            botReplies.push(menuMsg);
+          }
+          botReply = botReplies[botReplies.length - 1] || null;
+          return created({ success: true, message: msg, bot_reply: botReply, bot_replies: botReplies }, corsHeaders);
+        }
+
         if (flowResult.messages && flowResult.messages.length) {
           for (const m of flowResult.messages) {
             const botMsg = await insertMessage(env, {

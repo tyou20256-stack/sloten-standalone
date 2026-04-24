@@ -111,9 +111,15 @@
 .sloten-chat-close:hover { background: rgba(255,255,255,0.2); }
 
 /* --- Fixed banners (welcome + dreampot) always visible under header --- */
+/* Fix 6: sticky at top of panel so they never scroll out of view when the
+   user scrolls through long message histories. */
 .sloten-chat-pinned {
   padding: 12px 12px 0;
   display: flex; flex-direction: column; gap: 10px;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--slc-panel-bg, #fff);
 }
 .sloten-chat-welcome {
   background: linear-gradient(180deg, var(--slc-header-bg) 0%, var(--slc-header-bg2) 100%);

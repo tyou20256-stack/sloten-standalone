@@ -19,12 +19,31 @@
   const script = document.currentScript || document.querySelector('script[src*="widget.js"]');
   const ds = (script && script.dataset) || {};
   const userCfg = window.SlotenChatConfig || {};
+
+  // Fix 8: time-zone-sensitive Japanese greeting
+  function timeGreeting() {
+    const h = new Date().getHours();
+    if (h >= 5 && h < 11) return 'おはようございます';
+    if (h >= 11 && h < 17) return 'こんにちは';
+    return 'こんばんは';
+  }
+
+  // Fix 9: Operator availability — 10:00〜翌02:00 (JST). AI is 24/7.
+  // During off-hours, the welcome text is augmented with a note so users
+  // know handoff may be slower. Actual routing still works (flow hasn't
+  // changed), but expectations are set up-front.
+  function isOperatorAvailable() {
+    const h = new Date().getHours();
+    return h >= 10 || h < 2;
+  }
+
   const defaults = {
     tenantId: 'tenant_default',
     title: 'スロット天国',
     subtitle: '対応中',
     brandInitials: 'ST',
-    welcomeTitle: 'こんばんは、スロット天国サポートです',
+    // Fix 8: time-of-day greeting — replaced at runtime based on local hour.
+    welcomeTitle: '__TIME_GREETING__、スロット天国サポートです',
     welcomeBody: 'ご用件をお選びいただくか、自由にご質問ください。',
     menuButtonLabel: 'メニュー',
     dreampotUrl: 'https://sloten.io/lottery',
@@ -59,8 +78,13 @@
     title: ds.title || userCfg.title || defaults.title,
     subtitle: ds.subtitle || userCfg.subtitle || defaults.subtitle,
     brandInitials: ds.brandInitials || userCfg.brandInitials || defaults.brandInitials,
-    welcomeTitle: ds.welcomeTitle || userCfg.welcomeTitle || defaults.welcomeTitle,
-    welcomeBody: ds.welcomeBody || userCfg.welcomeBody || defaults.welcomeBody,
+    // Fix 11: optional brand logo URL — when set, replaces the "ST" initials
+    // in the chat header. data-brand-logo="https://sloten.io/logo.png" on the
+    // script tag, or window.SlotenChatConfig.brandLogoUrl.
+    brandLogoUrl: ds.brandLogo || userCfg.brandLogoUrl || null,
+    welcomeTitle: (ds.welcomeTitle || userCfg.welcomeTitle || defaults.welcomeTitle).replace('__TIME_GREETING__', timeGreeting()),
+    welcomeBody: (ds.welcomeBody || userCfg.welcomeBody || defaults.welcomeBody) +
+      (isOperatorAvailable() ? '' : '\n※ただ今オペレーター対応時間外です (10:00〜翌2:00)。AI が 24 時間ご案内します。'),
     menuButtonLabel: ds.menuButtonLabel || userCfg.menuButtonLabel || defaults.menuButtonLabel,
     dreampotUrl: ds.dreampotUrl || userCfg.dreampotUrl || defaults.dreampotUrl,
     inputPlaceholder: ds.inputPlaceholder || userCfg.inputPlaceholder || defaults.inputPlaceholder,
@@ -153,10 +177,18 @@
     });
     dom.panel = el('div', { class: 'sloten-chat-panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'サポートチャット' });
 
-    // Header: ST avatar + title + "対応中" + close
+    // Header: avatar (logo img or initials) + title + "対応中" + close
     const brandInitials = (cfg.brandInitials || 'ST').slice(0, 2);
+    const avatarNode = cfg.brandLogoUrl
+      ? el('img', {
+          class: 'sloten-chat-header-avatar sloten-chat-header-logo',
+          src: cfg.brandLogoUrl,
+          alt: cfg.title || 'ブランドロゴ',
+          width: '32', height: '32',
+        })
+      : el('div', { class: 'sloten-chat-header-avatar', 'aria-hidden': 'true' }, brandInitials);
     const header = el('div', { class: 'sloten-chat-header' },
-      el('div', { class: 'sloten-chat-header-avatar', 'aria-hidden': 'true' }, brandInitials),
+      avatarNode,
       el('div', { class: 'sloten-chat-header-text' },
         el('div', { class: 'sloten-chat-title' }, cfg.title),
         el('div', { class: 'sloten-chat-subtitle' }, cfg.subtitle),
@@ -203,11 +235,12 @@
       oninput: () => autoResize(dom.input),
     });
     dom.send = el('button', { class: 'sloten-chat-send', type: 'button', 'aria-label': 'メッセージを送信', onclick: onSend, html: ICON_SEND });
-    dom.attach = el('button', { class: 'sloten-chat-attach', type: 'button', 'aria-label': 'ファイルを添付', title: 'ファイル添付 (画像/PDF, 最大10MB)', onclick: () => dom.file.click() }, '📎');
-    dom.file = el('input', { type: 'file', accept: 'image/*,application/pdf', style: 'display:none', onchange: onFilePicked });
+    dom.attach = el('button', { class: 'sloten-chat-attach', type: 'button', 'aria-label': 'ファイルを添付', title: 'ファイル添付 (JPG/PNG/GIF/WEBP/PDF, 最大5MB)', onclick: () => dom.file.click() }, '📎');
+    dom.file = el('input', { type: 'file', accept: 'image/jpeg,image/png,image/gif,image/webp,application/pdf', style: 'display:none', onchange: onFilePicked });
     dom.pending = el('div', { class: 'sloten-chat-pending', style: 'display:none' });
     const inputWrap = el('div', { class: 'sloten-chat-input-wrap' }, dom.attach, dom.input, dom.send);
-    dom.status = el('div', { class: 'sloten-chat-status' }, '接続準備中');
+    // Fix 4: start empty; setStatus() shows text only for reconnect/error.
+    dom.status = el('div', { class: 'sloten-chat-status', style: 'display:none' }, '');
 
     dom.panel.appendChild(header);
     dom.panel.appendChild(dom.pinned);
@@ -236,12 +269,29 @@
     dom.pending.appendChild(x);
   }
 
+  // Fix 10: allowlisted MIME types for file attachment
+  const ALLOWED_UPLOAD_TYPES = [
+    'image/jpeg', 'image/pjpeg', 'image/png', 'image/gif', 'image/webp',
+    'application/pdf',
+  ];
+  const MAX_UPLOAD_SIZE = 5 * 1024 * 1024; // 5 MB (was 10 MB — align with fix spec)
+
   async function onFilePicked(ev) {
     const f = ev.target.files && ev.target.files[0];
     ev.target.value = '';
     if (!f) return;
-    if (f.size > 10 * 1024 * 1024) {
-      renderMessage({ id: 'err-' + Date.now(), sender_type: 'system', content: 'ファイルが大きすぎます (最大10MB)', created_at: new Date().toISOString() });
+    // Fix 10: MIME type + size validation
+    if (!ALLOWED_UPLOAD_TYPES.includes(f.type)) {
+      renderMessage({
+        id: 'err-' + Date.now(),
+        sender_type: 'system',
+        content: `📎 対応ファイル形式: JPG / PNG / GIF / WEBP / PDF\n(受信: ${f.type || '不明'})`,
+        created_at: new Date().toISOString(),
+      });
+      return;
+    }
+    if (f.size > MAX_UPLOAD_SIZE) {
+      renderMessage({ id: 'err-' + Date.now(), sender_type: 'system', content: `📎 ファイルサイズは ${MAX_UPLOAD_SIZE / 1024 / 1024} MB 以下でお願いします`, created_at: new Date().toISOString() });
       return;
     }
     try {
@@ -276,7 +326,11 @@
     }
   }
 
-  function setStatus(text) { dom.status.textContent = text; }
+  function setStatus(text) {
+    // Fix 4: hide the element when text is empty (no "connecting" flash).
+    dom.status.textContent = text || '';
+    dom.status.style.display = text ? 'block' : 'none';
+  }
   function setBanner(text) {
     if (!text) { dom.banner.removeAttribute('data-visible'); dom.banner.textContent = ''; }
     else { dom.banner.setAttribute('data-visible', '1'); dom.banner.textContent = text; }
@@ -290,11 +344,64 @@
     } catch { return ''; }
   }
 
+  // --- Lightweight Markdown renderer (Fix 3) ------------------------------
+  // Handles the common patterns: **bold**, *italic*, `code`, URLs, line breaks.
+  // No external dependencies. Escapes HTML first, then re-introduces safe
+  // inline markup.
+  function escHtml(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function renderMarkdown(text) {
+    if (!text) return '';
+    let html = escHtml(text);
+    // Auto-link URLs (http/https)
+    html = html.replace(
+      /(https?:\/\/[^\s<]+?)(?=[.,;:!?)]?(?:\s|$))/g,
+      '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>',
+    );
+    // Bold **x**
+    html = html.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+    // Italic *x* (no underscore to avoid URL collisions)
+    html = html.replace(/(^|[^\*])\*([^*\n]+?)\*(?!\*)/g, '$1<em>$2</em>');
+    // Inline code `x`
+    html = html.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+    // Line breaks
+    html = html.replace(/\n/g, '<br />');
+    return html;
+  }
+
+  // Fix 2: Track values that were sent from button clicks so the user bubble
+  // displays the human label instead of the internal action ID (e.g.
+  // "game_info"). Maps sendValue → displayLabel, expires in 10s.
+  const buttonClickLabels = new Map();
+  function rememberButtonClick(value, label) {
+    if (!value || value === label) return;
+    buttonClickLabels.set(value, label);
+    setTimeout(() => buttonClickLabels.delete(value), 10_000);
+  }
+
   function renderMessage(msg) {
     if (!msg || !msg.id) return;
     if (dom.messages.querySelector(`[data-msg-id="${msg.id}"]`)) return; // dedupe
     const bubble = el('div', { class: 'sloten-chat-msg', 'data-sender': msg.sender_type || 'bot', 'data-msg-id': msg.id });
-    const contentDiv = el('div', {}, msg.content || '');
+    // Fix 2: replace internal action ID with the label the user saw when
+    // clicking a menu button.
+    let shownContent = msg.content || '';
+    if (msg.sender_type === 'customer' && buttonClickLabels.has(shownContent)) {
+      shownContent = buttonClickLabels.get(shownContent);
+    }
+    // Fix 3: render Markdown for bot messages (preserve plain text for customer).
+    const contentDiv = el('div', {});
+    if (msg.sender_type === 'bot' || msg.sender_type === 'staff') {
+      contentDiv.innerHTML = renderMarkdown(shownContent);
+      // Ensure any <a> we rendered opens in a new tab
+      contentDiv.querySelectorAll('a').forEach((a) => {
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+      });
+    } else {
+      contentDiv.textContent = shownContent;
+    }
     bubble.appendChild(contentDiv);
 
     // Attachment preview
@@ -346,7 +453,11 @@
             const btn = el('button', {
               class: 'sloten-chat-select-btn',
               type: 'button',
-              onclick: () => sendText(sendValue),
+              onclick: () => {
+                // Fix 2: remember the pair so renderMessage shows the label.
+                rememberButtonClick(sendValue, displayText);
+                sendText(sendValue);
+              },
             }, displayText);
             group.appendChild(btn);
           }
@@ -361,7 +472,15 @@
   }
 
   function scrollToBottom() {
-    requestAnimationFrame(() => { dom.messages.scrollTop = dom.messages.scrollHeight; });
+    // Fix 7: smooth scroll — use scrollTo API when available. Fallback to
+    // immediate jump if smooth behavior isn't supported (older browsers).
+    requestAnimationFrame(() => {
+      try {
+        dom.messages.scrollTo({ top: dom.messages.scrollHeight, behavior: 'smooth' });
+      } catch (_) {
+        dom.messages.scrollTop = dom.messages.scrollHeight;
+      }
+    });
   }
 
   // --- Bootstrap conversation ---
@@ -577,7 +696,9 @@
       return;
     }
     ws.addEventListener('open', () => {
-      setStatus('接続中');
+      // Fix 4: hide status entirely on successful connection. Only show it
+      // when there's something the user needs to know (reconnecting / error).
+      setStatus('');
       wsAttempt = 0;
       stopPolling();
     });
@@ -633,9 +754,40 @@
   }
 
   // --- Lifecycle ---
+  // Fix 12: Esc from anywhere closes the chat when the panel is open.
+  // Fix 13: Tab cycling stays within the dialog for accessibility.
+  function installGlobalKeyHandlers() {
+    if (window.__slotenKeyInstalled) return;
+    window.__slotenKeyInstalled = true;
+    document.addEventListener('keydown', (e) => {
+      if (dom.root.getAttribute('data-open') !== '1') return;
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        close();
+        return;
+      }
+      if (e.key === 'Tab') {
+        const focusables = dom.panel.querySelectorAll(
+          'button:not([disabled]), [href], input:not([type="hidden"]):not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        );
+        if (!focusables.length) return;
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    });
+  }
+
   async function open() {
     dom.root.setAttribute('data-open', '1');
     dom.input.focus();
+    installGlobalKeyHandlers();
     if (!state.conversationId) {
       // Greet message only on fresh open. WS is deferred until first send
       // creates the conversation (ensureConversation calls connectWS).

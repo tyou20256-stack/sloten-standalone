@@ -284,8 +284,27 @@ export async function executeFlow(env, conv, contact, inputText, ctx, inputAttrs
       }
       const choice = (step.options || []).find((o) => o.value === pending || o.title === pending);
       if (!choice) {
-        // Re-present the menu.
         const items = (step.options || []).map((o) => ({ title: o.title, value: o.value }));
+        // Fix 1 (sloten-chatbot-fix-instructions): if the user typed free-form
+        // Japanese text instead of clicking a button, route it to AI instead
+        // of stubbornly re-prompting "選択肢からお選びください". Heuristic:
+        //   - Contains any Japanese character, OR length ≥ 5 chars
+        // Short inputs like "a" or "?" are treated as typos (menu re-prompt).
+        const hasJa = /[぀-ゟ゠-ヿ一-鿿]/.test(pending);
+        const looksLikeFreeText = hasJa || pending.trim().length >= 5;
+        if (looksLikeFreeText) {
+          // Preserve flow_state at the current select step so the caller can
+          // re-offer the menu after the AI response. The caller is expected
+          // to detect ai_fallback and invoke generateBotReply.
+          return {
+            messages: [],
+            state,
+            handoff: false,
+            ai_fallback: pending,
+            current_menu: { prompt: step.prompt || 'ご希望の項目をお選びください。', items },
+          };
+        }
+        // Short / non-Japanese input — likely a typo. Re-present the menu.
         messages.push({
           content: renderTemplate('選択肢からお選びください', { vars: state.vars, contact, env }),
           content_type: 'input_select',
