@@ -16,6 +16,12 @@
   if (window.__SlotenChatLoaded) return;
   window.__SlotenChatLoaded = true;
 
+  // Visible version banner in console for debugging cache issues.
+  console.log(
+    '%c[SlotenChat] widget v20260424.fix13 loaded',
+    'background:#2563eb;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold',
+  );
+
   const script = document.currentScript || document.querySelector('script[src*="widget.js"]');
   const ds = (script && script.dataset) || {};
   const userCfg = window.SlotenChatConfig || {};
@@ -191,7 +197,7 @@
       avatarNode,
       el('div', { class: 'sloten-chat-header-text' },
         el('div', { class: 'sloten-chat-title' }, cfg.title),
-        el('div', { class: 'sloten-chat-subtitle' }, cfg.subtitle),
+        el('div', { class: 'sloten-chat-subtitle' }, cfg.subtitle + ' · fix13'),
       ),
       el('button', { class: 'sloten-chat-close', type: 'button', 'aria-label': 'チャットウィジェットを閉じる', onclick: close }, '\u00d7'),
     );
@@ -844,6 +850,7 @@
 
   // Expose minimal API for host pages.
   window.SlotenChat = {
+    version: 'v20260424.fix13',
     open,
     close,
     // Chatwoot parity: `window.$chatwoot.setUser(identifier, userInfo)`
