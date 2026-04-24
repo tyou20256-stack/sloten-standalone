@@ -1,10 +1,10 @@
 # ステージング環境 最新状態スナップショット
 
-**日時**: 2026-04-23
+**日時**: 2026-04-24 (Chatbot 13 Fix 適用後)
 **対象環境**: staging-bk (`sloten-standalone-staging-bk.rcc-aoki.workers.dev`)
-**Worker Version**: `c2b63b1c-52ca-4fa2-8842-d983e740b6c7`
-**Git HEAD**: `bad0743`
-**ブランチ**: main (origin より 6 commits 先行、未 push)
+**Worker Version**: `e7557570-29f7-4ed9-a089-adbe4aac5d7e`
+**Git HEAD**: `077699d`
+**ブランチ**: main (origin より 8 commits 先行、未 push)
 
 ---
 
@@ -20,9 +20,12 @@
 
 ---
 
-## 📋 最新 Commit 履歴 (本フェーズで追加)
+## 📋 最新 Commit 履歴 (本フェーズまで)
 
 ```
+077699d feat(widget+flow): 13 chatbot fixes from sloten-chatbot-fix-instructions.md
+92bd203 feat(manual): add HTML operations manual + init-admin staging-bk support
+7c6f617 docs(handoff): add 20-staging-latest-snapshot.md
 bad0743 docs(handoff): Phase 1-2b reports + 7-agent AI accuracy discussion + admin UI sections
 f91302c feat(ai): Phase 1+2a+2b AI accuracy improvements
 bbccabc feat(flow+widget): ATM deposit handoff + widget setUser (Chatwoot $chatwoot.setUser parity)
@@ -58,6 +61,34 @@ d2b34f0 feat(bonus): add heavenday_daachin + regenerate sloten-main flow seed
 | `ai.shadow_mode.prompt_ids` | `""` | shadow 対象 prompt ID |
 | `retrieval.use_chunks` | `1` | Phase 2a chunks 経由 — **ON** |
 | `retrieval.use_vectorize` | `0` | Phase 2b Hybrid RRF — OFF |
+
+---
+
+## 🆕 本日追加 (2026-04-24)
+
+### Chatbot Widget 13 Fixes ([HANDOFF/21-chatbot-fix-implementation.md](21-chatbot-fix-implementation.md))
+
+**Critical (4)**:
+- ✅ **Fix 1**: Select step で自由テキスト入力 → AI が回答 + メニュー再表示 (最重要)
+- ✅ Fix 2: ボタンクリック時に label 表示 (内部 value `game_info` 非表示)
+- ✅ Fix 3: Bot 回答に Markdown (太字/URL/改行) レンダリング
+- ✅ Fix 4: 「接続中」常時表示の修正 (WS open で hide)
+
+**High (4)**:
+- ✅ Fix 5: per-message タイムスタンプ
+- ✅ Fix 6: ドリームポットバナー sticky 固定
+- ✅ Fix 7: スムーズ自動スクロール
+- ✅ Fix 8: 時間帯挨拶 (朝/昼/夜)
+
+**Medium (5)**:
+- ✅ Fix 9: オペレーター対応時間外案内
+- ✅ Fix 10: ファイル添付バリデーション (JPG/PNG/GIF/WEBP/PDF, 5MB)
+- ✅ Fix 11: ブランドロゴ設定 (optional)
+- ✅ Fix 12: Esc キーで閉じる
+- ✅ Fix 13: Tab フォーカストラップ
+
+### 管理画面マニュアル HTML
+- ✅ `https://sloten-standalone-staging-bk.rcc-aoki.workers.dev/manual/` — 32 セクション公開
 
 ---
 
