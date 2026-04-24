@@ -111,7 +111,7 @@ async function callAnthropic(apiKey, system, userMessage, model = 'claude-haiku-
   };
 }
 
-export async function generateBotReply(env, { conversationId, tenantId, customerMessage, ctx, history }) {
+export async function generateBotReply(env, { conversationId, tenantId, customerMessage, ctx, history, menuContext }) {
   // 0) Hard escalation — money / legal / account-freeze / RG / anger keywords
   //    bypass AI entirely and return a canned safe response. The caller is
   //    expected to also flip conversation.status → 'open' on handoff=true.
@@ -166,7 +166,30 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
   let promptRow = null;
   try { promptRow = await pickActivePrompt(env, tenantId); } catch (_) {}
   const promptHeader = promptRow ? promptRow.system_prompt : null;
-  const system = buildSystemPrompt(faqRows, kbRows, promptHeader);
+  let system = buildSystemPrompt(faqRows, kbRows, promptHeader);
+
+  // Fix 1 (enhancement): if the caller passed a menu context (user is on a
+  // select step and asked free-form text), inject it so the AI acknowledges
+  // the question, briefly explains what options the menu offers, and ends by
+  // recommending a menu click. This replaces the old terse "メニューから
+  // お選びください" reply with something UX-friendly.
+  if (menuContext && menuContext.prompt && Array.isArray(menuContext.items) && menuContext.items.length) {
+    const optionList = menuContext.items.map((it) => `- ${it.title || it.value}`).join('\n');
+    system += [
+      '',
+      '',
+      '## 🗂️ 現在のメニューコンテキスト',
+      `ユーザーは現在「${menuContext.prompt}」のメニュー選択を求められています。`,
+      '利用可能な選択肢:',
+      optionList,
+      '',
+      '## 📝 回答ガイドライン (menu-context モード)',
+      '1. ユーザーの質問内容に 1 文で共感・確認する (例: 「入金方法についてですね。」)。',
+      '2. 上記の選択肢の内、関連するものを 2〜3 個だけ **日本語タイトル** で紹介する。',
+      '3. 最後に「以下のメニューからお選びください」と締める (3 段階で合計 3〜4 行以内)。',
+      '4. FAQ やナレッジに具体的な情報がある場合は短く引用して補足してもよい。',
+    ].join('\n');
+  }
 
   const maskedInput = maskPII(customerMessage || '');
 

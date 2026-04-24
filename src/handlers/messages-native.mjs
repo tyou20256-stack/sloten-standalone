@@ -333,6 +333,7 @@ export async function sendMessage(request, env, corsHeaders, conversationId, opt
             customerMessage: flowResult.ai_fallback,
             ctx,
             history,
+            menuContext: flowResult.current_menu, // { prompt, items }
           });
           if (aiReply && aiReply.content) {
             const aiMsg = await insertMessage(env, {
@@ -354,13 +355,16 @@ export async function sendMessage(request, env, corsHeaders, conversationId, opt
           }
           // Re-offer the current menu so the user can jump back into the
           // flow with one click. Preserved flow_state means any button press
-          // continues the conversation.
+          // continues the conversation. Use the step's original prompt text
+          // (e.g. "ご希望の入金方法をお選びください。") instead of the generic
+          // fallback — feels natural alongside the AI's contextual response.
           if (!aiReply?.handoff && flowResult.current_menu?.items?.length) {
+            const menuPrompt = flowResult.current_menu.prompt || 'メニューからお選びください。';
             const menuMsg = await insertMessage(env, {
               conversationId,
               tenantId: conv.tenant_id,
               senderType: 'bot', senderId: null,
-              content: '他にご質問があればメニューからもお選びいただけます。',
+              content: menuPrompt,
               contentType: 'input_select',
               contentAttributes: { items: flowResult.current_menu.items },
               isPrivate: false,
