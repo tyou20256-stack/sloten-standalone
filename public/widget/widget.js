@@ -55,7 +55,7 @@
 
   // Cache-bust suffix for widget.css. Declared BEFORE cfg so it's accessible
   // during cssUrl resolution (TDZ avoidance).
-  const WIDGET_VERSION = 'v20260416.e';
+  const WIDGET_VERSION = 'v20260424.fix13';
 
   // Host-provided user info (optional). Populated from:
   //   data-user-name / data-user-email / data-user-phone
