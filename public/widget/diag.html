@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="0" />
+<title>Sloten Widget — 診断ツール</title>
+<style>
+  body { font-family: -apple-system, "Hiragino Sans", sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; line-height: 1.6; }
+  h1 { color: #1e40af; }
+  .status { padding: 10px; border-radius: 6px; margin: 10px 0; }
+  .status.ok  { background: #dcfce7; color: #166534; }
+  .status.ng  { background: #fee2e2; color: #991b1b; }
+  .status.run { background: #fef3c7; color: #92400e; }
+  pre { background: #0f172a; color: #e2e8f0; padding: 12px; border-radius: 6px; overflow: auto; font-size: 12px; }
+  button { padding: 10px 16px; font-size: 14px; background: #2563eb; color: #fff; border: none; border-radius: 6px; cursor: pointer; margin-right: 8px; }
+  button:hover { background: #1e40af; }
+  .version { background: #1e40af; color: #fff; padding: 4px 8px; border-radius: 4px; font-family: monospace; }
+</style>
+</head>
+<body>
+<h1>🔧 Sloten Widget 診断ツール</h1>
+<p>このページはブラウザが <b>最新 widget.js を取得できているか</b>、<b>API が正常か</b>、<b>AI 回答が生成されるか</b>を自動検証します。</p>
+
+<div id="step-1" class="status run">① widget.js 読み込み中...</div>
+<div id="step-2" class="status run">② 最新版マーカー確認待機</div>
+<div id="step-3" class="status run">③ API 経由で会話作成待機</div>
+<div id="step-4" class="status run">④ AI 応答確認 待機</div>
+
+<hr>
+<h3>詳細ログ</h3>
+<pre id="log">(待機中)</pre>
+
+<p>
+<button onclick="runDiag()">🚀 診断を実行</button>
+<button onclick="clearData()">🗑️ キャッシュ/localStorage クリア</button>
+<button onclick="location.reload(true)">🔄 強制リロード</button>
+</p>
+
+<hr>
+<h3>ウィジェット実機確認</h3>
+<p>下の widget は毎回異なる URL (timestamp 付き) でロードされるので、キャッシュを回避します。右下の💬ボタンからお試しください。</p>
+<p class="status ok" id="widget-version-display">loading...</p>
+
+<script>
+const logEl = document.getElementById('log');
+function log(s) {
+  const now = new Date().toISOString();
+  logEl.textContent += '\n[' + now + '] ' + s;
+}
+
+function set(id, cls, txt) {
+  const el = document.getElementById(id);
+  el.className = 'status ' + cls;
+  el.textContent = txt;
+}
+
+async function runDiag() {
+  logEl.textContent = '=== Diagnostic run ' + new Date().toISOString() + ' ===';
+
+  // Step 1: widget script loaded
+  if (window.SlotenChat) {
+    set('step-1', 'ok', '① widget.js 読込: ✅ 成功');
+    log('SlotenChat exists. version: ' + (window.SlotenChat.version || 'not set'));
+  } else {
+    set('step-1', 'ng', '① widget.js 読込: ❌ window.SlotenChat が存在しない');
+    log('CRITICAL: window.SlotenChat is undefined');
+    return;
+  }
+
+  // Step 2: version marker
+  const expectedVersion = 'v20260424.fix13';
+  if (window.SlotenChat.version === expectedVersion) {
+    set('step-2', 'ok', '② 最新版マーカー: ✅ ' + expectedVersion + ' 確認');
+    log('Version match: ' + expectedVersion);
+  } else {
+    set('step-2', 'ng', '② 最新版マーカー: ❌ 期待=' + expectedVersion + ' 実際=' + window.SlotenChat.version);
+    log('VERSION MISMATCH! Browser has old cached widget.js');
+  }
+
+  // Step 3: create contact + conversation
+  try {
+    const apiBase = location.origin;
+    const c = await fetch(apiBase + '/api/widget/contacts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'diag-' + Date.now(), locale: 'ja' }),
+    }).then(r => r.json());
+    log('Contact created: ' + c.contact?.id);
+
+    const conv = await fetch(apiBase + '/api/widget/conversations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Sloten-Contact-Token': c.contact_token },
+      body: JSON.stringify({ contact_id: c.contact.id }),
+    }).then(r => r.json());
+    log('Conversation created: ' + conv.conversation?.id);
+    set('step-3', 'ok', '③ API 疎通: ✅ 会話作成成功');
+
+    // Step 4: bootstrap + test AI fallback
+    const send = (text) => fetch(apiBase + '/api/widget/conversations/' + conv.conversation.id + '/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8', 'X-Sloten-Contact-Token': c.contact_token },
+      body: JSON.stringify({ content: text }),
+    }).then(r => r.json());
+
+    await send('hi');
+    log('Bootstrap sent');
+
+    const r = await send('入金方法を教えて？');
+    const replies = r.bot_replies || [];
+    log('Response received. reply count: ' + replies.length);
+    replies.forEach((m, i) => {
+      log('  reply ' + (i+1) + ' [' + m.content_type + ']: ' + (m.content || '').slice(0, 100));
+    });
+
+    const hasAiText = replies.some(m => m.content_type === 'text' && m.content && m.content.includes('入金方法'));
+    const hasMenu = replies.some(m => m.content_type === 'input_select');
+
+    if (hasAiText && hasMenu) {
+      set('step-4', 'ok', '④ AI 応答: ✅ テキスト + メニュー両方生成 (正常)');
+      log('SUCCESS: Server returns both AI text and menu. Widget must render both.');
+    } else if (hasMenu && !hasAiText) {
+      set('step-4', 'ng', '④ AI 応答: ❌ メニューのみ・AI テキストなし (サーバー問題)');
+      log('BUG: Server returned menu only without AI text.');
+    } else {
+      set('step-4', 'ng', '④ AI 応答: ⚠️ 想定外の応答形状');
+      log('UNEXPECTED: ' + JSON.stringify(replies));
+    }
+  } catch (e) {
+    set('step-3', 'ng', '③ API エラー: ' + e.message);
+    log('ERROR: ' + e.message);
+  }
+}
+
+function clearData() {
+  localStorage.clear();
+  sessionStorage.clear();
+  if ('caches' in window) {
+    caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
+  }
+  alert('localStorage + sessionStorage + Cache API クリア完了。次回リロードで完全新規取得します。');
+}
+
+// Auto-run on load
+window.addEventListener('load', () => {
+  const ver = window.SlotenChat?.version || '(widget.js まだ読み込み中)';
+  document.getElementById('widget-version-display').textContent = 'window.SlotenChat.version = ' + ver;
+  setTimeout(runDiag, 500);
+});
+</script>
+
+<!-- Widget with random timestamp for aggressive cache bust -->
+<script>
+  const s = document.createElement('script');
+  s.src = './widget.js?diag=' + Date.now() + '&r=' + Math.random();
+  s.async = true;
+  document.head.appendChild(s);
+</script>
+</body>
+</html>
