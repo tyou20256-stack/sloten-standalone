@@ -26,31 +26,55 @@ async function importKey(secret) {
   return crypto.subtle.importKey('raw', ENC.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
 }
 
+/** Prefer dedicated CONTACT_TOKEN_SIGNING_KEY, fallback to shared SESSION_SIGNING_KEY. */
+function resolveContactKey(env) {
+  return env.CONTACT_TOKEN_SIGNING_KEY || env.SESSION_SIGNING_KEY;
+}
+
 export async function issueContactToken(env, contactId) {
-  if (!env.SESSION_SIGNING_KEY) throw new Error('SESSION_SIGNING_KEY not set');
+  const signingKey = resolveContactKey(env);
+  if (!signingKey) throw new Error('CONTACT_TOKEN_SIGNING_KEY / SESSION_SIGNING_KEY not set');
   const payload = {
     cid: contactId,
     iat: Math.floor(Date.now() / 1000),
     exp: Math.floor(Date.now() / 1000) + TTL_SEC,
   };
   const payloadB64 = b64url(ENC.encode(JSON.stringify(payload)));
-  const key = await importKey(env.SESSION_SIGNING_KEY);
+  const key = await importKey(signingKey);
   const sig = await crypto.subtle.sign('HMAC', key, ENC.encode(payloadB64));
   return `${payloadB64}.${b64url(sig)}`;
 }
 
 export async function verifyContactToken(env, token) {
-  if (!env.SESSION_SIGNING_KEY || !token || typeof token !== 'string') return null;
+  const newKey = env.CONTACT_TOKEN_SIGNING_KEY;
+  const oldKey = env.SESSION_SIGNING_KEY;
+  if (!newKey && !oldKey) return null;
+  if (!token || typeof token !== 'string') return null;
   const parts = token.split('.');
   if (parts.length !== 2) return null;
   try {
-    const key = await importKey(env.SESSION_SIGNING_KEY);
-    const valid = await crypto.subtle.verify('HMAC', key, b64urlDecode(parts[1]), ENC.encode(parts[0]));
-    if (!valid) return null;
-    const payload = JSON.parse(DEC.decode(b64urlDecode(parts[0])));
-    if (!payload?.cid || !payload?.exp) return null;
-    if (payload.exp * 1000 < Date.now()) return null;
-    return payload;
+    // Try dedicated key first
+    if (newKey) {
+      const key = await importKey(newKey);
+      if (await crypto.subtle.verify('HMAC', key, b64urlDecode(parts[1]), ENC.encode(parts[0]))) {
+        const payload = JSON.parse(DEC.decode(b64urlDecode(parts[0])));
+        if (!payload?.cid || !payload?.exp) return null;
+        if (payload.exp * 1000 < Date.now()) return null;
+        return payload;
+      }
+    }
+    // Dual-verify: fallback to legacy shared key
+    if (oldKey && oldKey !== newKey) {
+      const key = await importKey(oldKey);
+      if (await crypto.subtle.verify('HMAC', key, b64urlDecode(parts[1]), ENC.encode(parts[0]))) {
+        console.log('[contact-token] verified with legacy SESSION_SIGNING_KEY — rotate pending');
+        const payload = JSON.parse(DEC.decode(b64urlDecode(parts[0])));
+        if (!payload?.cid || !payload?.exp) return null;
+        if (payload.exp * 1000 < Date.now()) return null;
+        return payload;
+      }
+    }
+    return null;
   } catch {
     return null;
   }

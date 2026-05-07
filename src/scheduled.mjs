@@ -1,11 +1,12 @@
 // Cron handler — runs on the triggers defined in wrangler.toml.
 // Duties:
 //   1) Every minute: wake snoozed conversations whose timer has elapsed.
-//   2) Weekly (>= 7 days since last run): extract FAQ candidates from the
-//      last 7 days of customer↔staff Q&A and upsert into faq_candidates
-//      (status=pending) for admin review.
+//   2) Every 5 minutes: metrics monitor + Telegram alerts (P-8).
+//   3) Weekly (>= 7 days since last run): extract FAQ candidates.
+//   4) Daily 00:00 UTC (09:00 JST): daily summary to Telegram.
 
 import { extractFaqCandidates, getLastExtractionTs, setLastExtractionTs } from './extractor.mjs';
+import { runMetricsMonitor, runDailySummary } from './handlers/metrics-monitor.mjs';
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -37,7 +38,27 @@ export async function handleScheduled(event, env, ctx) {
     console.error('[scheduled] log rotation error:', e.message);
   }
 
-  // --- 3) Weekly FAQ extraction
+  // --- 3) Metrics monitor (every 5 minutes)
+  try {
+    const minute = new Date().getMinutes();
+    if (minute % 5 === 0) {
+      await runMetricsMonitor(env, ctx);
+    }
+  } catch (e) {
+    console.error('[scheduled] metrics monitor error:', e.message);
+  }
+
+  // --- 4) Daily summary (00:00 UTC = 09:00 JST)
+  try {
+    const now = new Date();
+    if (now.getUTCHours() === 0 && now.getUTCMinutes() === 0) {
+      await runDailySummary(env);
+    }
+  } catch (e) {
+    console.error('[scheduled] daily summary error:', e.message);
+  }
+
+  // --- 5) Weekly FAQ extraction
   try {
     const last = await getLastExtractionTs(env);
     const now = Date.now();

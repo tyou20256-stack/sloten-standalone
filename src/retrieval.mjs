@@ -28,9 +28,31 @@ function sanitizeFtsQuery(text) {
     .trim()
     .slice(0, FTS_QUERY_MAX_LEN);
   if (!cleaned) return '';
-  // Use each whitespace-separated token as an OR-joined FTS5 query so a user
-  // query like "入金 PayPay 手数料" matches rows mentioning any of the terms.
-  const tokens = cleaned.split(' ').filter((t) => t.length >= 1);
+
+  // Split on whitespace AND on script boundaries (Latin ↔ CJK ↔ Kana ↔
+  // particles). Without this, "paypay入金方法" stays as one trigram-mismatched
+  // 10-char token; with this it becomes ["paypay", "入金方法"] and trigram
+  // OR-matching finds FAQ rows containing either term.
+  //
+  // Boundaries detected:
+  //   - whitespace (already collapsed above, but split on it again here)
+  //   - Latin↔CJK (e.g. "paypay入金" → "paypay 入金")
+  //   - Common Japanese particles (の/を/に/が/は/で/へ) split as separators
+  //     so "PayPayの入金方法" → "PayPay 入金方法"
+  //   - 「と」「や」 are deliberately omitted: they appear inside many ordinary
+  //     words (やり方, とき, etc) and over-splitting kills useful tokens.
+  const PARTICLE_RE = /([のをにがはでへ])/g;
+  const SCRIPT_BOUNDARY_RE = /(?<=[぀-ヿ㐀-鿿])(?=[A-Za-z0-9])|(?<=[A-Za-z0-9])(?=[぀-ヿ㐀-鿿])/g;
+  const split = cleaned
+    .replace(SCRIPT_BOUNDARY_RE, ' ')
+    .replace(PARTICLE_RE, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ');
+
+  // Trigram tokenizer needs >= 3 char tokens to be useful — drop 1-2 char
+  // fragments to avoid noise (single particles, single hiragana etc).
+  const tokens = split.filter((t) => t.length >= 3);
   if (!tokens.length) return '';
   return tokens.map((t) => `"${t.replace(/"/g, '""')}"`).join(' OR ');
 }
@@ -234,8 +256,14 @@ async function retrievalHybrid(env, tenantId, userQuery, faqLimit, kbLimit) {
       trace: {
         strategy: 'hybrid_rrf',
         faq_ids: (faqRes || []).map((r) => r.id),
+        // BM25 scores per FAQ (negative = more relevant in FTS5 bm25() output).
+        // Surfaced so Golden Set evaluation can distinguish "wrong FAQ ranked
+        // top" from "no match" without re-running the query.
+        faq_scores: (faqRes || []).map((r) => ({ id: r.id, score: r.score })),
         kb_ids: fusedIds,
+        kb_bm25_scores: (chunkBm25 || []).map((r) => ({ id: r.id, score: r.score })),
         query: q,
+        sanitized_query: q,
         bm25_count: bm25Ranked.length,
         dense_count: denseRanked.length,
         top_rrf_score: fused[0]?.rrf_score || 0,
@@ -277,8 +305,11 @@ export async function retrieveContext(env, tenantId, userQuery, opts = {}) {
         trace: {
           strategy: 'fts5',
           faq_ids: fts.faqRows.map((r) => r.id),
+          faq_scores: fts.faqRows.map((r) => ({ id: r.id, score: r.score })),
           kb_ids: fts.kbRows.map((r) => r.id),
+          kb_scores: fts.kbRows.map((r) => ({ id: r.id, score: r.score })),
           query: fts.query,
+          sanitized_query: fts.query,
         },
       };
     }

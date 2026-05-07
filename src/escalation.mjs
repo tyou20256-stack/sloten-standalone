@@ -19,6 +19,8 @@ const HARD_ESCALATION_PATTERNS = [
   { re: /(?:未成年|18歳未満|子供が勝手に|息子が勝手に|娘が勝手に)/, reason: 'underage' },
   { re: /退会|削除(?:してください|したい)|アカウント(?:消|削除)/,  reason: 'account_deletion' },
   { re: /不正(?:アクセス|ログイン|利用)/,                         reason: 'unauthorized_access' },
+  // Explicit human-operator request — must escalate, not deflect to menu
+  { re: /(?:オペレーター|オペレータ|担当者|人[とに]|スタッフ).*(?:話|繋|つな|呼|お願い)|(?:話したい|繋いで|つないで|呼んで).*(?:オペレーター|オペレータ|担当者|人[とに]|スタッフ)/, reason: 'operator_request' },
 ];
 
 // 依存症兆候 — Responsible Gambling (RG) 対応が必須

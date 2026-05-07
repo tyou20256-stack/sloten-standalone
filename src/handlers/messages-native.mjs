@@ -7,11 +7,13 @@ import { ok, created, err, parseJson } from '../json.mjs';
 import { generateBotReply } from '../ai-chat-adapter.mjs';
 import { broadcastToConversation } from '../broadcast.mjs';
 import { checkRateLimit, rateLimitResponse } from '../rate-limiter.mjs';
-import { runFlowForCustomerMessage } from './bot-flows.mjs';
+import { runFlowForCustomerMessage, executeFlow } from './bot-flows.mjs';
+import { buildMenuTreeText, inferJumpTarget } from '../lib/menu-tree.mjs';
 import { linkAttachmentToMessage, fetchAttachmentsForMessages } from './attachments.mjs';
 import { signAttachmentUrl, baseUrlOf } from '../auth/attachment-signature.mjs';
 import { matchBonusCode, getBonusReply, recordSubmission, forwardToGas } from '../bonus-codes.mjs';
 import { decideEscalation } from '../escalation.mjs';
+import { detectAnnouncementQuery } from './announcements.mjs';
 import { recordAiCall } from './ai-logs.mjs';
 import { maskPII } from '../pii-masker.mjs';
 import { logError } from '../audit.mjs';
@@ -19,7 +21,7 @@ import { logError } from '../audit.mjs';
 const VALID_SENDER = new Set(['customer', 'bot', 'staff', 'system']);
 const VALID_CONTENT_TYPE = new Set(['text', 'input_select', 'file', 'system_event']);
 
-async function insertMessage(env, { conversationId, tenantId, senderType, senderId, content, contentType, contentAttributes, isPrivate }) {
+async function insertMessage(env, { conversationId, tenantId, senderType, senderId, content, contentType, contentAttributes, isPrivate }, ctx = undefined) {
   const id = uuid();
   const attrs = contentAttributes ? JSON.stringify(contentAttributes) : null;
   const priv = isPrivate ? 1 : 0;
@@ -51,16 +53,16 @@ async function insertMessage(env, { conversationId, tenantId, senderType, sender
 
   const row = await env.DB.prepare('SELECT * FROM messages WHERE id = ?').bind(id).first();
 
-  // Broadcast: private notes go to operator peers only (customer widget filters
-  // is_private=1 client-side via include_private=0 query; over WS we must not
-  // deliver them to customer connections. Simplification for Phase 2-7: broadcast
-  // to the room and let the widget JS drop any frame where is_private=1).
-  try {
-    await broadcastToConversation(env, conversationId, {
-      type: 'message.created',
-      message: row,
-    });
-  } catch (_) { /* swallow */ }
+  // Broadcast via Durable Object — best-effort and OFF the request critical
+  // path. Previously this was awaited inline, adding ~300-500ms per message
+  // (DO cold-start). With ctx.waitUntil it runs after the HTTP response is
+  // sent, dropping bot-reply latency by ~600-1000ms (2 inserts per request).
+  // Without ctx (e.g. unit tests) we still fire-and-forget without await.
+  const broadcastTask = broadcastToConversation(env, conversationId, {
+    type: 'message.created',
+    message: row,
+  }).catch(() => { /* swallow — broadcasts must never fail the response */ });
+  if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(broadcastTask);
 
   return row;
 }
@@ -78,8 +80,16 @@ export async function sendMessage(request, env, corsHeaders, conversationId, opt
   if (!VALID_SENDER.has(senderType)) return err('Invalid sender_type', 400, corsHeaders);
   const contentType = body.content_type || 'text';
   if (!VALID_CONTENT_TYPE.has(contentType)) return err('Invalid content_type', 400, corsHeaders);
-  const content = (body.content || '').trim();
+  let content = (body.content || '').trim();
   if (!content && contentType === 'text') return err('content required', 400, corsHeaders);
+  // Hard cap message length — prevents ReDoS via long inputs in
+  // responseFilter / pachi detection regex, and bounds LLM token cost.
+  // 4000 chars covers any realistic CS question; pasted logs / spam exceed it.
+  const MAX_CONTENT_CHARS = 4000;
+  if (content.length > MAX_CONTENT_CHARS) {
+    if (isWidget) return err('content too long (max 4000 chars)', 413, corsHeaders);
+    content = content.slice(0, MAX_CONTENT_CHARS);
+  }
   const forcePrivate = isWidget ? false : !!body.is_private;
 
   try {
@@ -107,7 +117,7 @@ export async function sendMessage(request, env, corsHeaders, conversationId, opt
       contentType,
       contentAttributes,
       isPrivate: forcePrivate,
-    });
+    }, ctx);
     if (attachmentId) {
       await linkAttachmentToMessage(env, attachmentId, msg.id, conversationId);
     }
@@ -211,7 +221,7 @@ export async function sendMessage(request, env, corsHeaders, conversationId, opt
             contentType: 'text',
             contentAttributes: null,
             isPrivate: false,
-          });
+          }, ctx);
           botReplies.push(botMsg);
           // Log the escalation decision for audit (best-effort).
           const logPromise = recordAiCall(env, {
@@ -292,7 +302,7 @@ export async function sendMessage(request, env, corsHeaders, conversationId, opt
                 contentType: reply.items.length ? 'input_select' : 'text',
                 contentAttributes: reply.items.length ? { items: reply.items } : null,
                 isPrivate: false,
-              });
+              }, ctx);
               botReplies.push(botMsg);
               botReply = botMsg;
             }
@@ -316,7 +326,9 @@ export async function sendMessage(request, env, corsHeaders, conversationId, opt
         const flowResult = await runFlowForCustomerMessage(env, fresh, contact, content, ctx, contentAttributes);
 
         // Fix 1: Flow asked for AI fallback — user typed free-form text on a
-        // select step. Call AI for the actual answer, then re-offer the menu.
+        // select step. Call AI for the actual answer, then either jump them
+        // to a deeper menu (if AI emits <jump-to>) or re-offer the current
+        // menu.
         if (flowResult.ai_fallback) {
           let history = [];
           try {
@@ -327,6 +339,32 @@ export async function sendMessage(request, env, corsHeaders, conversationId, opt
             history = (results || []).reverse();
           } catch (_) {}
 
+          // Load the active sloten-main flow once so we can both validate
+          // jump targets and rebuild flow_state if we navigate.
+          let validJumpIds = new Set();
+          let mainFlowId = null;
+          try {
+            const flowRow = await env.DB.prepare(
+              `SELECT id, start_step_id, steps FROM bot_flows
+                WHERE tenant_id = ? AND name = 'sloten-main' AND is_active = 1 LIMIT 1`,
+            ).bind(conv.tenant_id).first();
+            if (flowRow) {
+              mainFlowId = flowRow.id;
+              const flowSteps = JSON.parse(flowRow.steps || '[]');
+              const tree = buildMenuTreeText(flowSteps, flowRow.start_step_id, { maxDepth: 4 });
+              validJumpIds = tree.validIds;
+            }
+          } catch (_) { /* navigation is optional */ }
+
+          // Deterministic keyword matching decides the navigation target —
+          // the AI is unreliable at picking the correct deep step ID, so we
+          // do this in JS. The AI's role is reduced to producing the friendly
+          // empathy text only.
+          const curStateId = (() => {
+            try { return JSON.parse(fresh.flow_state || 'null')?.step_id || null; } catch { return null; }
+          })();
+          const jumpToStepId = inferJumpTarget(flowResult.ai_fallback, validJumpIds, curStateId, { detectAnnouncement: detectAnnouncementQuery });
+
           const aiReply = await generateBotReply(env, {
             conversationId,
             tenantId: conv.tenant_id,
@@ -335,30 +373,84 @@ export async function sendMessage(request, env, corsHeaders, conversationId, opt
             history,
             menuContext: flowResult.current_menu, // { prompt, items }
           });
-          if (aiReply && aiReply.content) {
+
+          // Strip any <jump-to> tags the AI might have generated despite our
+          // instructions — we ignore AI-suggested navigation in favor of the
+          // deterministic match above.
+          let cleanText = String(aiReply?.content || '');
+          cleanText = cleanText.replace(/<jump-to>\s*[a-zA-Z0-9_-]+\s*<\/jump-to>/gi, '').trim();
+
+          if (cleanText) {
             const aiMsg = await insertMessage(env, {
               conversationId,
               tenantId: conv.tenant_id,
               senderType: 'bot', senderId: null,
-              content: aiReply.content,
-              contentType: aiReply.content_type || 'text',
-              contentAttributes: aiReply.content_attributes || null,
+              content: cleanText,
+              contentType: aiReply?.content_type || 'text',
+              contentAttributes: aiReply?.content_attributes || null,
               isPrivate: false,
-            });
+            }, ctx);
             botReplies.push(aiMsg);
-            // If AI decided to handoff (internal escalation), flip status.
-            if (aiReply.handoff) {
-              await env.DB.prepare(
-                `UPDATE conversations SET status='open', updated_at=datetime('now') WHERE id=?`,
-              ).bind(conversationId).run();
-            }
+          } else {
+            // Silent-empty guard (Fix D, 2026-05-06): generateBotReply returned
+            // success but empty content — typically a Gemini safetyBlock or
+            // finishReason=OTHER on borderline-sensitive queries (KYC, English,
+            // identity-related). Without this fallback the user would only see
+            // the menu re-display, making it look like the bot ignored the
+            // question. Insert a polite message so they know we tried.
+            const fallback = await insertMessage(env, {
+              conversationId,
+              tenantId: conv.tenant_id,
+              senderType: 'bot', senderId: null,
+              content: '申し訳ございません、ただいまうまくお答えできませんでした。下のメニューから関連項目をお選びいただくか、別の言い方でお試しください。',
+              contentType: 'text', contentAttributes: null, isPrivate: false,
+            }, ctx);
+            botReplies.push(fallback);
           }
-          // Re-offer the current menu so the user can jump back into the
-          // flow with one click. Preserved flow_state means any button press
-          // continues the conversation. Use the step's original prompt text
-          // (e.g. "ご希望の入金方法をお選びください。") instead of the generic
-          // fallback — feels natural alongside the AI's contextual response.
-          if (!aiReply?.handoff && flowResult.current_menu?.items?.length) {
+
+          // Handoff propagation — moved outside if(cleanText) so an empty
+          // AI reply with handoff=true (theoretical: escalation triggered
+          // but text suppressed by safety filter) still flips status.
+          if (aiReply?.handoff) {
+            await env.DB.prepare(
+              `UPDATE conversations SET status='open', updated_at=datetime('now') WHERE id=?`,
+            ).bind(conversationId).run();
+          }
+
+          if (jumpToStepId && mainFlowId && !aiReply?.handoff) {
+            // Navigate to the AI-suggested deep menu. Preserve any vars
+            // captured up to this point so jumping into a sub-flow that
+            // depends on previous answers still works.
+            let curVars = {};
+            try {
+              const cur = await env.DB.prepare('SELECT flow_state FROM conversations WHERE id = ?').bind(conversationId).first();
+              const parsed = cur?.flow_state ? JSON.parse(cur.flow_state) : null;
+              if (parsed && typeof parsed.vars === 'object' && parsed.vars) curVars = parsed.vars;
+            } catch (_) {}
+            const newState = JSON.stringify({ flow_id: mainFlowId, step_id: jumpToStepId, vars: curVars });
+            await env.DB.prepare(`UPDATE conversations SET flow_state = ?, updated_at = datetime('now') WHERE id = ?`)
+              .bind(newState, conversationId).run();
+            // Re-execute with no input — renders the destination menu.
+            const fresh2 = await env.DB.prepare('SELECT * FROM conversations WHERE id = ?').bind(conversationId).first();
+            const jumpResult = await executeFlow(env, fresh2, contact, null, ctx);
+            await env.DB.prepare(`UPDATE conversations SET flow_state = ?, updated_at = datetime('now') WHERE id = ?`)
+              .bind(jumpResult.state ? JSON.stringify(jumpResult.state) : null, conversationId).run();
+            for (const m of (jumpResult.messages || [])) {
+              const botMsg = await insertMessage(env, {
+                conversationId,
+                tenantId: conv.tenant_id,
+                senderType: 'bot', senderId: null,
+                content: m.content,
+                contentType: m.content_type || 'text',
+                contentAttributes: m.content_attributes || null,
+                isPrivate: false,
+              }, ctx);
+              botReplies.push(botMsg);
+            }
+          } else if (!aiReply?.handoff && flowResult.current_menu?.items?.length) {
+            // No jump — re-offer the current menu so the user can navigate
+            // manually. Use the step's original prompt text instead of a
+            // generic fallback so it feels natural alongside the AI's reply.
             const menuPrompt = flowResult.current_menu.prompt || 'メニューからお選びください。';
             const menuMsg = await insertMessage(env, {
               conversationId,
@@ -368,7 +460,7 @@ export async function sendMessage(request, env, corsHeaders, conversationId, opt
               contentType: 'input_select',
               contentAttributes: { items: flowResult.current_menu.items },
               isPrivate: false,
-            });
+            }, ctx);
             botReplies.push(menuMsg);
           }
           botReply = botReplies[botReplies.length - 1] || null;
@@ -385,7 +477,7 @@ export async function sendMessage(request, env, corsHeaders, conversationId, opt
               contentType: m.content_type || 'text',
               contentAttributes: m.content_attributes || null,
               isPrivate: false,
-            });
+            }, ctx);
             botReplies.push(botMsg);
           }
           botReply = botReplies[botReplies.length - 1] || null;
@@ -417,7 +509,7 @@ export async function sendMessage(request, env, corsHeaders, conversationId, opt
               contentType: reply.content_type || 'text',
               contentAttributes: reply.content_attributes,
               isPrivate: false,
-            });
+            }, ctx);
             botReplies.push(botReply);
             // Phase 1: if AI decided escalation, flip conversation to open so
             // operators pick it up immediately.
@@ -431,6 +523,27 @@ export async function sendMessage(request, env, corsHeaders, conversationId, opt
       } catch (e) {
         console.warn('[sendMessage] bot reply failed:', e.message, e.stack);
         logError(env, 'sendMessage:botReply', e, { conversation_id: conversationId }).catch(() => {});
+        // Silent-failure guard: when generateBotReply throws (Gemini API error,
+        // empty text with status='error', etc.) the user previously saw NO bot
+        // reply at all because bot_replies stayed []. Always insert a fallback
+        // text so the widget renders something actionable.
+        if (botReplies.length === 0) {
+          try {
+            const fallback = await insertMessage(env, {
+              conversationId,
+              tenantId: conv.tenant_id,
+              senderType: 'bot', senderId: null,
+              content: 'ご質問内容の処理中にエラーが発生しました。お手数ですが、もう一度ご質問いただくか、下のメニューからお選びください。',
+              contentType: 'text',
+              contentAttributes: null,
+              isPrivate: false,
+            }, ctx);
+            botReply = fallback;
+            botReplies.push(fallback);
+          } catch (insertErr) {
+            console.warn('[sendMessage] fallback insert also failed:', insertErr.message);
+          }
+        }
       }
     }
 

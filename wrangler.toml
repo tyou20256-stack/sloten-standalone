@@ -16,6 +16,7 @@ DEFAULT_TENANT_ID = "tenant_default"
 #   "anthropic" → uses ANTHROPIC_API_KEY
 # Override per environment.
 AI_PROVIDER = "gemini"
+STAFF_SESSION_TTL_SECONDS = "14400"
 
 # D1 — create with: wrangler d1 create sloten_standalone_db
 [[d1_databases]]

@@ -175,6 +175,12 @@ export function normalizeForInjectionCheck(s) {
   out = out.toLowerCase();
   // Strip zero-width / bidi / BOM
   out = out.replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/g, '');
+  // Strip Unicode tag block (E0000-E007F) \u2014 used for "ASCII smuggling"
+  // attacks where invisible tag chars carry hidden injection text. Browsers
+  // and most LLMs render these as the underlying ASCII so the attacker can
+  // hide "ignore previous instructions" inside what looks like a benign
+  // emoji or whitespace.
+  out = out.replace(/[\u{E0000}-\u{E007F}]/gu, '');
   // Collapse whitespace
   out = out.replace(/\s+/g, ' ').trim();
   return out;

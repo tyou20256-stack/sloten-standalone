@@ -111,7 +111,13 @@ function requireStaff(handler) {
     const staff = await resolveStaffFromCookie(request, env);
     if (staff) {
       request.__staff = staff;
-      return handler(request, env, corsHeaders, ...rest);
+      const resp = await handler(request, env, corsHeaders, ...rest);
+      if (staff._refreshedCookie) {
+        const nr = new Response(resp.body, resp);
+        nr.headers.append('Set-Cookie', staff._refreshedCookie);
+        return nr;
+      }
+      return resp;
     }
     return err('Unauthorized', 401, corsHeaders);
   };
@@ -127,7 +133,13 @@ function requireAdminRole(handler) {
     const staff = await resolveStaffFromCookie(request, env);
     if (staff && staff.role === 'admin') {
       request.__staff = staff;
-      return handler(request, env, corsHeaders, ...rest);
+      const resp = await handler(request, env, corsHeaders, ...rest);
+      if (staff._refreshedCookie) {
+        const nr = new Response(resp.body, resp);
+        nr.headers.append('Set-Cookie', staff._refreshedCookie);
+        return nr;
+      }
+      return resp;
     }
     return err(staff ? 'Forbidden (admin only)' : 'Unauthorized', staff ? 403 : 401, corsHeaders);
   };
@@ -168,7 +180,7 @@ export default {
         }
       }
       if (path === '/api/public/jackpot' && method === 'GET') {
-        return getPublicJackpot(request, env, corsHeaders);
+        return getPublicJackpot(request, env, corsHeaders, ctx);
       }
 
       // /widget alias → /widget/index.html (convenience).
