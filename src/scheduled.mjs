@@ -19,6 +19,7 @@
 import { extractFaqCandidates, getLastExtractionTs, setLastExtractionTs } from './extractor.mjs';
 import { runMetricsMonitor, runDailySummary } from './handlers/metrics-monitor.mjs';
 import { runClassifierAgreementReport } from './handlers/classifier-report.mjs';
+import { runSyntheticUptime } from './handlers/synthetic-uptime.mjs';
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const METRICS_INTERVAL_MS = 5 * 60 * 1000;
@@ -87,6 +88,39 @@ export async function handleScheduled(event, env, ctx) {
     }
   } catch (e) {
     console.error('[scheduled] daily summary error:', e.message);
+  }
+
+  // --- 4a) Synthetic uptime probe (00:10 UTC = 09:10 JST)
+  // Runs end-to-end AI chat probes daily. Catches integration breakage that
+  // single-component health checks miss (e.g. Gemini API valid but FAQ broken).
+  try {
+    const now = new Date();
+    if (now.getUTCHours() === 0 && now.getUTCMinutes() >= 10 && now.getUTCMinutes() <= 14) {
+      const kv = env.SESSION_KV;
+      const dayKey = `synthetic:uptime:${new Date().toISOString().slice(0, 10)}`;
+      let alreadyRan = false;
+      if (kv) try { alreadyRan = !!(await kv.get(dayKey)); } catch (_) {}
+      if (!alreadyRan) {
+        await runSyntheticUptime(env, ctx);
+        if (kv) try { await kv.put(dayKey, '1', { expirationTtl: 26 * 60 * 60 }); } catch (_) {}
+      }
+    }
+  } catch (e) {
+    console.error('[scheduled] synthetic uptime error:', e.message);
+  }
+
+  // --- 4a2) Weekly DB ANALYZE (Sunday 18:01 UTC = Monday 03:01 JST)
+  // Refreshes SQLite query planner stats so index decisions stay good as
+  // tables grow. Cheap (~ms) on D1 — runs in the same Sunday window as
+  // FAQ extraction so weekly maintenance is consolidated.
+  try {
+    const now = new Date();
+    if (now.getUTCDay() === 0 && now.getUTCHours() === 18 && now.getUTCMinutes() <= 5) {
+      await env.DB.prepare('ANALYZE').run();
+      console.log('[scheduled] D1 ANALYZE complete');
+    }
+  } catch (e) {
+    console.error('[scheduled] ANALYZE error:', e.message);
   }
 
   // --- 4b) Classifier shadow agreement report (00:05 UTC = 09:05 JST)

@@ -160,6 +160,66 @@ export default {
 
     try {
       // --- Public ---
+      // Per-binding deep health (operational deep-dive endpoints).
+      // Each returns 200 only when that binding is fully functional.
+      if (path === '/health/db' && method === 'GET') {
+        try {
+          const r = await env.DB.prepare('SELECT COUNT(*) AS n FROM messages WHERE created_at > datetime(\'now\', \'-1 hour\')').first();
+          return ok({ status: 'ok', binding: 'DB', recent_messages_1h: r?.n ?? null }, corsHeaders);
+        } catch (e) {
+          return new Response(JSON.stringify({ status: 'error', binding: 'DB', error: e.message }),
+            { status: 503, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+        }
+      }
+      if (path === '/health/kv' && method === 'GET') {
+        const probe = `health:probe:${Date.now()}`;
+        try {
+          const kv = env.RATE_LIMITER || env.STATE_KV || env.SESSION_KV;
+          if (!kv) return new Response('{"status":"missing","binding":"KV"}', { status: 503, headers: corsHeaders });
+          await kv.put(probe, '1', { expirationTtl: 60 });
+          const v = await kv.get(probe);
+          await kv.delete(probe);
+          return ok({ status: v === '1' ? 'ok' : 'degraded', binding: 'KV', round_trip_ok: v === '1' }, corsHeaders);
+        } catch (e) {
+          return new Response(JSON.stringify({ status: 'error', binding: 'KV', error: e.message }),
+            { status: 503, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+        }
+      }
+      if (path === '/health/r2' && method === 'GET') {
+        if (!env.FILES) return new Response('{"status":"missing","binding":"R2"}', { status: 503, headers: corsHeaders });
+        try {
+          const r = await env.FILES.list({ limit: 1 });
+          return ok({ status: 'ok', binding: 'R2', objects_visible: r.objects?.length ?? 0 }, corsHeaders);
+        } catch (e) {
+          return new Response(JSON.stringify({ status: 'error', binding: 'R2', error: e.message }),
+            { status: 503, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+        }
+      }
+      if (path === '/health/vectorize' && method === 'GET') {
+        if (!env.VECTORIZE) return new Response('{"status":"missing","binding":"VECTORIZE"}', { status: 503, headers: corsHeaders });
+        try {
+          // Vectorize doesn't have a cheap probe — describe is closest
+          const r = await env.VECTORIZE.describe?.();
+          return ok({ status: 'ok', binding: 'VECTORIZE', dimensions: r?.config?.dimensions ?? null }, corsHeaders);
+        } catch (e) {
+          return new Response(JSON.stringify({ status: 'error', binding: 'VECTORIZE', error: e.message }),
+            { status: 503, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+        }
+      }
+      if (path === '/health/pachi' && method === 'GET') {
+        if (!env.PACHI_API_URL) return new Response('{"status":"disabled","binding":"PACHI"}', { status: 200, headers: corsHeaders });
+        try {
+          const ac = new AbortController();
+          const t = setTimeout(() => ac.abort(), 4000);
+          const r = await fetch(`${env.PACHI_API_URL}/health`, { signal: ac.signal,
+            headers: env.PACHI_API_KEY ? { Authorization: `Bearer ${env.PACHI_API_KEY}` } : {} });
+          clearTimeout(t);
+          return ok({ status: r.ok ? 'ok' : 'degraded', binding: 'PACHI', upstream: r.status }, corsHeaders);
+        } catch (e) {
+          return new Response(JSON.stringify({ status: 'error', binding: 'PACHI', error: e.message }),
+            { status: 503, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+        }
+      }
       if (path === '/health' && method === 'GET') {
         // Deep health: verify DB is reachable + check critical env presence.
         // Critical secrets: missing → degraded so dashboard alerts fire.

@@ -516,6 +516,7 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
   let retried = false;
   let retryFinishReason = null;
 
+  let providerFallback = null; // 'anthropic' if we fall back from Gemini
   try {
     // PII-masked input is sent to the LLM too — never forward raw emails/
     // phone numbers / account IDs to third-party providers.
@@ -525,7 +526,23 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
       result = await callAnthropic(env.ANTHROPIC_API_KEY, system, maskedInput, model);
     } else {
       if (!env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not set');
-      result = await callGemini(env.GEMINI_API_KEY, system, maskedInput, model);
+      try {
+        result = await callGemini(env.GEMINI_API_KEY, system, maskedInput, model);
+      } catch (geminiErr) {
+        // Provider fallback: Gemini exhausted retries with HTTP 5xx → if
+        // Anthropic key present, try Haiku as fallback. This pushes error_rate
+        // toward 0 during Gemini outages without changing user-facing UX.
+        // Only triggers on transient HTTP errors — auth/quota errors fail through.
+        const isTransient = /Gemini HTTP (429|502|503|504)/.test(geminiErr.message);
+        if (isTransient && env.ANTHROPIC_API_KEY) {
+          console.warn('[ai-chat] Gemini exhausted — falling back to Anthropic Haiku');
+          const fbModel = env.ANTHROPIC_MODEL || 'claude-haiku-4-5';
+          result = await callAnthropic(env.ANTHROPIC_API_KEY, system, maskedInput, fbModel);
+          providerFallback = 'anthropic';
+        } else {
+          throw geminiErr;
+        }
+      }
     }
     text = result.text || '';
     tokensIn = result.tokens_in;
@@ -634,6 +651,10 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
       safety_ratings: safetyRatings,
       retried,
       retry_finish_reason: retryFinishReason,
+      // Provider fallback observability: when Gemini exhausted retries and
+      // Anthropic took over, the trace shows it. Useful for cost / quality
+      // analysis (Anthropic responses may differ in style).
+      provider_fallback: providerFallback,
       // Intent classification (added 2026-05-06): so we can later analyze
       // which RAG path fired and whether dynamic FAQ exclusion was active.
       pachi_detected: willFirePachi,
@@ -675,5 +696,9 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
     } catch (_) {}
     return { content: 'ただいま担当者におつなぎします。少々お待ちください。', content_type: 'text' };
   }
-  return { content: text, content_type: 'text' };
+  // Expose pachi citations as content_attributes when machine RAG fired.
+  // Lets the widget UI optionally show a "出典: <機種名>" footer for trust.
+  // Schema: { citations: [{machine_id, name, source}] }
+  const attrs = pachiCitations.length > 0 ? { citations: pachiCitations } : null;
+  return { content: text, content_type: 'text', content_attributes: attrs };
 }
