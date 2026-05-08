@@ -261,13 +261,13 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
   const model = provider === 'anthropic'
     ? (env.ANTHROPIC_MODEL || 'claude-haiku-4-5')
     : (env.GEMINI_MODEL || 'gemini-2.5-flash-lite');
-  // FTS5 BM25 retrieval (or priority fallback). User query drives relevance.
-  const retrieval = await loadContext(env, tenantId, customerMessage);
+  // FTS5 BM25 retrieval + active prompt pick — independent, parallelize.
+  // Saves ~100-200ms vs the previous sequential awaits on cold paths.
+  const [retrieval, promptRow] = await Promise.all([
+    loadContext(env, tenantId, customerMessage),
+    pickActivePrompt(env, tenantId).catch(() => null),
+  ]);
   const { faqRows, kbRows } = retrieval;
-
-  // Choose active prompt via weighted random (A/B testing). Fall back to hard-coded.
-  let promptRow = null;
-  try { promptRow = await pickActivePrompt(env, tenantId); } catch (_) {}
   const promptHeader = promptRow ? promptRow.system_prompt : null;
 
   // Pre-detect specialized RAG paths so we can exclude FAQ/KB from the

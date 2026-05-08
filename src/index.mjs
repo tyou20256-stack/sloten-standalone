@@ -160,6 +160,30 @@ export default {
 
     try {
       // --- Public ---
+      // Build / version info — useful for debug, ops dashboards, and rollback.
+      // Fields:
+      //   - worker_version: CF-injected hash of the deployed bundle (when available)
+      //   - environment: var from wrangler.*.toml
+      //   - api_provider: gemini|anthropic
+      //   - has_anthropic_fallback: true when ANTHROPIC_API_KEY is set
+      //   - cron_features: list of scheduled jobs that are wired up
+      if (path === '/version' && method === 'GET') {
+        return ok({
+          worker_version: env.CF_VERSION_METADATA?.id || null,
+          environment: env.ENVIRONMENT || 'unknown',
+          ai_provider: env.AI_PROVIDER || 'gemini',
+          has_anthropic_fallback: !!env.ANTHROPIC_API_KEY,
+          features: {
+            classifier_shadow_mode: true,
+            response_cache: true,
+            dynamic_rag_reduction: true,
+            synthetic_uptime: true,
+            db_analyze_weekly: true,
+          },
+          tenant: env.DEFAULT_TENANT_ID || 'tenant_default',
+          timestamp: new Date().toISOString(),
+        }, corsHeaders);
+      }
       // Per-binding deep health (operational deep-dive endpoints).
       // Each returns 200 only when that binding is fully functional.
       if (path === '/health/db' && method === 'GET') {
@@ -284,6 +308,7 @@ export default {
         // already cache-busting via script src anyway; the extra revalidate
         // cost is trivial (304s from CF).
         if (assetRes.ok && /\.(m?js|css|html)$/.test(path)) {
+          // Cache-control override (security headers come from public/_headers).
           const headers = new Headers(assetRes.headers);
           headers.set('Cache-Control', 'no-cache, no-store, must-revalidate');
           headers.set('Pragma', 'no-cache');

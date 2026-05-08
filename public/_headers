@@ -1,0 +1,42 @@
+# Security headers for static assets — Cloudflare Pages syntax.
+# Workers Static Assets honors this file when present in the assets dir.
+#
+# Order: more-specific paths first, then fallbacks.
+# See docs/CSP.md for rationale (link will exist post-merge).
+
+# Widget — tightest CSP since no inline scripts and limited 3rd-party deps.
+/widget/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://sloten.io; connect-src 'self' wss://sloten-standalone-staging-bk.rcc-aoki.workers.dev wss://sloten-standalone.rcc-aoki.workers.dev https://sloten-standalone-staging-bk.rcc-aoki.workers.dev https://sloten-standalone.rcc-aoki.workers.dev; frame-ancestors 'self'; base-uri 'self';
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Frame-Options: SAMEORIGIN
+  Strict-Transport-Security: max-age=15552000; includeSubDomains
+  Permissions-Policy: geolocation=(), microphone=(), camera=()
+
+# Admin — needs 'unsafe-inline' for legacy SPA bootstrap.
+/admin/*
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'self'; base-uri 'self';
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Frame-Options: SAMEORIGIN
+  Strict-Transport-Security: max-age=15552000; includeSubDomains
+  Permissions-Policy: geolocation=(), microphone=(), camera=()
+  Cache-Control: no-cache, no-store, must-revalidate
+
+# Operator interface (similar to admin, may load /shared/ scripts)
+/operator/*
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'self'; base-uri 'self';
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Frame-Options: SAMEORIGIN
+  Strict-Transport-Security: max-age=15552000; includeSubDomains
+
+# Shared assets (CSS, JS used by multiple surfaces)
+/shared/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+
+# Default fallback for any other static asset
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
