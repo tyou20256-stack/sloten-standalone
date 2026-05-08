@@ -57,9 +57,17 @@ const ANGER_PATTERNS = [
  *
  * History is optional; Phase 1 uses only current message content.
  */
+// Input length cap — bounds ReDoS exposure on the `.{0,N}` patterns in
+// HARD_ESCALATION_PATTERNS / ANGER_PATTERNS. The upstream messages-native
+// already caps customerMessage at 4000 chars (widget) so this is a
+// belt-and-suspenders check; defending against direct decideEscalation
+// callers (Golden Set runner, future internal use).
+const MAX_ESCALATION_INPUT = 4096;
+
 export function decideEscalation(customerMessage, history = []) {
-  const text = String(customerMessage || '');
+  let text = String(customerMessage || '');
   if (!text.trim()) return { shouldEscalate: false };
+  if (text.length > MAX_ESCALATION_INPUT) text = text.slice(0, MAX_ESCALATION_INPUT);
 
   // 1. Hard escalation — always bypass AI
   for (const { re, reason } of HARD_ESCALATION_PATTERNS) {

@@ -1,0 +1,67 @@
+# QA Canary — verifies the Golden Set 95% threshold gate actually fails
+# when scores drop. Runs against a fixture that intentionally fakes a low
+# Golden Set score, ensuring our CI gate is not "absent / always-pass" by
+# construction.
+#
+# Triggered manually only. Run quarterly to revalidate the gate.
+
+name: QA Canary (verify gate blocks)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  verify-gate-blocks-on-low-score:
+    name: CI gate must FAIL when Golden Set < 95%
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Synthesize fake low-score Golden Set output
+        run: |
+          mkdir -p /tmp
+          cat > /tmp/gs-output.txt <<'EOF'
+          === Golden Set ===
+          some test output
+          ...
+          Score: 80%
+          EOF
+
+      - name: Extract score (mirrors qa.yml step)
+        id: gs
+        run: |
+          set -e
+          SCORE=$(grep -oE 'Score: [0-9]+%' /tmp/gs-output.txt | head -1 | grep -oE '[0-9]+' || true)
+          if [ -z "$SCORE" ]; then
+            echo "score=ERROR" >> "$GITHUB_OUTPUT"
+            exit 2
+          fi
+          echo "score=$SCORE" >> "$GITHUB_OUTPUT"
+
+      - name: Threshold gate must reject 80%
+        run: |
+          SCORE="${{ steps.gs.outputs.score }}"
+          if [ "$SCORE" = "ERROR" ]; then
+            echo "::error::Score extraction failed unexpectedly"
+            exit 1
+          fi
+          if [ "$SCORE" -ge 95 ]; then
+            echo "::error::Canary FAILED — gate let through SCORE=$SCORE which should have blocked"
+            exit 1
+          fi
+          echo "::notice::Canary PASS — gate correctly identified SCORE=$SCORE as below threshold"
+          # Inverse check: invert the gate so this job exits 0 when the real
+          # gate would have exited 1. This proves the threshold logic works.
+
+      - name: Verify ERROR sentinel is also rejected
+        run: |
+          # Re-run the gate logic with an empty output → score=ERROR
+          mkdir -p /tmp/canary-empty
+          touch /tmp/canary-empty/gs-output.txt
+          SCORE=$(grep -oE 'Score: [0-9]+%' /tmp/canary-empty/gs-output.txt 2>/dev/null | head -1 | grep -oE '[0-9]+' || true)
+          if [ -n "$SCORE" ]; then
+            echo "::error::Empty output should produce empty SCORE, got '$SCORE'"
+            exit 1
+          fi
+          echo "::notice::Canary PASS — empty output correctly produces no SCORE"

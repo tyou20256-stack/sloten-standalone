@@ -27,8 +27,12 @@ function b64urlDecode(str) {
   return out;
 }
 
+// HMAC key import — delegates to the shared lib/crypto.mjs to eliminate the
+// duplicated subtle.importKey wrapper. The b64url-wrapped sign/verify still
+// happens in this file because the JWT-like token format is owned here.
+import { importHmacKey } from '../lib/crypto.mjs';
 async function importKey(signingKey) {
-  return crypto.subtle.importKey('raw', ENC.encode(signingKey), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
+  return importHmacKey(signingKey, ['sign', 'verify']);
 }
 
 /** Resolve signing key: prefer dedicated STAFF_SESSION_SIGNING_KEY, fallback to shared SESSION_SIGNING_KEY. */

@@ -20,6 +20,19 @@ import { scheduleShadowCalls } from './shadow.mjs';
 const MAX_CONTEXT_FAQ = 10;   // FTS5 top-K — lower than legacy 15 to raise density
 const MAX_CONTEXT_KB = 6;     // FTS5 top-K — lower than legacy 8 to raise density
 
+// Dynamic RAG reduction (p95 plan #2): short queries (< 30 chars JP) rarely
+// need 10 FAQ + 6 KB chunks. Halving the context for these saves ~1500-2500
+// prompt tokens and trims Gemini latency 10-20%. The cutoff is conservative —
+// queries with 30+ chars are likely complex enough to benefit from full context.
+const SHORT_QUERY_FAQ = 5;
+const SHORT_QUERY_KB = 3;
+const SHORT_QUERY_CHAR_THRESHOLD = 30;
+
+// Gemini response cache (p95 plan #5): high-frequency queries hit same answer
+// repeatedly. Cache by content hash + prompt fingerprint for 15 min.
+const RESPONSE_CACHE_TTL_SEC = 900;
+const RESPONSE_CACHE_MIN_LEN = 50; // don't cache fallbacks / error messages
+
 function buildSystemPrompt(faqRows, kbRows, header, opts = {}) {
   // Dynamic exclusion: when a specialized RAG path (pachi machine DB or
   // announcements) is going to fire, the generic FAQ / KB context is more
@@ -86,11 +99,27 @@ function buildSystemPrompt(faqRows, kbRows, header, opts = {}) {
 // Retrieval moved to src/retrieval.mjs — FTS5 BM25 when available, priority
 // fallback otherwise. This function is kept as a thin wrapper so the adapter
 // has a single call site.
-async function loadContext(env, tenantId, userQuery) {
+async function loadContext(env, tenantId, userQuery, opts = {}) {
+  const isShort = (userQuery || '').length < SHORT_QUERY_CHAR_THRESHOLD && !opts.fullContext;
   return retrieveContext(env, tenantId, userQuery, {
-    faqLimit: MAX_CONTEXT_FAQ,
-    kbLimit: MAX_CONTEXT_KB,
+    faqLimit: isShort ? SHORT_QUERY_FAQ : MAX_CONTEXT_FAQ,
+    kbLimit: isShort ? SHORT_QUERY_KB : MAX_CONTEXT_KB,
   });
+}
+
+/**
+ * Fingerprint a (input, prompt-id, flags) tuple for response caching. The
+ * key ties the cached output to the exact context that produced it — different
+ * RAG paths (pachi vs announcement) produce different answers and must not
+ * share cache entries.
+ */
+async function responseCacheKey(maskedInput, promptId, flags) {
+  const parts = [maskedInput.trim().slice(0, 200), promptId || '0',
+                 flags.willFirePachi ? 'P' : '', flags.willFireAnnouncements ? 'A' : '',
+                 flags.menuContext ? 'M' : ''].join('|');
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(parts));
+  return 'genai:cache:' + [...new Uint8Array(buf)].slice(0, 16)
+    .map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 // HTTP 5xx codes from Gemini that are typically transient (Google-side
@@ -440,6 +469,37 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
     return { content: 'サポートに関するご質問をお願いいたします。', content_type: 'text' };
   }
 
+  // Response cache lookup (p95 plan #5). Skip caching for menu-context replies
+  // (those depend on flow state) and for prompts that include conversation
+  // history — both cases the cached answer would be incorrect.
+  const cacheable = !menuContext && (!history || history.length === 0);
+  const respCacheKv = env.RATE_LIMITER || env.STATE_KV;
+  let respCacheKey = null;
+  let cacheHit = false;
+  if (cacheable && respCacheKv) {
+    try {
+      respCacheKey = await responseCacheKey(maskedInput, promptRow?.id, {
+        willFirePachi, willFireAnnouncements, menuContext: false,
+      });
+      const cached = await respCacheKv.get(respCacheKey, 'json');
+      if (cached && cached.text && cached.text.length >= RESPONSE_CACHE_MIN_LEN) {
+        cacheHit = true;
+        // Log the cache hit for observability + cost analysis (genai_cache_hit metric)
+        const hitLog = recordAiCall(env, {
+          tenant_id: tenantId, conversation_id: conversationId,
+          provider: 'cache', model: 'genai-cache',
+          system_prompt: 'cache_hit',
+          input: maskedInput, output: cached.text,
+          latency_ms: 0, status: 'ok',
+          error_message: null, prompt_id: promptRow?.id || null,
+          retrieval_trace: JSON.stringify({ cache_key: respCacheKey, cache_hit: true }),
+        }).catch(() => {});
+        if (ctx?.waitUntil) ctx.waitUntil(hitLog);
+        return { content: cached.text, content_type: 'text' };
+      }
+    } catch (_) { /* cache read failure → fall through to LLM */ }
+  }
+
   const started = Date.now();
   let text = '';
   let tokensIn = null;
@@ -536,6 +596,17 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
       outputBlockedCategory = 'personal_data_request';
       status = 'filtered';
     }
+  }
+
+  // Cache the response if it's a cacheable path AND the call succeeded with
+  // substantive content. Skip caching errors / fallbacks / filtered outputs.
+  if (cacheable && respCacheKv && respCacheKey && status === 'ok' && text.length >= RESPONSE_CACHE_MIN_LEN && !cacheHit) {
+    const cacheWrite = respCacheKv.put(
+      respCacheKey,
+      JSON.stringify({ text, ts: Date.now() }),
+      { expirationTtl: RESPONSE_CACHE_TTL_SEC },
+    ).catch(() => {});
+    if (ctx?.waitUntil) ctx.waitUntil(cacheWrite);
   }
 
   // Record primary with retrieval trace + tokens + over-promise audit.

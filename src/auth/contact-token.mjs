@@ -22,8 +22,10 @@ function b64urlDecode(str) {
   return out;
 }
 
+// HMAC key import — shared with session.mjs via lib/crypto.mjs.
+import { importHmacKey } from '../lib/crypto.mjs';
 async function importKey(secret) {
-  return crypto.subtle.importKey('raw', ENC.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
+  return importHmacKey(secret, ['sign', 'verify']);
 }
 
 /** Prefer dedicated CONTACT_TOKEN_SIGNING_KEY, fallback to shared SESSION_SIGNING_KEY. */

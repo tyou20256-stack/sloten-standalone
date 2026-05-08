@@ -18,6 +18,7 @@
 
 import { extractFaqCandidates, getLastExtractionTs, setLastExtractionTs } from './extractor.mjs';
 import { runMetricsMonitor, runDailySummary } from './handlers/metrics-monitor.mjs';
+import { runClassifierAgreementReport } from './handlers/classifier-report.mjs';
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 const METRICS_INTERVAL_MS = 5 * 60 * 1000;
@@ -86,6 +87,18 @@ export async function handleScheduled(event, env, ctx) {
     }
   } catch (e) {
     console.error('[scheduled] daily summary error:', e.message);
+  }
+
+  // --- 4b) Classifier shadow agreement report (00:05 UTC = 09:05 JST)
+  // Runs after daily summary to give the day's classifier shadow data.
+  // KV-gated for the day so repeat triggers within the cron window only fire once.
+  try {
+    const now = new Date();
+    if (now.getUTCHours() === 0 && now.getUTCMinutes() >= 5 && now.getUTCMinutes() <= 9) {
+      await runClassifierAgreementReport(env);
+    }
+  } catch (e) {
+    console.error('[scheduled] classifier agreement report error:', e.message);
   }
 
   // --- 5) Weekly FAQ extraction

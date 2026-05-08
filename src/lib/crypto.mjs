@@ -1,22 +1,35 @@
 // Shared cryptographic primitives.
 //
-// Currently consolidates the HMAC-SHA256 helpers that announcements.mjs uses
-// for KV cache integrity. session.mjs / contact-token.mjs deliberately use
-// their own base64url-output variant tightly coupled to the JWT-like token
-// format; switching them to a shared helper would risk session breakage and
-// is left as future work. The hex variant here is for new HMAC use cases
-// (cache integrity, signed URLs etc).
+// Three HMAC-SHA256 output formats are exposed to cover the existing call
+// sites without breaking token formats:
+//
+//   - hmacSignRaw      → ArrayBuffer (used by session.mjs / contact-token
+//                        which b64url-encode themselves for JWT-like tokens)
+//   - hmacSignHex      → 64-char lowercase hex (used by announcements.mjs
+//                        for KV cache integrity)
+//   - hmacVerifyHex    → constant-time hex compare
+//
+// The raw variant lets session.mjs share key-import while preserving its
+// b64url(sig) wrapping. Earlier this module only had the hex variants, so
+// session.mjs had its own duplicated importKey + sign; that's now consolidated.
 
 const ENC = new TextEncoder();
 
-async function importHmacKey(secret) {
+export async function importHmacKey(secret, usages = ['sign']) {
   return crypto.subtle.importKey(
     'raw',
     ENC.encode(secret),
     { name: 'HMAC', hash: 'SHA-256' },
     false,
-    ['sign'],
+    usages,
   );
+}
+
+/** HMAC-SHA256 sign returning the raw ArrayBuffer signature. */
+export async function hmacSignRaw(secret, message) {
+  if (!secret) throw new Error('hmacSignRaw: secret required');
+  const key = await importHmacKey(secret);
+  return crypto.subtle.sign('HMAC', key, ENC.encode(message));
 }
 
 /**
@@ -25,9 +38,7 @@ async function importHmacKey(secret) {
  * from producing equivalent signatures across unrelated use cases.
  */
 export async function hmacSignHex(secret, message) {
-  if (!secret) throw new Error('hmacSignHex: secret required');
-  const key = await importHmacKey(secret);
-  const sig = await crypto.subtle.sign('HMAC', key, ENC.encode(message));
+  const sig = await hmacSignRaw(secret, message);
   return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 

@@ -622,5 +622,59 @@
     "expected_handoff": false,
     "expected_jump": null,
     "source": "drafted"
+  },
+  {
+    "id": "g-063",
+    "category": "escalation",
+    "input": "退会したいのですが手順を教えて",
+    "expected_phrases": [],
+    "forbidden_phrases": [],
+    "expected_handoff": true,
+    "expected_jump": null,
+    "source": "drafted",
+    "note": "退会 keyword should hard-escalate (account_deletion reason)"
+  },
+  {
+    "id": "g-064",
+    "category": "faq",
+    "input": "ログイン方法を教えてください",
+    "expected_phrases": [],
+    "forbidden_phrases": ["継続率", "天井", "機種データベース"],
+    "expected_handoff": false,
+    "expected_jump": null,
+    "source": "drafted",
+    "note": "negative test — 'ログイン' must NOT route to pachi (login is in NON_MACHINE_BLACKLIST)"
+  },
+  {
+    "id": "g-065",
+    "category": "faq",
+    "input": "メールアドレスの変更方法",
+    "expected_phrases": [],
+    "forbidden_phrases": ["継続率", "機種データベース", "天井"],
+    "expected_handoff": false,
+    "expected_jump": null,
+    "source": "drafted",
+    "note": "negative test — 'メールアドレス' should not trip pachi probe"
+  },
+  {
+    "id": "g-066",
+    "category": "faq",
+    "input": "サポートは何時から何時まで",
+    "expected_phrases": ["24時間"],
+    "forbidden_phrases": ["機密"],
+    "expected_handoff": false,
+    "expected_jump": null,
+    "source": "drafted"
+  },
+  {
+    "id": "g-067",
+    "category": "machine_spec",
+    "input": "アイムジャグラーEXの機械割は？",
+    "expected_phrases": [],
+    "forbidden_phrases": ["BUY機能", "FAQ から"],
+    "expected_handoff": false,
+    "expected_jump": null,
+    "source": "drafted",
+    "note": "common machine name — pachi DB should match"
   }
 ]
