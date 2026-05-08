@@ -1,30 +1,38 @@
 /*
- * Sloten Chat Widget — scoped CSS.
- * All selectors prefixed `.sloten-chat-` to avoid host page collisions.
- * Theme via CSS variables on .sloten-chat-root.
+ * Sloten Chat Widget — v20260430.fix14
  *
- * Design: dark navy header + gold accents (matches sloten.io brand).
+ * All selectors prefixed `.sloten-chat-` to avoid host-page collisions.
+ * Theme:
+ *   - Dark navy header (#0f172a → #1e293b)
+ *   - Gold brand accent (#fbbf24)
+ *   - White welcome card on light grey panel
+ *   - 2-column menu grid with circular SVG icons
  */
 
 .sloten-chat-root {
-  --slc-bg: #eef1f3;
-  --slc-header-bg: #0f2233;
-  --slc-header-bg2: #143249;
-  --slc-brand-gold: #f5c518;
-  --slc-brand-gold-dk: #d9a900;
-  --slc-fg: #111827;
+  --slc-panel-bg: #f4f5f7;
+  --slc-card-bg: #ffffff;
+  --slc-header-bg: #0f172a;
+  --slc-header-bg2: #1e293b;
+  --slc-brand-gold: #fbbf24;
+  --slc-brand-gold-soft: #fef3c7;
+  --slc-fg: #0f172a;
   --slc-fg-inv: #ffffff;
-  --slc-muted: #6b7280;
+  --slc-fg-muted: #64748b;
+  --slc-fg-warn: #c2410c;
   --slc-border: #e5e7eb;
   --slc-online: #22c55e;
   --slc-bubble-customer: #1e40af;
   --slc-bubble-customer-fg: #ffffff;
-  --slc-bubble-bot: #ffffff;
-  --slc-bubble-bot-fg: #111827;
-  --slc-bubble-staff: #ecfdf5;
+  --slc-bubble-bot-bg: #ffffff;
+  --slc-bubble-bot-fg: #0f172a;
+  --slc-bubble-staff-bg: #ecfdf5;
   --slc-bubble-staff-fg: #065f46;
-  --slc-shadow: 0 12px 36px rgba(0,0,0,0.20);
-  --slc-radius: 14px;
+  --slc-shadow-card: 0 1px 3px rgba(15, 23, 42, 0.08), 0 4px 12px rgba(15, 23, 42, 0.04);
+  --slc-shadow-panel: 0 12px 36px rgba(15, 23, 42, 0.20);
+  --slc-radius-panel: 18px;
+  --slc-radius-card: 14px;
+  --slc-radius-pill: 999px;
   --slc-font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Yu Gothic UI", sans-serif;
 
   position: fixed;
@@ -46,9 +54,10 @@
   background: var(--slc-brand-gold);
   color: var(--slc-header-bg);
   border: none; cursor: pointer;
-  box-shadow: var(--slc-shadow);
+  box-shadow: var(--slc-shadow-panel);
   display: flex; align-items: center; justify-content: center;
   transition: transform 0.15s ease;
+  position: relative;
 }
 .sloten-chat-launcher:hover { transform: scale(1.06); }
 .sloten-chat-launcher svg { width: 30px; height: 30px; }
@@ -60,13 +69,13 @@
 
 /* --- Panel --- */
 .sloten-chat-panel {
-  width: 380px;
-  max-width: calc(100vw - 40px);
-  height: 600px;
-  max-height: calc(100vh - 100px);
-  background: var(--slc-bg);
-  border-radius: var(--slc-radius);
-  box-shadow: var(--slc-shadow);
+  width: 400px;
+  max-width: calc(100vw - 32px);
+  height: 680px;
+  max-height: calc(100vh - 80px);
+  background: var(--slc-panel-bg);
+  border-radius: var(--slc-radius-panel);
+  box-shadow: var(--slc-shadow-panel);
   display: none;
   flex-direction: column;
   overflow: hidden;
@@ -74,156 +83,367 @@
 .sloten-chat-root[data-open="1"] .sloten-chat-panel { display: flex; }
 .sloten-chat-root[data-open="1"] .sloten-chat-launcher { display: none; }
 
-/* --- Header --- */
+/* --- Header (compact) ---
+   Reduced from ~88px to ~64px tall for more content area below.
+   Avatar 52→44, title 20→17, subtitle 13→11.5, padding 18→12. */
 .sloten-chat-header {
   background: linear-gradient(180deg, var(--slc-header-bg) 0%, var(--slc-header-bg2) 100%);
   color: var(--slc-fg-inv);
-  padding: 14px 16px;
-  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px 12px 12px;
+  display: flex; align-items: center; gap: 11px;
+  flex-shrink: 0;
 }
 .sloten-chat-header-avatar {
-  width: 44px; height: 44px; border-radius: 10px;
+  width: 44px; height: 44px;
+  border-radius: 10px;
   background: var(--slc-brand-gold);
   color: var(--slc-header-bg);
   display: flex; align-items: center; justify-content: center;
-  font-weight: 800; font-size: 16px; letter-spacing: 0.5px;
+  font-weight: 900; font-size: 16px; letter-spacing: 0.5px;
   flex-shrink: 0;
+  overflow: hidden;
+}
+.sloten-chat-header-avatar img {
+  width: 100%; height: 100%; object-fit: cover;
 }
 .sloten-chat-header-text { flex: 1; min-width: 0; }
-.sloten-chat-title { font-weight: 700; font-size: 16px; line-height: 1.2; }
+.sloten-chat-title {
+  font-weight: 800; font-size: 17px; line-height: 1.15;
+  letter-spacing: 0.2px;
+}
 .sloten-chat-subtitle {
-  font-size: 12px; opacity: 0.85; margin-top: 4px;
+  font-size: 11.5px;
+  color: rgba(255,255,255,0.72);
+  margin-top: 3px;
   display: flex; align-items: center; gap: 6px;
+  font-weight: 500;
 }
 .sloten-chat-subtitle::before {
-  content: ""; display: inline-block; width: 8px; height: 8px;
-  border-radius: 50%; background: var(--slc-online);
-  box-shadow: 0 0 0 2px rgba(34,197,94,0.25);
+  content: ""; display: inline-block;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--slc-online);
+  box-shadow: 0 0 0 2.5px rgba(34, 197, 94, 0.25);
+  flex-shrink: 0;
 }
 .sloten-chat-close {
-  background: rgba(255,255,255,0.1); border: none;
+  background: rgba(255,255,255,0.08);
+  border: none;
   color: var(--slc-fg-inv); cursor: pointer;
-  width: 32px; height: 32px; border-radius: 8px;
-  font-size: 18px; line-height: 1; padding: 0;
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  font-size: 16px; line-height: 1;
+  padding: 0;
   display: flex; align-items: center; justify-content: center;
   transition: background 0.12s;
-}
-.sloten-chat-close:hover { background: rgba(255,255,255,0.2); }
-
-/* --- Fixed banners (welcome + dreampot) always visible under header --- */
-/* Fix 6: sticky at top of panel so they never scroll out of view when the
-   user scrolls through long message histories. */
-.sloten-chat-pinned {
-  padding: 12px 12px 0;
-  display: flex; flex-direction: column; gap: 10px;
-  position: sticky;
-  top: 0;
-  z-index: 5;
-  background: var(--slc-panel-bg, #fff);
-}
-.sloten-chat-welcome {
-  background: linear-gradient(180deg, var(--slc-header-bg) 0%, var(--slc-header-bg2) 100%);
-  color: var(--slc-fg-inv);
-  border-radius: 10px;
-  padding: 12px 14px;
-  position: relative;
-  overflow: hidden;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.sloten-chat-welcome-text { flex: 1; min-width: 0; position: relative; }
-.sloten-chat-menu-btn {
-  position: relative;
-  background: var(--slc-brand-gold);
-  color: var(--slc-header-bg);
-  border: none;
-  border-radius: 20px;
-  padding: 8px 14px;
-  font-weight: 700;
-  font-size: 12.5px;
-  cursor: pointer;
-  box-shadow: 0 2px 6px rgba(245,197,24,0.35);
-  transition: transform 0.12s, box-shadow 0.12s;
   flex-shrink: 0;
-  font-family: inherit;
 }
-.sloten-chat-menu-btn:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 10px rgba(245,197,24,0.5);
+.sloten-chat-close:hover { background: rgba(255,255,255,0.18); }
+
+/* --- Scrollable content area (welcome + dreampot + grid + messages) --- */
+.sloten-chat-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex; flex-direction: column; gap: 12px;
+  scroll-behavior: smooth;
 }
-.sloten-chat-menu-btn:active { transform: translateY(0); }
-.sloten-chat-menu-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
-.sloten-chat-welcome::before {
-  /* subtle radial glow */
-  content: ""; position: absolute; inset: -20%;
-  background: radial-gradient(circle at 30% 0%, rgba(245,197,24,0.15), transparent 60%);
-  pointer-events: none;
+.sloten-chat-scroll::-webkit-scrollbar { width: 6px; }
+.sloten-chat-scroll::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 42, 0.12); border-radius: 3px;
 }
+
+/* --- Welcome card (compact, ~50% of fix17 height) --- */
+.sloten-chat-welcome {
+  background: var(--slc-card-bg);
+  border-radius: var(--slc-radius-card);
+  padding: 12px 14px;
+  display: flex; align-items: center; gap: 10px;
+  box-shadow: var(--slc-shadow-card);
+}
+.sloten-chat-welcome-text { flex: 1; min-width: 0; }
 .sloten-chat-welcome-title {
-  color: var(--slc-brand-gold);
-  font-weight: 700; font-size: 13.5px;
-  margin-bottom: 2px;
-  position: relative;
+  font-weight: 800; font-size: 14px;
+  color: var(--slc-fg);
+  margin-bottom: 4px;
+  line-height: 1.3;
+  letter-spacing: -0.3px;
 }
 .sloten-chat-welcome-body {
-  font-size: 12.5px; opacity: 0.95; line-height: 1.5;
-  position: relative;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--slc-fg-muted);
+  /* Prevent dangling 「。」 from being orphaned on its own line */
+  word-break: keep-all;
+  overflow-wrap: anywhere;
 }
+.sloten-chat-welcome-warn {
+  /* Muted body color rather than alarm orange — the design mockup shows
+     this line in regular dark grey, not warning red. */
+  color: var(--slc-fg-muted);
+  font-weight: 500;
+}
+.sloten-chat-menu-btn {
+  background: var(--slc-brand-gold-soft);
+  color: #92400e;
+  border: none;
+  border-radius: var(--slc-radius-pill);
+  padding: 6px 10px 6px 8px;
+  font-weight: 700;
+  font-size: 11px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  font-family: inherit;
+  transition: transform 0.12s, background 0.12s;
+  white-space: nowrap;
+  line-height: 1;
+}
+/* SVG inside the menu button needs explicit sizing — without it, browsers
+   give it 100% of the flex container which collapses or stretches the pill. */
+.sloten-chat-menu-btn svg {
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+  display: block;
+}
+.sloten-chat-menu-btn:hover {
+  background: #fde68a;
+  transform: translateY(-1px);
+}
+.sloten-chat-menu-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
 
+/* --- Dreampot banner ---
+   Layout: [coin 80px] [label + big amount stacked, subtitle] [CTA pill].
+   The label "ドリームポット" sits on its own short line in gold so the long
+   yen amount (e.g. ¥17,350,806) gets its own dedicated line below at full
+   prominence — both stay readable inside the ~150px text column. */
 .sloten-chat-dreampot {
-  background: linear-gradient(90deg, #f5c518 0%, #fbbf24 50%, #f59e0b 100%);
-  border-radius: 10px;
-  padding: 10px 12px;
+  background: linear-gradient(135deg, #1a2332 0%, #2d3a4f 100%);
+  border: 1.5px solid var(--slc-brand-gold);
+  border-radius: var(--slc-radius-card);
+  padding: 12px 12px 12px 10px;
   display: flex; align-items: center; gap: 10px;
   cursor: pointer;
-  color: #1a1200;
-  box-shadow: 0 3px 12px rgba(245,197,24,0.3);
+  color: var(--slc-fg-inv);
+  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.12);
   transition: transform 0.12s, box-shadow 0.12s;
 }
 .sloten-chat-dreampot:hover {
   transform: translateY(-1px);
-  box-shadow: 0 4px 16px rgba(245,197,24,0.45);
+  box-shadow: 0 4px 16px rgba(251, 191, 36, 0.25);
 }
-.sloten-chat-dreampot-badge {
-  width: 40px; height: 40px; border-radius: 8px;
-  background: var(--slc-header-bg);
-  color: var(--slc-fg-inv);
-  display: flex; align-items: center; justify-content: center;
-  font-weight: 800; font-size: 14px; letter-spacing: 0.5px;
+.sloten-chat-dreampot-coin {
+  width: 80px; height: 80px;
   flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
 }
-.sloten-chat-dreampot-text { flex: 1; min-width: 0; }
-.sloten-chat-dreampot-title {
-  font-weight: 700; font-size: 14px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+.sloten-chat-dreampot-coin svg { width: 100%; height: 100%; display: block; }
+.sloten-chat-dreampot-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
-.sloten-chat-dreampot-more {
-  font-size: 11px; opacity: 0.75;
+.sloten-chat-dreampot-row {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.sloten-chat-dreampot-label {
+  font-weight: 700;
+  font-size: 11px;
+  color: var(--slc-brand-gold);
+  letter-spacing: 0.6px;
+  line-height: 1.2;
+  text-transform: none;
+}
+.sloten-chat-dreampot-amount {
+  font-weight: 900;
+  font-size: 17px;
+  color: #fef3c7;
+  letter-spacing: 0.3px;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-feature-settings: "tnum";
+}
+.sloten-chat-dreampot-sub {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.7);
+  line-height: 1.3;
+  margin-top: 1px;
+}
+.sloten-chat-dreampot-cta {
+  flex-shrink: 0;
+  background: transparent;
+  color: var(--slc-brand-gold);
+  border: 1.5px solid var(--slc-brand-gold);
+  border-radius: var(--slc-radius-pill);
+  padding: 7px 12px;
+  font-weight: 600;
+  font-size: 11.5px;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+  line-height: 1;
+  transition: background 0.12s, color 0.12s, transform 0.12s;
+}
+.sloten-chat-dreampot-cta:hover {
+  background: var(--slc-brand-gold);
+  color: #1a2332;
+  transform: translateY(-1px);
 }
 
-/* --- Handoff / status banner --- */
+/* --- Banners --- */
 .sloten-chat-banner {
-  margin: 10px 12px 0;
-  padding: 8px 12px;
+  padding: 9px 12px;
   background: #fef3c7; color: #78350f;
-  font-size: 12px; border-radius: 8px;
+  font-size: 12px;
+  border-radius: 10px;
   display: none;
 }
 .sloten-chat-banner[data-visible="1"] { display: block; }
 
-/* --- Messages --- */
-.sloten-chat-messages {
-  flex: 1;
-  overflow-y: auto;
-  padding: 12px;
-  display: flex; flex-direction: column; gap: 8px;
+/* --- Menu grid (input_select rendered as 2-col pill grid) --- */
+.sloten-chat-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
 }
+.sloten-chat-grid-item {
+  background: var(--slc-card-bg);
+  border: none;
+  border-radius: var(--slc-radius-pill);
+  padding: 5px 8px 5px 5px;
+  display: flex; align-items: center; gap: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--slc-fg);
+  box-shadow: var(--slc-shadow-card);
+  text-align: left;
+  transition: transform 0.12s, box-shadow 0.12s;
+  min-height: 46px;
+  min-width: 0;
+  overflow: hidden;
+}
+.sloten-chat-grid-item:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.10);
+}
+.sloten-chat-grid-item:active { transform: translateY(0); }
+.sloten-chat-grid-icon {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  background: #1e293b;
+  overflow: hidden;
+}
+.sloten-chat-grid-icon svg {
+  width: 100%; height: 100%;
+  display: block;
+}
+/* System emoji rendering — uses the OS-native colorful emoji font.
+   This is reliable across all platforms (no CDN, no loading state) and
+   matches the screenshot's "3D color emoji" aesthetic on iOS/macOS, with
+   acceptable fidelity on Windows (Segoe UI Emoji) and Android (Noto). */
+.sloten-chat-emoji {
+  font-family:
+    "Apple Color Emoji",
+    "Segoe UI Emoji",
+    "Noto Color Emoji",
+    "Segoe UI Symbol",
+    "EmojiOne Color",
+    sans-serif;
+  font-size: 22px;
+  line-height: 1;
+  display: inline-block;
+  text-align: center;
+  /* Keep glyph centered visually even with VS-16 / surrogate-pair widths */
+  font-variant-emoji: emoji;
+  -webkit-font-smoothing: antialiased;
+}
+.sloten-chat-grid-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--slc-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: -0.4px;
+}
+.sloten-chat-grid-chevron {
+  flex-shrink: 0;
+  color: #cbd5e1;
+  margin-left: 1px;
+  width: 9px;
+  height: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.sloten-chat-grid-chevron svg {
+  width: 9px;
+  height: 9px;
+  display: block;
+  stroke-width: 3;
+}
+
+/* When the grid would be too cramped (long titles like sub-menus), allow
+   single-column. Triggered via a class set in JS when item count ≤ 3 OR
+   any title is over 14 chars. */
+.sloten-chat-grid[data-cols="1"] { grid-template-columns: 1fr; }
+
+/* Bot input_select messages use the grid layout instead of a chat bubble.
+   Strip the bubble styling so the grid sits naturally in the scroll area. */
+.sloten-chat-msg-grid {
+  background: transparent !important;
+  box-shadow: none !important;
+  max-width: 100% !important;
+  width: 100%;
+  padding: 0 !important;
+  align-self: stretch !important;
+}
+.sloten-chat-msg-grid > div:first-child:not(.sloten-chat-grid):not(.sloten-chat-meta) {
+  font-size: 12.5px;
+  color: var(--slc-fg-muted);
+  margin: 4px 4px 8px;
+  font-weight: 500;
+}
+.sloten-chat-msg-grid > div:first-child:empty { display: none; }
+.sloten-chat-msg-grid .sloten-chat-meta { display: none; }
+
+/* Stale menu — when a newer input_select arrives, prior grids get
+   data-stale=1 so the user can only click the latest one. Old buttons would
+   send obsolete flow values that route to AI fallback or wrong sub-menus. */
+.sloten-chat-msg-grid[data-stale="1"] .sloten-chat-grid-item {
+  pointer-events: none;
+  opacity: 0.45;
+  filter: grayscale(0.6);
+  cursor: not-allowed;
+}
+.sloten-chat-msg-grid[data-stale="1"] .sloten-chat-grid-item:hover {
+  transform: none;
+  box-shadow: var(--slc-shadow-card);
+}
+
+/* --- Messages --- */
 .sloten-chat-msg {
   max-width: 85%;
-  padding: 9px 12px;
-  border-radius: 12px;
-  line-height: 1.5;
+  padding: 10px 13px;
+  border-radius: 14px;
+  line-height: 1.55;
   white-space: pre-wrap; word-wrap: break-word;
   font-size: 13.5px;
 }
@@ -234,113 +454,151 @@
   border-bottom-right-radius: 4px;
 }
 .sloten-chat-msg[data-sender="bot"] {
-  background: var(--slc-bubble-bot);
+  background: var(--slc-bubble-bot-bg);
   color: var(--slc-bubble-bot-fg);
   align-self: flex-start;
   border-bottom-left-radius: 4px;
-  border: 1px solid var(--slc-border);
+  box-shadow: var(--slc-shadow-card);
 }
 .sloten-chat-msg[data-sender="staff"] {
-  background: var(--slc-bubble-staff);
+  background: var(--slc-bubble-staff-bg);
   color: var(--slc-bubble-staff-fg);
   align-self: flex-start;
   border-bottom-left-radius: 4px;
 }
 .sloten-chat-msg[data-sender="system"] {
-  background: transparent; color: var(--slc-muted);
-  font-size: 11.5px; align-self: center; max-width: 100%;
+  background: transparent; color: var(--slc-fg-muted);
+  font-size: 11.5px; align-self: center;
+  max-width: 100%; padding: 4px 8px;
 }
 .sloten-chat-meta {
-  font-size: 10px; color: var(--slc-muted); margin-top: 3px;
+  font-size: 10px;
+  color: var(--slc-fg-muted);
+  margin-top: 4px;
 }
 .sloten-chat-msg[data-sender="customer"] .sloten-chat-meta { color: rgba(255,255,255,0.75); }
 
-/* --- input_select buttons --- */
-.sloten-chat-selects {
-  display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px;
-}
-.sloten-chat-select-btn {
-  background: var(--slc-header-bg);
-  border: 1px solid var(--slc-header-bg2);
-  color: var(--slc-fg-inv);
-  padding: 7px 12px; border-radius: 18px;
-  cursor: pointer; font-size: 12.5px;
-  transition: background 0.12s, transform 0.1s;
-}
-.sloten-chat-select-btn:hover {
-  background: var(--slc-header-bg2);
-  transform: translateY(-1px);
+/* Markdown-rendered <a> in bot bubbles */
+.sloten-chat-msg[data-sender="bot"] a,
+.sloten-chat-msg[data-sender="staff"] a {
+  color: #2563eb;
+  text-decoration: underline;
 }
 
-.sloten-chat-attach {
-  background: #fff; border: 1px solid var(--slc-border);
-  color: var(--slc-fg); border-radius: 50%; width: 36px; height: 36px;
-  cursor: pointer; font-size: 16px; line-height: 1;
-  display: flex; align-items: center; justify-content: center;
-}
-.sloten-chat-attach:hover { background: #f3f4f6; }
-.sloten-chat-attach:disabled { opacity: 0.5; cursor: not-allowed; }
-
+/* --- Attachments --- */
 .sloten-chat-attachment {
-  margin-top: 6px; display: flex; flex-direction: column; gap: 4px;
+  margin-top: 6px;
+  display: flex; flex-direction: column; gap: 4px;
 }
 .sloten-chat-attachment img {
-  max-width: 100%; max-height: 240px; border-radius: 6px;
-  display: block; background: #f3f4f6; cursor: pointer;
+  max-width: 100%;
+  max-height: 240px;
+  border-radius: 8px;
+  display: block;
+  background: #f3f4f6;
+  cursor: pointer;
 }
 .sloten-chat-attachment-file {
   display: inline-flex; align-items: center; gap: 6px;
-  padding: 6px 10px; background: rgba(0,0,0,0.05);
-  border-radius: 8px; color: inherit; text-decoration: none; font-size: 12px;
+  padding: 6px 10px;
+  background: rgba(0,0,0,0.05);
+  border-radius: 8px;
+  color: inherit;
+  text-decoration: none;
+  font-size: 12px;
 }
 .sloten-chat-attachment-meta { font-size: 10px; opacity: 0.75; }
 
+/* --- Typing indicator --- */
 .sloten-chat-typing {
   align-self: flex-start;
-  padding: 8px 12px; background: var(--slc-bubble-bot);
-  border-radius: 12px; border: 1px solid var(--slc-border);
-  color: var(--slc-muted); font-size: 12px; display: none;
+  padding: 9px 13px;
+  background: var(--slc-bubble-bot-bg);
+  border-radius: 14px;
+  box-shadow: var(--slc-shadow-card);
+  color: var(--slc-fg-muted);
+  font-size: 12px;
+  display: none;
 }
 .sloten-chat-typing[data-visible="1"] { display: block; }
 
+/* --- Pending attachment chip --- */
 .sloten-chat-pending {
   display: flex; align-items: center; gap: 6px;
-  padding: 5px 10px; background: #fef3c7; border-radius: 8px;
-  font-size: 12px; color: #78350f; margin: 0 12px 6px;
+  padding: 6px 12px;
+  background: var(--slc-brand-gold-soft);
+  border-radius: 10px;
+  font-size: 12px;
+  color: #78350f;
+  margin: 0 14px 4px;
 }
 .sloten-chat-pending button {
-  margin-left: auto; background: transparent; border: none;
-  color: #78350f; cursor: pointer; font-size: 14px;
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: #78350f;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 0 4px;
 }
 
 /* --- Input area --- */
 .sloten-chat-input-wrap {
   border-top: 1px solid var(--slc-border);
-  padding: 10px 12px;
-  display: flex; gap: 8px; align-items: center;
-  background: var(--slc-bg);
+  padding: 12px 14px 6px;
+  display: flex; gap: 10px;
+  align-items: flex-end;
+  background: var(--slc-card-bg);
+  flex-shrink: 0;
+}
+.sloten-chat-attach {
+  background: transparent;
+  border: 1px solid var(--slc-border);
+  color: var(--slc-fg-muted);
+  border-radius: 50%;
+  width: 38px; height: 38px;
+  cursor: pointer;
+  font-size: 16px; line-height: 1;
+  padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.12s, border-color 0.12s;
+}
+.sloten-chat-attach:hover {
+  background: #f3f4f6;
+  border-color: #cbd5e1;
+}
+.sloten-chat-attach:disabled { opacity: 0.4; cursor: not-allowed; }
+.sloten-chat-attach svg {
+  width: 18px; height: 18px;
 }
 .sloten-chat-input {
   flex: 1;
-  border: 1px solid var(--slc-border);
-  border-radius: 22px;
-  padding: 9px 14px;
-  font: inherit; font-size: 13.5px;
-  resize: none; outline: none;
-  max-height: 88px;
-  color: var(--slc-fg); background: #fff;
+  border: none;
+  border-radius: var(--slc-radius-pill);
+  padding: 9px 16px;
+  font: inherit;
+  font-size: 14px;
+  resize: none;
+  outline: none;
+  max-height: 96px;
+  color: var(--slc-fg);
+  background: transparent;
+  line-height: 1.4;
+  font-family: inherit;
 }
-.sloten-chat-input:focus {
-  border-color: var(--slc-header-bg);
-  box-shadow: 0 0 0 3px rgba(15,34,51,0.08);
+.sloten-chat-input::placeholder {
+  color: #9ca3af;
 }
 .sloten-chat-send {
-  width: 38px; height: 38px; border-radius: 50%;
+  width: 38px; height: 38px;
+  border-radius: 50%;
   background: var(--slc-header-bg);
   color: var(--slc-fg-inv);
   border: none; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   transition: background 0.12s, transform 0.1s;
+  flex-shrink: 0;
 }
 .sloten-chat-send:hover:not(:disabled) {
   background: var(--slc-header-bg2);
@@ -350,7 +608,15 @@
 .sloten-chat-send svg { width: 16px; height: 16px; }
 
 .sloten-chat-status {
-  font-size: 10.5px; padding: 4px 12px 6px;
-  color: var(--slc-muted); text-align: center;
-  background: var(--slc-bg);
+  font-size: 11px;
+  padding: 4px 12px 8px;
+  color: var(--slc-fg-muted);
+  text-align: center;
+  background: var(--slc-card-bg);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
 }
+.sloten-chat-status svg { width: 12px; height: 12px; }

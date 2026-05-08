@@ -86,18 +86,39 @@ export async function recordSubmission(env, { tenantId, conversationId, contactI
 // Forward the submission to GAS when the bonus_codes row has a gas_type set.
 // Fire-and-forget via ctx.waitUntil. Adds `gas_response` to the submission
 // row on completion (best-effort).
+//
+// Payload includes both the legacy keys (event/type/gas_type/code/contact)
+// AND the chatwoot-final-working v10.0 GAS keys (userId/bonusCode/bonusType/
+// sheetName) so the same GAS endpoint can dispatch via switch-case (built-in
+// types) OR fall through to the dynamic recordToBonusSheet(sheetName, ...)
+// branch for codes added through the admin UI.
 export async function forwardToGas(env, ctx, { submissionId, match, conversationId, contact }) {
   if (!match?.row?.gas_type) return;
   const { getEnvValue } = await import('./env-resolver.mjs');
   const url = await getEnvValue(env, 'BONUS_CODE_WEBHOOK_URL');
   if (!url) return;
+  const row = match.row;
+  // Resolve sheetName: prefer explicit row.sheet_name, else fall back to the
+  // production convention 'BC_' + display_name. Truncated to 100 chars to
+  // match Google Sheets' tab-name limit.
+  const resolvedSheetName = (row.sheet_name && String(row.sheet_name).trim())
+    ? String(row.sheet_name).trim()
+    : ('BC_' + (row.display_name || row.type_key)).slice(0, 100);
+  const userId = contact?.name || contact?.email || (contact?.id ? `contact_${contact.id}` : 'unknown');
   const payload = {
+    // Legacy / sloten-standalone format — preserved for back-compat
     event: 'bonus_code_submit',
-    type: match.row.type_key,
-    gas_type: match.row.gas_type,
+    type: row.type_key,
+    gas_type: row.gas_type,
     code: match.code,
     conversation_id: conversationId,
     contact: contact ? { id: contact.id, name: contact.name, email: contact.email, phone: contact.phone } : null,
+    // chatwoot-final-working GAS v10.0 format — for spreadsheet routing
+    userId,
+    conversationId,
+    bonusCode: match.code,
+    bonusType: row.gas_type,    // GAS switch-case key (BC_XXX)
+    sheetName: resolvedSheetName,
   };
   const task = async () => {
     try {

@@ -93,6 +93,11 @@ async function loadContext(env, tenantId, userQuery) {
   });
 }
 
+// HTTP 5xx codes from Gemini that are typically transient (Google-side
+// capacity hiccup). Retry these with exponential backoff before bubbling up
+// as `status='error'`. 429 included for rate-limit recovery.
+const GEMINI_TRANSIENT_HTTP = new Set([429, 502, 503, 504]);
+
 async function callGemini(apiKey, system, userMessage, model = 'gemini-2.5-flash-lite', temperature = 0.2, maxOutputTokens = 1200) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
   const body = {
@@ -100,12 +105,28 @@ async function callGemini(apiKey, system, userMessage, model = 'gemini-2.5-flash
     contents: [{ role: 'user', parts: [{ text: userMessage }] }],
     generationConfig: { temperature, maxOutputTokens },
   };
-  const r = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!r.ok) throw new Error(`Gemini HTTP ${r.status}: ${await r.text()}`);
+  let r;
+  let lastErrText = '';
+  for (let attempt = 0; attempt <= 2; attempt++) {
+    r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (r.ok) break;
+    // For non-transient (4xx other than 429), fail immediately — no point retrying a malformed request.
+    if (!GEMINI_TRANSIENT_HTTP.has(r.status)) break;
+    lastErrText = await r.text();
+    if (attempt < 2) {
+      const backoffMs = 500 * Math.pow(2, attempt); // 500ms, 1000ms
+      console.warn(`[gemini] HTTP ${r.status} attempt ${attempt + 1}/3 — retrying in ${backoffMs}ms`);
+      await new Promise((s) => setTimeout(s, backoffMs));
+    }
+  }
+  if (!r.ok) {
+    const finalText = lastErrText || (await r.text().catch(() => ''));
+    throw new Error(`Gemini HTTP ${r.status}: ${finalText}`);
+  }
   const data = await r.json();
   const cand = data?.candidates?.[0];
   const text = (cand?.content?.parts?.[0]?.text || '').trim();

@@ -18,7 +18,7 @@
 
   // Visible version banner in console for debugging cache issues.
   console.log(
-    '%c[SlotenChat] widget v20260424.fix13 loaded',
+    '%c[SlotenChat] widget v20260430.fix21 loaded',
     'background:#2563eb;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold',
   );
 
@@ -61,7 +61,7 @@
 
   // Cache-bust suffix for widget.css. Declared BEFORE cfg so it's accessible
   // during cssUrl resolution (TDZ avoidance).
-  const WIDGET_VERSION = 'v20260424.fix13';
+  const WIDGET_VERSION = 'v20260430.fix21';
 
   // Host-provided user info (optional). Populated from:
   //   data-user-name / data-user-email / data-user-phone
@@ -171,6 +171,172 @@
 
   const ICON_CHAT = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 5.94 2 10.8c0 2.52 1.26 4.79 3.3 6.41L4 22l5.22-2.61c.9.14 1.83.21 2.78.21 5.52 0 10-3.94 10-8.8C22 5.94 17.52 2 12 2z"/></svg>';
   const ICON_SEND = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>';
+  const ICON_PAPERCLIP = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.83l-8.57 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>';
+  const ICON_SHIELD = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></svg>';
+  const ICON_SPARKLE = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l1.5 4.5L18 8l-4.5 1.5L12 14l-1.5-4.5L6 8l4.5-1.5z"/><path d="M19 14l.75 2.25L22 17l-2.25.75L19 20l-.75-2.25L16 17l2.25-.75z"/></svg>';
+  const ICON_CHEVRON_RIGHT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
+
+  // System emoji icon system (fix19).
+  //
+  // We tried Twemoji via jsdelivr CDN in fix17/18 but the <img> approach had
+  // multiple failure modes in production: lazy-loading delays, intermittent
+  // CDN reachability, and onerror-handler escaping bugs all caused blank
+  // icons. fix19 abandons CDN dependence in favor of native system emoji
+  // fonts (Apple Color Emoji on iOS/macOS, Segoe UI Emoji on Windows, Noto
+  // Color Emoji on Android/Linux). These are pre-installed, render
+  // instantly, are colorful 3D-ish on every modern OS, and have zero
+  // network cost. The visual style varies slightly per OS but always
+  // matches "color emoji" expectation.
+
+  // Map step values to actual emoji characters (with VS-16 where needed
+  // for explicit emoji presentation).
+  const MENU_EMOJI_CHAR = {
+    // ─── Top-level (8 categories) ────────────────────────────────────
+    deposit_withdrawal: '💰',                // 💰 money bag
+    game_info:          '🎮',                // 🎮 gamepad
+    bonus_promo:        '🎁',                // 🎁 wrapped gift
+    no_deposit_bonus:   '🆓',                // 🆓 FREE button
+    account_issues:     '👤',                // 👤 bust silhouette
+    faq_main:           '❓',                       // ❓ red question
+    bonus_code_request: '🎟️',          // 🎟️ admission tickets (VS-16)
+    transfer_to_agent:  '🎧',                // 🎧 headphone
+    // ─── Payment methods (sub-menu) ──────────────────────────────────
+    bank_transfer:             '🏦',         // 🏦 bank
+    convenience_store_deposit: '🏪',         // 🏪 convenience store
+    atm_deposit:               '🏧',         // 🏧 ATM sign
+    // ─── Withdrawal ──────────────────────────────────────────────────
+    withdrawal_auto:           '🏦',         // 🏦
+    // ─── Trouble ─────────────────────────────────────────────────────
+    payment_troubleshooting:   '⚠️',          // ⚠️ warning (VS-16)
+    deposit_not_reflected:     '⏳',                // ⏳ hourglass
+    withdrawal_not_received:   '⏳',                // ⏳
+    deposit_cancelled:         '❌',                // ❌ cross
+    withdrawal_cancelled:      '❌',                // ❌
+    // ─── Game ────────────────────────────────────────────────────────
+    game_types:        '🎰',                 // 🎰 slot machine
+    game_issues:       '🔧',                 // 🔧 wrench
+    supported_devices: '📱',                 // 📱 mobile phone
+    // ─── Promo ───────────────────────────────────────────────────────
+    current_promotions:    '🎉',             // 🎉 party popper
+    heavens_stepup:        '🎰',             // 🎰
+    wagering_requirements: '🔄',             // 🔄 anticlockwise arrows
+    // ─── Account ─────────────────────────────────────────────────────
+    login_issues:    '🔑',                   // 🔑 key
+    email_change:    '📧',                   // 📧 e-mail
+    phone_change:    '📱',                   // 📱
+    password_change: '🔒',                   // 🔒 locked
+    // ─── FAQ leaves ──────────────────────────────────────────────────
+    faq_kyc:              '🔐',              // 🔐 locked with key
+    faq_processing_time:  '⏱️',               // ⏱️ stopwatch (VS-16)
+    faq_payment_methods:  '💳',              // 💳 credit card
+    faq_bonus_usage:      '🎁',              // 🎁
+  };
+
+  // Background color for icon containers per step. Default = dark slate so
+  // emojis pop. Special: PayPay/BTC use brand colors.
+  const MENU_BG = {
+    paypay_money:      '#ed3050',  // PayPay red
+    paypay_money_lite: '#f87171',  // PayPay Lite
+    cryptocurrency:    '#f7931a',  // Bitcoin orange
+  };
+
+  // Custom branded letter-mark icons. Returned as inner HTML for the icon
+  // container — no emoji image. The container provides the colored circle.
+  const MENU_LETTER = {
+    paypay_money:      { ch: 'P', fontSize: '20px', fontFamily: '-apple-system, "Helvetica Neue", Arial, sans-serif', weight: 900, color: '#fff', letterSpacing: '-1px' },
+    paypay_money_lite: { ch: 'P', fontSize: '20px', fontFamily: '-apple-system, "Helvetica Neue", Arial, sans-serif', weight: 900, color: '#fff', letterSpacing: '-1px' },
+    cryptocurrency:    { ch: '₿', fontSize: '22px', fontFamily: 'Georgia, "Times New Roman", serif', weight: 900, color: '#fff' },
+  };
+
+  // Build inner HTML for the icon container.
+  // 1) Custom letter-mark (PayPay, ₿)? render as <span> text glyph.
+  // 2) Known step value? render the emoji char in a styled <span>.
+  // 3) Has fallback emoji from title? render that.
+  // 4) Otherwise empty.
+  function getMenuIconHtml(stepValue, fallbackEmoji) {
+    const letter = MENU_LETTER[stepValue];
+    if (letter) {
+      return '<span style="color:' + letter.color
+        + ';font-family:' + letter.fontFamily
+        + ';font-size:' + letter.fontSize
+        + ';font-weight:' + letter.weight
+        + (letter.letterSpacing ? ';letter-spacing:' + letter.letterSpacing : '')
+        + ';line-height:1;">' + letter.ch + '</span>';
+    }
+    const ch = MENU_EMOJI_CHAR[stepValue] || fallbackEmoji || '';
+    if (!ch) return '';
+    return '<span class="sloten-chat-emoji">' + ch + '</span>';
+  }
+
+  function getMenuIconBg(stepValue) {
+    return MENU_BG[stepValue] || '#1e293b';
+  }
+
+  // ─── Dreampot coin: precision SVG (fix21 redesign) ──────────────────
+  // Composition: confetti perimeter + bottom laurel branches + central
+  // gold disk with crown floating above + bold "JP" serif wordmark.
+  // Authored as a template literal to avoid the `+ // comment + 'str'`
+  // ASI trap that prepended NaN tokens between SVG groups in earlier drafts.
+  const ICON_DREAMPOT_COIN = `
+    <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <defs>
+        <radialGradient id="dpC" cx="34%" cy="28%" r="72%">
+          <stop offset="0%" stop-color="#fef9c3"/>
+          <stop offset="35%" stop-color="#fde047"/>
+          <stop offset="68%" stop-color="#eab308"/>
+          <stop offset="100%" stop-color="#a16207"/>
+        </radialGradient>
+        <linearGradient id="dpL" x1="0%" y1="0%" x2="40%" y2="100%">
+          <stop offset="0%" stop-color="#fde68a"/>
+          <stop offset="100%" stop-color="#b45309"/>
+        </linearGradient>
+        <radialGradient id="dpCrown" cx="40%" cy="30%" r="80%">
+          <stop offset="0%" stop-color="#fef9c3"/>
+          <stop offset="60%" stop-color="#fbbf24"/>
+          <stop offset="100%" stop-color="#92400e"/>
+        </radialGradient>
+      </defs>
+      <g>
+        <circle cx="8" cy="14" r="2.6" fill="#fcd34d"/>
+        <circle cx="91" cy="20" r="2.2" fill="#fcd34d"/>
+        <circle cx="6" cy="40" r="1.8" fill="#fbbf24"/>
+        <circle cx="93" cy="48" r="1.6" fill="#fbbf24"/>
+        <circle cx="11" cy="68" r="1.4" fill="#fcd34d"/>
+        <circle cx="89" cy="72" r="1.6" fill="#fcd34d"/>
+        <path d="M 16 6 L 19 10 L 14 11 Z" fill="#facc15"/>
+        <path d="M 84 7 L 88 9 L 86 13 Z" fill="#facc15"/>
+        <path d="M 4 26 L 7 27 L 5 31 Z" fill="#fde047"/>
+        <path d="M 95 32 L 96 36 L 92 35 Z" fill="#fde047"/>
+        <path d="M 12 84 L 16 85 L 14 89 Z" fill="#facc15"/>
+        <path d="M 84 86 L 88 84 L 88 89 Z" fill="#facc15"/>
+        <path d="M 24 8 L 25.5 11 L 28 12 L 25.5 13 L 24 16 L 22.5 13 L 20 12 L 22.5 11 Z" fill="#fef3c7"/>
+        <path d="M 76 10 L 77.5 13 L 80 14 L 77.5 15 L 76 18 L 74.5 15 L 72 14 L 74.5 13 Z" fill="#fef3c7"/>
+      </g>
+      <g fill="url(#dpL)" stroke="#7c4a02" stroke-width="0.5">
+        <ellipse cx="18" cy="60" rx="3.2" ry="6" transform="rotate(-35 18 60)"/>
+        <ellipse cx="14" cy="70" rx="3" ry="5.5" transform="rotate(-20 14 70)"/>
+        <ellipse cx="18" cy="80" rx="3" ry="5" transform="rotate(-5 18 80)"/>
+        <ellipse cx="28" cy="86" rx="2.6" ry="4.6" transform="rotate(15 28 86)"/>
+        <ellipse cx="82" cy="60" rx="3.2" ry="6" transform="rotate(35 82 60)"/>
+        <ellipse cx="86" cy="70" rx="3" ry="5.5" transform="rotate(20 86 70)"/>
+        <ellipse cx="82" cy="80" rx="3" ry="5" transform="rotate(5 82 80)"/>
+        <ellipse cx="72" cy="86" rx="2.6" ry="4.6" transform="rotate(-15 72 86)"/>
+      </g>
+      <circle cx="50" cy="54" r="29" fill="url(#dpC)" stroke="#78350f" stroke-width="2.2"/>
+      <path d="M 28 42 Q 36 30 52 28 Q 38 32 30 50 Z" fill="#fef9c3" opacity="0.55"/>
+      <circle cx="50" cy="54" r="22" fill="none" stroke="#854d0e" stroke-width="0.9" stroke-dasharray="2 2" opacity="0.7"/>
+      <g transform="translate(50 22)">
+        <path d="M -16 5 L -12 -5 L -7 2 L -3 -8 L 0 -10 L 3 -8 L 7 2 L 12 -5 L 16 5 L 14 9 L -14 9 Z"
+              fill="url(#dpCrown)" stroke="#7c2d12" stroke-width="1" stroke-linejoin="round"/>
+        <rect x="-14" y="9" width="28" height="3" rx="1.2" fill="#b45309" stroke="#7c2d12" stroke-width="0.8"/>
+        <circle cx="-12" cy="-5" r="1.6" fill="#dc2626" stroke="#7c2d12" stroke-width="0.5"/>
+        <circle cx="0" cy="-10" r="2" fill="#dc2626" stroke="#7c2d12" stroke-width="0.5"/>
+        <circle cx="12" cy="-5" r="1.6" fill="#dc2626" stroke="#7c2d12" stroke-width="0.5"/>
+      </g>
+      <text x="50" y="62" font-family="Georgia, 'Times New Roman', serif"
+            font-size="26" font-weight="900" fill="#78350f" text-anchor="middle" letter-spacing="-1">JP</text>
+    </svg>
+  `;
 
   const dom = {};
   function buildUI() {
@@ -197,41 +363,71 @@
       avatarNode,
       el('div', { class: 'sloten-chat-header-text' },
         el('div', { class: 'sloten-chat-title' }, cfg.title),
-        el('div', { class: 'sloten-chat-subtitle' }, cfg.subtitle + ' · fix13'),
+        el('div', { class: 'sloten-chat-subtitle' }, cfg.subtitle + ' · fix21'),
       ),
       el('button', { class: 'sloten-chat-close', type: 'button', 'aria-label': 'チャットウィジェットを閉じる', onclick: close }, '\u00d7'),
     );
 
-    // Pinned welcome + dreampot (always above the message stream)
-    dom.pinned = el('div', { class: 'sloten-chat-pinned' });
+    // --- Welcome card (white) ---
+    // Body may include "オペレーター対応時間外" warning — split so we
+    // can highlight the warning while keeping the rest as muted text.
+    const fullBody = cfg.welcomeBody;
+    const warnIdx = fullBody.indexOf('※');
+    const bodyMain = warnIdx >= 0 ? fullBody.slice(0, warnIdx).trim() : fullBody;
+    const bodyWarn = warnIdx >= 0 ? fullBody.slice(warnIdx) : '';
+    const welcomeBodyEl = el('div', { class: 'sloten-chat-welcome-body' });
+    if (bodyMain) welcomeBodyEl.appendChild(document.createTextNode(bodyMain));
+    if (bodyWarn) {
+      if (bodyMain) welcomeBodyEl.appendChild(el('br'));
+      welcomeBodyEl.appendChild(el('span', { class: 'sloten-chat-welcome-warn' }, bodyWarn));
+    }
     dom.welcome = el('div', { class: 'sloten-chat-welcome' },
       el('div', { class: 'sloten-chat-welcome-text' },
-        el('div', { class: 'sloten-chat-welcome-title' }, cfg.welcomeTitle),
-        el('div', { class: 'sloten-chat-welcome-body' }, cfg.welcomeBody),
+        el('div', { class: 'sloten-chat-welcome-title' }, '👋 ' + cfg.welcomeTitle),
+        welcomeBodyEl,
       ),
       dom.menuBtn = el('button', {
         class: 'sloten-chat-menu-btn', type: 'button',
         'aria-label': 'メニューを表示',
         onclick: (ev) => { ev.preventDefault(); ev.stopPropagation(); onMenuClick(); },
-      }, cfg.menuButtonLabel),
+        html: ICON_SPARKLE + '<span>' + cfg.menuButtonLabel + '</span>',
+      }),
     );
+
+    // --- Dreampot banner ---
+    // Three-column layout to match the fix13/fix21 mockup:
+    //   [coin 80px] [title + sub (2 lines)] [CTA pill on right]
+    // The whole banner remains tappable (forgiving hit area), but the CTA
+    // is the visual primary action. Stop click propagation on the CTA so
+    // both targets navigate independently and only once.
+    const openDreampot = () => window.open(cfg.dreampotUrl, '_blank', 'noopener');
     dom.dreampot = el('div', {
       class: 'sloten-chat-dreampot',
       role: 'button', tabindex: '0',
-      onclick: () => window.open(cfg.dreampotUrl, '_blank', 'noopener'),
-      onkeydown: (ev) => { if (ev.key === 'Enter' || ev.key === ' ') window.open(cfg.dreampotUrl, '_blank', 'noopener'); },
+      onclick: openDreampot,
+      onkeydown: (ev) => { if (ev.key === 'Enter' || ev.key === ' ') openDreampot(); },
     },
-      el('div', { class: 'sloten-chat-dreampot-badge' }, 'JP'),
+      el('div', { class: 'sloten-chat-dreampot-coin', html: ICON_DREAMPOT_COIN }),
       el('div', { class: 'sloten-chat-dreampot-text' },
-        el('div', { class: 'sloten-chat-dreampot-title', id: 'slc-dreampot-title' }, 'ドリームポット 読み込み中…'),
-        el('div', { class: 'sloten-chat-dreampot-more' }, '詳しくはこちら'),
+        el('div', { class: 'sloten-chat-dreampot-row' },
+          el('span', { class: 'sloten-chat-dreampot-label' }, 'ドリームポット'),
+          el('span', { class: 'sloten-chat-dreampot-amount', id: 'slc-dreampot-amount' }, '¥…'),
+        ),
+        el('div', { class: 'sloten-chat-dreampot-sub' }, '夢をつかむチャンス！'),
       ),
+      el('button', {
+        class: 'sloten-chat-dreampot-cta', type: 'button',
+        'aria-label': 'ドリームポットの詳細を見る',
+        onclick: (ev) => { ev.stopPropagation(); openDreampot(); },
+      }, '詳しくはこちら ›'),
     );
-    dom.pinned.appendChild(dom.welcome);
-    dom.pinned.appendChild(dom.dreampot);
 
     dom.banner = el('div', { class: 'sloten-chat-banner' });
-    dom.messages = el('div', { class: 'sloten-chat-messages' });
+
+    // --- Single scrollable area: welcome + dreampot + banner + messages ---
+    // Combining everything into one scroll lets the chat history flow
+    // naturally below the static cards.
+    dom.messages = el('div', { class: 'sloten-chat-scroll' });
     dom.typing = el('div', { class: 'sloten-chat-typing' }, '入力中…');
     dom.input = el('textarea', {
       class: 'sloten-chat-input',
@@ -241,18 +437,30 @@
       oninput: () => autoResize(dom.input),
     });
     dom.send = el('button', { class: 'sloten-chat-send', type: 'button', 'aria-label': 'メッセージを送信', onclick: onSend, html: ICON_SEND });
-    dom.attach = el('button', { class: 'sloten-chat-attach', type: 'button', 'aria-label': 'ファイルを添付', title: 'ファイル添付 (JPG/PNG/GIF/WEBP/PDF, 最大5MB)', onclick: () => dom.file.click() }, '📎');
+    dom.attach = el('button', {
+      class: 'sloten-chat-attach', type: 'button',
+      'aria-label': 'ファイルを添付',
+      title: 'ファイル添付 (JPG/PNG/GIF/WEBP/PDF, 最大5MB)',
+      onclick: () => dom.file.click(),
+      html: ICON_PAPERCLIP,
+    });
     dom.file = el('input', { type: 'file', accept: 'image/jpeg,image/png,image/gif,image/webp,application/pdf', style: 'display:none', onchange: onFilePicked });
     dom.pending = el('div', { class: 'sloten-chat-pending', style: 'display:none' });
     const inputWrap = el('div', { class: 'sloten-chat-input-wrap' }, dom.attach, dom.input, dom.send);
-    // Fix 4: start empty; setStatus() shows text only for reconnect/error.
-    dom.status = el('div', { class: 'sloten-chat-status', style: 'display:none' }, '');
+    // Default status: shield icon + "AIが24時間ご案内します". setStatus() can
+    // override this temporarily for reconnect/error notices.
+    dom.status = el('div', { class: 'sloten-chat-status' });
+    dom.status.innerHTML = ICON_SHIELD + ' AI が 24 時間ご案内します';
+
+    // Compose the panel: welcome + dreampot + banner all live INSIDE the
+    // scroll container so they flow naturally with the message history.
+    dom.messages.appendChild(dom.welcome);
+    dom.messages.appendChild(dom.dreampot);
+    dom.messages.appendChild(dom.banner);
+    dom.messages.appendChild(dom.typing);
 
     dom.panel.appendChild(header);
-    dom.panel.appendChild(dom.pinned);
-    dom.panel.appendChild(dom.banner);
     dom.panel.appendChild(dom.messages);
-    dom.messages.appendChild(dom.typing);
     dom.panel.appendChild(dom.pending);
     dom.panel.appendChild(inputWrap);
     dom.panel.appendChild(dom.file);
@@ -332,10 +540,16 @@
     }
   }
 
+  // Default status caption — shown when no transient state (reconnecting,
+  // error) is in effect. fix19 design: shield icon + "AI が 24 時間ご案内します".
+  const STATUS_DEFAULT_HTML = ICON_SHIELD + ' AI が 24 時間ご案内します';
   function setStatus(text) {
-    // Fix 4: hide the element when text is empty (no "connecting" flash).
-    dom.status.textContent = text || '';
-    dom.status.style.display = text ? 'block' : 'none';
+    if (text) {
+      // Transient notice — plain text, replaces shield+default.
+      dom.status.textContent = text;
+    } else {
+      dom.status.innerHTML = STATUS_DEFAULT_HTML;
+    }
   }
   function setBanner(text) {
     if (!text) { dom.banner.removeAttribute('data-visible'); dom.banner.textContent = ''; }
@@ -450,24 +664,56 @@
         const attrs = typeof msg.content_attributes === 'string' ? JSON.parse(msg.content_attributes) : msg.content_attributes;
         const items = (attrs && attrs.items) || [];
         if (items.length) {
-          const group = el('div', { class: 'sloten-chat-selects' });
+          // Mark all PRIOR input_select grids as stale so the user can only
+          // click the latest menu. Without this, scrolling up reveals old
+          // welcome-menu buttons that still send (now-invalid) flow values
+          // and trigger AI fallback / wrong sub-menu.
+          dom.messages.querySelectorAll('.sloten-chat-msg-grid:not([data-stale])').forEach((priorGrid) => {
+            priorGrid.setAttribute('data-stale', '1');
+          });
+          // Strip the bot-bubble styling so the grid renders as a full-width
+          // card area without the chat-bubble box (matches design mockup).
+          bubble.classList.add('sloten-chat-msg-grid');
+          // Decide single vs two-column. Long titles or few items → 1 col.
+          const longest = items.reduce((m, it) => Math.max(m, (it.title || '').length), 0);
+          const singleCol = items.length <= 3 || longest > 14;
+          const grid = el('div', { class: 'sloten-chat-grid', 'data-cols': singleCol ? '1' : '2' });
           for (const it of items) {
-            // Display the human-readable title, but send the machine-friendly
-            // value (if provided) so keyword regex rules can match predictably.
             const displayText = it.title || it.value || '';
             const sendValue = it.value || it.title || '';
+            // Strip the leading emoji from the title (if any) — used both as
+            // the visual fallback when sendValue isn't in MENU_EMOJIS, and to
+            // produce a clean text label without duplicate emoji.
+            let labelText = displayText;
+            let fallbackEmoji = null;
+            const m = displayText.match(/^([\p{Emoji_Presentation}\p{Extended_Pictographic}☀-➿⌀-⏿⬀-⯿])\s*/u);
+            if (m) {
+              fallbackEmoji = m[1];
+              labelText = displayText.slice(m[0].length).trim();
+            }
+            const iconHtml = getMenuIconHtml(sendValue, fallbackEmoji);
+            const iconBg = getMenuIconBg(sendValue);
             const btn = el('button', {
-              class: 'sloten-chat-select-btn',
+              class: 'sloten-chat-grid-item',
               type: 'button',
               onclick: () => {
-                // Fix 2: remember the pair so renderMessage shows the label.
                 rememberButtonClick(sendValue, displayText);
                 sendText(sendValue);
               },
-            }, displayText);
-            group.appendChild(btn);
+            },
+              el('span', {
+                class: 'sloten-chat-grid-icon',
+                style: 'background:' + iconBg,
+                html: iconHtml,
+              }),
+              el('span', { class: 'sloten-chat-grid-label' }, labelText),
+              // Chevron restored to match reference design. Pill row uses
+              // truncating label so long text does not push the chevron off.
+              el('span', { class: 'sloten-chat-grid-chevron', html: ICON_CHEVRON_RIGHT }),
+            );
+            grid.appendChild(btn);
           }
-          bubble.appendChild(group);
+          bubble.appendChild(grid);
         }
       } catch (_) {}
     }
@@ -821,8 +1067,8 @@
       const r = await fetch(cfg.apiBase + '/api/public/jackpot', { credentials: 'omit' });
       const j = await r.json();
       if (j && j.success && Number.isFinite(j.amount)) {
-        const t = document.getElementById('slc-dreampot-title');
-        if (t) t.textContent = 'ドリームポット ¥' + j.amount.toLocaleString('en-US');
+        const t = document.getElementById('slc-dreampot-amount');
+        if (t) t.textContent = '¥' + j.amount.toLocaleString('en-US');
       }
     } catch (_) { /* ignore transient errors */ }
   }
@@ -850,7 +1096,7 @@
 
   // Expose minimal API for host pages.
   window.SlotenChat = {
-    version: 'v20260424.fix13',
+    version: 'v20260430.fix21',
     open,
     close,
     // Chatwoot parity: `window.$chatwoot.setUser(identifier, userInfo)`

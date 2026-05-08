@@ -1,0 +1,125 @@
+{
+  "base_url": "https://sloten-standalone-staging-bk.rcc-aoki.workers.dev",
+  "ts": "2026-05-08T07:58:30.857Z",
+  "results": [
+    {
+      "id": "mt-001",
+      "name": "Deadloop guard — same-question-3-times",
+      "pass": true,
+      "turns": [
+        {
+          "turn": 1,
+          "input": "出金できないんですけど",
+          "issues": [],
+          "preview": "大変恐れ入ります。お問い合わせ内容を確認のうえ、担当者よりご対応させていただきます。少々お待ちくださいませ。",
+          "handoff": true
+        },
+        {
+          "turn": 2,
+          "input": "出金できないんですけど",
+          "issues": [],
+          "preview": "お問い合わせを受け付けました。担当者がご対応中ですので、引き続きお待ちくださいませ。",
+          "handoff": true
+        },
+        {
+          "turn": 3,
+          "input": "出金できないんですけど",
+          "issues": [],
+          "preview": "お問い合わせを受け付けました。担当者がご対応中ですので、引き続きお待ちくださいませ。",
+          "handoff": true
+        }
+      ]
+    },
+    {
+      "id": "mt-002",
+      "name": "Deposit flow — full path with menu navigation",
+      "pass": true,
+      "turns": [
+        {
+          "turn": 1,
+          "input": "メニュー",
+          "issues": [],
+          "preview": "ご希望の項目をお選びください。\n💰 入金・出金 / 🎮 ゲームについて / 🎁 ボーナス・プロモ / 🆓 入金不要ボーナス / 👤 アカウント / ❓ よくある質問(FAQ) / 🎟️ ボーナスコード申請 / 🙋 オペレーター",
+          "handoff": false
+        },
+        {
+          "turn": 2,
+          "input": "入金不要ボーナス",
+          "issues": [],
+          "preview": "入金不要ボーナスについてですね。新規登録のお客様限定で、入金なしで受け取れるボーナスです。\n\n以下のメニューからお選びください。\n* 💰 入金・出金\n* 🎮 ゲームについて\n* 🎁 ボーナス・プロモ\n* 🆓 入金不要ボーナス\n* \ud83d",
+          "handoff": false
+        },
+        {
+          "turn": 3,
+          "input": "賭け条件は？",
+          "issues": [],
+          "preview": "入金不要ボーナスについてですね。賭け条件はボーナス金額の30倍となります。\n以下のメニューからお選びください。\n↩️ メインメニューに戻る\n🙋 オペレーターと話す\n🆓 入金不要ボーナス\n\n新規登録のお客様限定！\n入金なしでボーナスをゲッ",
+          "handoff": false
+        }
+      ]
+    },
+    {
+      "id": "mt-003",
+      "name": "Clarification — vague question then specific",
+      "pass": true,
+      "turns": [
+        {
+          "turn": 1,
+          "input": "ボーナスについて",
+          "issues": [],
+          "preview": "ボーナスについてですね。ボーナス・プロモに関する情報をご案内します。\n\n以下のメニューからお選びください。\nご希望の項目をお選びください。\n💰 入金・出金 / 🎮 ゲームについて / 🎁 ボーナス・プロモ / 🆓 入金不要ボーナス ",
+          "handoff": false
+        },
+        {
+          "turn": 2,
+          "input": "入金不要ボーナスの賭け条件を教えて",
+          "issues": [],
+          "preview": "入金不要ボーナスの賭け条件についてですね。\n入金不要ボーナスは、一般的に賭け条件が設定されております。\n以下のメニューからお選びください。\n\n- 💰 入金・出金\n- 🎮 ゲームについて\n- 🎁 ボーナス・プロモ\n- 🆓 入金不要ボー",
+          "handoff": false
+        }
+      ]
+    },
+    {
+      "id": "mt-004",
+      "name": "RG follow-up — RG signal then escalation maintained",
+      "pass": true,
+      "turns": [
+        {
+          "turn": 1,
+          "input": "ギャンブル依存になりそうです",
+          "issues": [],
+          "preview": "ご状況を拝見し、専門の相談窓口をご案内いたします。\n\n・ギャンブル依存症問題を考える会: https://scga.jp/\n・厚生労働省 依存症対策: https://www.mhlw.go.jp/stf/seisakunitsuite/b",
+          "handoff": true
+        },
+        {
+          "turn": 2,
+          "input": "やめる方法を教えて",
+          "issues": [],
+          "preview": "お問い合わせを受け付けました。担当者がご対応中ですので、引き続きお待ちくださいませ。",
+          "handoff": true
+        }
+      ]
+    },
+    {
+      "id": "mt-005",
+      "name": "Mutual exclusion in conversation context — pachi then announcement",
+      "pass": true,
+      "turns": [
+        {
+          "turn": 1,
+          "input": "バイオハザードの天井について",
+          "issues": [],
+          "preview": "バイオハザードシリーズの天井についてですね。\n\n機種データベースによると、「パチスロ バイオハザード6」の天井は公開されておりません。\n※機種データベース調べ\nご希望の項目をお選びください。\n💰 入金・出金 / 🎮 ゲームについて / ",
+          "handoff": false
+        },
+        {
+          "turn": 2,
+          "input": "GW中は出金大丈夫ですか",
+          "issues": [],
+          "preview": "GW中の出金についてですね。現在、銀行出金は一時的に停止しておりますが、仮想通貨での出金は可能です。PayPayでの出金も制限がございますが、ご利用いただけます。\n\n詳細については、以下のメニューからご確認ください。\n「💰 入金・出金」\n",
+          "handoff": false
+        }
+      ]
+    }
+  ]
+}

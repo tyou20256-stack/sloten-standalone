@@ -12,6 +12,16 @@ import { resolveTenantId } from '../tenant-scope.mjs';
 
 const VALID_MATCH_MODES = new Set(['exact', 'case_insensitive']);
 
+// Production parity (chatwoot-final-working v10.0): sheet_name forwarded to
+// GAS so it can auto-create a per-event spreadsheet. Mirror the production
+// validator: 1-100 chars, no newline / tab / [] / ? * : / \.
+const SHEET_NAME_INVALID_RE = /[\r\n\t\[\]\?\*\:\/\\]/;
+function isValidSheetName(s) {
+  if (typeof s !== 'string') return false;
+  if (s.length < 1 || s.length > 100) return false;
+  return !SHEET_NAME_INVALID_RE.test(s);
+}
+
 function decorate(row) {
   if (!row) return row;
   const parse = (s, fb) => {
@@ -24,6 +34,7 @@ function decorate(row) {
     success_items: parse(row.success_items, []),
     enabled: !!row.enabled,
     transfer_after: !!row.transfer_after,
+    game_selection: !!row.game_selection,
   };
 }
 
@@ -51,6 +62,13 @@ export async function createBonusCode(request, env, corsHeaders) {
   if (!codes || !codes.length) errors.push('codes (non-empty array)');
   if (!content) errors.push('success_content');
   if (!VALID_MATCH_MODES.has(matchMode)) errors.push('match_mode');
+  // sheet_name is optional, but reject obviously invalid values when present.
+  let sheetName = null;
+  if (body.sheet_name !== undefined && body.sheet_name !== null && String(body.sheet_name).trim() !== '') {
+    const trimmed = String(body.sheet_name).trim();
+    if (!isValidSheetName(trimmed)) errors.push('sheet_name (1-100 chars, no newline/tab/[]/?*:/\\)');
+    else sheetName = trimmed;
+  }
   if (errors.length) return err('Invalid: ' + errors.join(', '), 400, corsHeaders);
 
   // Uniqueness check on type_key within tenant.
@@ -60,8 +78,8 @@ export async function createBonusCode(request, env, corsHeaders) {
   if (dup) return err('type_key already exists', 409, corsHeaders);
 
   const r = await env.DB.prepare(
-    `INSERT INTO bonus_codes (tenant_id, type_key, display_name, codes, match_mode, success_content, success_items, gas_type, transfer_after, enabled, source, priority)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'dynamic', ?)`,
+    `INSERT INTO bonus_codes (tenant_id, type_key, display_name, codes, match_mode, success_content, success_items, gas_type, transfer_after, enabled, source, priority, sheet_name, game_selection)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'dynamic', ?, ?, ?)`,
   ).bind(
     tenantId, typeKey, displayName,
     JSON.stringify(codes), matchMode, content,
@@ -70,6 +88,8 @@ export async function createBonusCode(request, env, corsHeaders) {
     body.transfer_after ? 1 : 0,
     body.enabled === false ? 0 : 1,
     typeof body.priority === 'number' ? body.priority : 50,
+    sheetName,
+    body.game_selection ? 1 : 0,
   ).run();
   const row = await env.DB.prepare('SELECT * FROM bonus_codes WHERE id = ?').bind(r.meta.last_row_id).first();
   return created({ success: true, code: decorate(row) }, corsHeaders);
@@ -105,6 +125,17 @@ export async function updateBonusCode(request, env, corsHeaders, id) {
   if ('transfer_after' in body) set('transfer_after', body.transfer_after ? 1 : 0);
   if ('enabled' in body) set('enabled', body.enabled ? 1 : 0);
   if ('priority' in body) set('priority', Number(body.priority) || 0);
+  if ('sheet_name' in body) {
+    const raw = body.sheet_name;
+    if (raw === null || raw === undefined || String(raw).trim() === '') {
+      set('sheet_name', null);
+    } else {
+      const trimmed = String(raw).trim();
+      if (!isValidSheetName(trimmed)) return err('Invalid sheet_name (1-100 chars, no newline/tab/[]/?*:/\\)', 400, corsHeaders);
+      set('sheet_name', trimmed);
+    }
+  }
+  if ('game_selection' in body) set('game_selection', body.game_selection ? 1 : 0);
 
   if (!sets.length) return err('No fields to update', 400, corsHeaders);
   sets.push(`updated_at = datetime('now')`);

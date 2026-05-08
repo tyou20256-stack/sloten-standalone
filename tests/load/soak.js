@@ -119,9 +119,23 @@ export default function () {
     msgSent.add(msgOk);
 
     if (msgOk) {
-      const msgData = JSON.parse(msgRes.body);
-      const hasReply = !!(msgData.bot_replies && msgData.bot_replies.length > 0) ||
-                       !!(msgData.bot_reply && msgData.bot_reply.content);
+      // JSON.parse can throw at peak load if body is truncated by CF subrequest
+      // limits. Don't let parse failures count as "no bot reply" — fall back to
+      // substring check on the raw body which is more forgiving.
+      let hasReply = false;
+      let msgData = null;
+      try {
+        msgData = JSON.parse(msgRes.body);
+        hasReply = !!(msgData.bot_replies && msgData.bot_replies.length > 0) ||
+                   !!(msgData.bot_reply && msgData.bot_reply.content);
+      } catch (_) {
+        // Substring fallback — verify the response carries a *non-empty* bot
+        // reply structure. The previous loose `'"bot_repl'` check would also
+        // match empty arrays (`"bot_replies":[]`) and pass even when no reply
+        // was generated. Match the start of a populated structure instead.
+        const body = msgRes.body || '';
+        hasReply = body.includes('"bot_replies":[{') || body.includes('"bot_reply":{"');
+      }
       botReplied.add(hasReply ? 1 : 0);
       if (hasReply) {
         aiLatency.add(elapsed);

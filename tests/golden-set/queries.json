@@ -498,5 +498,129 @@
     "expected_handoff": false,
     "expected_jump": null,
     "source": "tbd_bk_team"
+  },
+  {
+    "id": "g-051",
+    "category": "announcement",
+    "input": "GW中の出金は通常通りですか",
+    "expected_phrases": ["GW", "ゴールデンウィーク", "連休"],
+    "forbidden_phrases": ["機密", "セキュリティ保護", "お伝えできません"],
+    "expected_handoff": false,
+    "expected_jump": null,
+    "source": "drafted"
+  },
+  {
+    "id": "g-052",
+    "category": "announcement",
+    "input": "お盆休みの営業時間を教えて",
+    "expected_phrases": [],
+    "forbidden_phrases": ["機密", "セキュリティ保護"],
+    "expected_handoff": false,
+    "expected_jump": null,
+    "source": "drafted"
+  },
+  {
+    "id": "g-053",
+    "category": "announcement",
+    "input": "年末年始のメンテナンス予定はありますか",
+    "expected_phrases": [],
+    "forbidden_phrases": ["機密"],
+    "expected_handoff": false,
+    "expected_jump": null,
+    "source": "drafted"
+  },
+  {
+    "id": "g-054",
+    "category": "machine_spec",
+    "input": "バイオハザードヴィレッジの天井について",
+    "expected_phrases": ["バイオハザード"],
+    "forbidden_phrases": ["GW", "メンテナンス"],
+    "expected_handoff": false,
+    "expected_jump": null,
+    "source": "drafted",
+    "note": "pachi vs announcement mutual exclusion — pachi must win"
+  },
+  {
+    "id": "g-055",
+    "category": "machine_spec",
+    "input": "モンスターハンターの継続率",
+    "expected_phrases": [],
+    "forbidden_phrases": ["BUY機能", "FAQ から", "FAQ に基づ"],
+    "expected_handoff": false,
+    "expected_jump": null,
+    "source": "drafted",
+    "note": "Forbidden patterns target FAQ-mixing prose, not the menu item ❓ よくある質問(FAQ)"
+  },
+  {
+    "id": "g-056",
+    "category": "faq",
+    "input": "ライセンスについて教えて",
+    "expected_phrases": ["ジョージア"],
+    "forbidden_phrases": ["継続率", "天井", "機種データベース"],
+    "expected_handoff": false,
+    "expected_jump": null,
+    "source": "drafted",
+    "note": "negative test — 'ライセンス' must NOT route to pachi"
+  },
+  {
+    "id": "g-057",
+    "category": "escalation",
+    "input": "なんで何も解決しないんだ",
+    "expected_phrases": ["担当者", "おつなぎ"],
+    "forbidden_phrases": [],
+    "expected_handoff": true,
+    "expected_jump": null,
+    "source": "drafted"
+  },
+  {
+    "id": "g-058",
+    "category": "escalation",
+    "input": "もう諦めて退会したい",
+    "expected_phrases": [],
+    "forbidden_phrases": [],
+    "expected_handoff": false,
+    "expected_jump": null,
+    "source": "drafted",
+    "note": "退会 alone shouldn't escalate — should route to account_issues"
+  },
+  {
+    "id": "g-059",
+    "category": "escalation",
+    "input": "5万円返してください今すぐ",
+    "expected_phrases": ["担当者"],
+    "forbidden_phrases": [],
+    "expected_handoff": true,
+    "expected_jump": null,
+    "source": "drafted"
+  },
+  {
+    "id": "g-060",
+    "category": "english",
+    "input": "Can I withdraw money on weekends?",
+    "expected_phrases": ["日本語"],
+    "forbidden_phrases": [],
+    "expected_handoff": false,
+    "expected_jump": null,
+    "source": "drafted"
+  },
+  {
+    "id": "g-061",
+    "category": "menu_keyword",
+    "input": "入金不要ボーナス",
+    "expected_phrases": ["ボーナス"],
+    "forbidden_phrases": [],
+    "expected_handoff": false,
+    "expected_jump": null,
+    "source": "drafted"
+  },
+  {
+    "id": "g-062",
+    "category": "faq",
+    "input": "対応している決済方法を全部教えて",
+    "expected_phrases": ["PayPay"],
+    "forbidden_phrases": [],
+    "expected_handoff": false,
+    "expected_jump": null,
+    "source": "drafted"
   }
 ]

@@ -181,6 +181,24 @@ export async function sendMessage(request, env, corsHeaders, conversationId, opt
     //   3. LLM reply
     let botReply = null;
     const botReplies = [];
+    // Escalated-conversation continuity (mt-004 fix, 2026-05-08):
+    // Once a conversation is escalated (status='open'), subsequent customer
+    // messages used to receive total silence — confusing UX, plus broke
+    // multi-turn tests verifying RG follow-up. Reply with a brief
+    // acknowledgment so the customer knows their message was received and
+    // a human operator will see it.
+    if (senderType === 'customer' && conv.status === 'open') {
+      try {
+        const ackMsg = await insertMessage(env, {
+          conversationId,
+          tenantId: conv.tenant_id,
+          senderType: 'bot', senderId: null,
+          content: 'お問い合わせを受け付けました。担当者がご対応中ですので、引き続きお待ちくださいませ。',
+          contentType: 'text', contentAttributes: null, isPrivate: false,
+        }, ctx);
+        botReplies.push(ackMsg);
+      } catch (_) { /* best-effort acknowledgment */ }
+    }
     if (senderType === 'customer' && conv.status === 'bot') {
       try {
         // Reload conv with flow_state column after our UPDATE above.

@@ -1,0 +1,54 @@
+[
+  {
+    "id": "mt-001",
+    "name": "Deadloop guard — same-question-3-times",
+    "category": "deadloop",
+    "turns": [
+      { "input": "出金できないんですけど", "expect_phrases": [] },
+      { "input": "出金できないんですけど", "expect_phrases": [] },
+      { "input": "出金できないんですけど", "expect_phrases": ["担当者", "おつなぎ", "お繋ぎ", "お待ちくださいませ"], "expect_handoff": true }
+    ],
+    "note": "3 回同じ質問で AI deadloop → escalation 期待 (decideEscalation の bigram Jaccard 検出)"
+  },
+  {
+    "id": "mt-002",
+    "name": "Deposit flow — full path with menu navigation",
+    "category": "menu_flow",
+    "turns": [
+      { "input": "メニュー", "expect_phrases": ["入金", "出金"] },
+      { "input": "入金不要ボーナス", "expect_phrases": ["ボーナス"] },
+      { "input": "賭け条件は？", "expect_phrases": [] }
+    ],
+    "note": "メニュー → サブメニュー → 詳細質問の 3 ターン flow"
+  },
+  {
+    "id": "mt-003",
+    "name": "Clarification — vague question then specific",
+    "category": "clarification",
+    "turns": [
+      { "input": "ボーナスについて", "expect_phrases": [] },
+      { "input": "入金不要ボーナスの賭け条件を教えて", "expect_phrases": ["賭け条件"], "forbidden_phrases": ["処理中にエラー"] }
+    ],
+    "note": "曖昧→具体化の 2 ターン。前ターンの context が回答品質を下げないこと"
+  },
+  {
+    "id": "mt-004",
+    "name": "RG follow-up — RG signal then escalation maintained",
+    "category": "rg",
+    "turns": [
+      { "input": "ギャンブル依存になりそうです", "expect_handoff": true },
+      { "input": "やめる方法を教えて", "expect_handoff": true }
+    ],
+    "note": "RG 検出後の追加質問でも escalation を維持 (continuity 確認)"
+  },
+  {
+    "id": "mt-005",
+    "name": "Mutual exclusion in conversation context — pachi then announcement",
+    "category": "mutual_exclusion",
+    "turns": [
+      { "input": "バイオハザードの天井について", "expect_phrases": ["バイオハザード"] },
+      { "input": "GW中は出金大丈夫ですか", "expect_phrases": ["GW", "ゴールデンウィーク", "連休"], "forbidden_phrases": ["バイオハザード"] }
+    ],
+    "note": "前ターンで pachi 経路、次ターンで announcement 経路 — 文脈混入なし"
+  }
+]

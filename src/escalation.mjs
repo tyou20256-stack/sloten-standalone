@@ -10,7 +10,10 @@
 
 // 金銭トラブル / 本人確認 / 法的主張 / 未成年 / 退会 — AI では絶対に答えない
 const HARD_ESCALATION_PATTERNS = [
-  { re: /返金|金返せ|お金返|全額(?:返)?金/,                     reason: 'money_refund' },
+  // Refund — both terse demands ("金返せ") and polite-but-urgent forms
+  // ("5万円返してください今すぐ"). Caught: 返金, 金返せ, お金返, 全額返金,
+  // <数字>円返(し|って), 返してください+(今すぐ|早く|すぐに)
+  { re: /返金|金返せ|お金返|全額(?:返)?金|\d+\s*円.*返(?:し|って)|返(?:して|金して)(?:ください|くださ).*(?:今すぐ|すぐ|早く)|(?:今すぐ|早く|すぐに).*返(?:して|金)/, reason: 'money_refund' },
   { re: /出金(?:できない|されない|が反映|が遅い)/,                reason: 'withdrawal_issue' },
   { re: /入金(?:したのに|されない|反映され)/,                    reason: 'deposit_issue' },
   { re: /訴え|弁護士|消費者(?:センター|庁)|景表法|違法/,          reason: 'legal_claim' },
@@ -40,6 +43,10 @@ const ANGER_PATTERNS = [
   /SNS(?:に書|で晒|で拡散)|Twitter(?:に書|で晒)|X(?:に書|で晒)/,
   /炎上(?:させ|させる)/,
   /(?:金|お金)(?:盗|ぬすま|盗まれ)/,
+  // Frustration — repeated unresolved issue. AI continuing makes it worse.
+  /(?:何[も度回])(?:.{0,10})(?:解決|対応|返事|連絡)し?(?:ない|てくれない)/,
+  /(?:いつまで|何時間|何日)(?:.{0,15})(?:待たせ|放置|無視)/,
+  /(?:対応|返事|連絡)(?:が悪い|遅い|されない|してくれない)/,
 ];
 
 /**
@@ -103,23 +110,46 @@ export function decideEscalation(customerMessage, history = []) {
       .filter((m) => m.sender_type === 'customer')
       .map((m) => String(m.content || '').trim())
       .filter((s) => s.length > 0);
-    // Strip trailing copy of current message (happens when caller inserts
-    // before invoking decideEscalation).
-    const customerPrev = customerAll[customerAll.length - 1] === text.trim()
+    // The current message may or may not be present in history (depends on
+    // call site — messages-native.mjs:200 fetches customer-only history
+    // BEFORE inserting the current customer msg, so the trailing entry is
+    // the previous turn, not a copy of current). Take the last 2 entries
+    // and compare against current. If both match the current text (or all 3
+    // including a possible trailing copy match), it's a deadloop.
+    //
+    // Bug fix 2026-05-08: the previous strip-trailing-copy logic broke the
+    // most common case (history WITHOUT current msg) — stripping reduced
+    // the comparison set from 2 to 1 entries → no deadloop fired even on
+    // 3-turn identical questions. Use occurrence count instead.
+    const cur = text.trim();
+    const last2 = customerAll.slice(-2);
+    const last3 = customerAll.slice(-3);
+    if (last2.length >= 2 && last2.every((c) => c === cur)) {
+      return {
+        shouldEscalate: true,
+        reason: 'deadloop',
+        category: 'deadloop',
+        responseText:
+          'お手数をおかけしております。スムーズにご案内できるよう、担当者にお繋ぎいたします。少々お待ちくださいませ。',
+      };
+    }
+    // Insert-before-call pattern: current is the trailing entry, so the 2
+    // entries BEFORE that should match for deadloop. last3 covers this.
+    if (last3.length >= 3 && last3[2] === cur && last3[0] === cur && last3[1] === cur) {
+      return {
+        shouldEscalate: true,
+        reason: 'deadloop',
+        category: 'deadloop',
+        responseText:
+          'お手数をおかけしております。スムーズにご案内できるよう、担当者にお繋ぎいたします。少々お待ちくださいませ。',
+      };
+    }
+    // For backward compatibility, derive customerPrev (used by similarity check)
+    const customerPrev = customerAll[customerAll.length - 1] === cur
       ? customerAll.slice(0, -1)
       : customerAll;
     const prev = customerPrev.slice(-2);
     if (prev.length >= 2) {
-      // Phase 1: exact duplicate — current matches both previous
-      if (prev.every((c) => c === text.trim())) {
-        return {
-          shouldEscalate: true,
-          reason: 'deadloop',
-          category: 'deadloop',
-          responseText:
-            'お手数をおかけしております。スムーズにご案内できるよう、担当者にお繋ぎいたします。少々お待ちくださいませ。',
-        };
-      }
       // Phase 2: similarity — current vs both previous
       //   (a) Both Jaccard ≥ 0.5, OR
       //   (b) A shared non-trivial content word (≥ 4 chars) appears in all 3.

@@ -40,7 +40,7 @@ async function createSession() {
   return { contactToken: c.contact_token, conversationId: conv.conversation.id };
 }
 
-async function sendMessage(contactToken, conversationId, content) {
+async function sendMessageOnce(contactToken, conversationId, content) {
   const r = await fetch(`${BASE_URL}/api/widget/conversations/${conversationId}/messages`, {
     method: 'POST',
     headers: {
@@ -50,6 +50,35 @@ async function sendMessage(contactToken, conversationId, content) {
     body: JSON.stringify({ sender_type: 'customer', content }),
   }).then((res) => res.json());
   return r;
+}
+
+// Patterns indicating a Gemini 503 / transient API failure surfaced via
+// Fix A fallback. When detected, retry the request with a fresh session
+// after a backoff delay. This eliminates the CI flakiness from external
+// API quota hiccups without masking real bugs (the fallback message is
+// distinct from any normal AI response).
+const TRANSIENT_FALLBACK_RE = /処理中にエラーが発生しました|ただいまうまくお答えできませんでした/;
+const MAX_RETRIES = 2;
+const BACKOFF_BASE_MS = 1500;
+
+async function sendMessage(contactToken, conversationId, content) {
+  let lastReply = null;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      // Need a fresh session for retry (idempotency: don't pollute the same
+      // conversation with multiple retries). Caller will fetch a new one.
+      await new Promise((r) => setTimeout(r, BACKOFF_BASE_MS * Math.pow(2, attempt - 1)));
+      const session = await createSession();
+      contactToken = session.contactToken;
+      conversationId = session.conversationId;
+    }
+    lastReply = await sendMessageOnce(contactToken, conversationId, content);
+    const botReplies = lastReply.bot_replies || (lastReply.bot_reply ? [lastReply.bot_reply] : []);
+    const text = botReplies.map((b) => b.content || '').join('\n');
+    if (!TRANSIENT_FALLBACK_RE.test(text)) return lastReply;
+    // Transient — retry
+  }
+  return lastReply;
 }
 
 // --- Scoring ---

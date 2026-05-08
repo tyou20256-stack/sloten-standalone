@@ -30,7 +30,13 @@ async function computeMetrics(env) {
   if (entries.length === 0) return null;
 
   const total = entries.length;
-  const errors = entries.filter(r => r.status === 'error' || r.status === 'threat_blocked').length;
+  // threat_blocked is a SECURITY signal (input filter caught injection / data
+  // extraction attempt). Counting it as "error" muddies the operational alert:
+  // a single attacker can pump up error_rate and trigger pages. Track it
+  // separately so ops can monitor security activity without it firing the
+  // generic uptime alert.
+  const errors = entries.filter(r => r.status === 'error').length;
+  const threatBlocked = entries.filter(r => r.status === 'threat_blocked').length;
   const empty = entries.filter(r => !r.output || r.output.trim().length === 0).length;
   const escalated = entries.filter(r => r.status === 'escalated').length;
   const latencies = entries
@@ -46,8 +52,10 @@ async function computeMetrics(env) {
     error_rate: total > 0 ? errors / total : 0,
     empty_rate: total > 0 ? empty / total : 0,
     escalation_rate: total > 0 ? escalated / total : 0,
+    threat_blocked_rate: total > 0 ? threatBlocked / total : 0,
     p95_latency_ms: p95,
     errors,
+    threat_blocked: threatBlocked,
     empty,
     escalated,
     window_minutes: WINDOW_MINUTES,
@@ -78,9 +86,16 @@ async function sendTelegram(env, text) {
 
 /**
  * De-duplicate: don't re-send the same alert type within 5 minutes.
+ *
+ * KV namespace selection: prefers RATE_LIMITER (used by other rate-limit /
+ * cache concerns elsewhere in the worker) → falls back to STATE_KV →
+ * SESSION_KV. Previously this was hardcoded to SESSION_KV which created an
+ * inconsistency with announcements.mjs / pachi-machines.mjs (which use
+ * RATE_LIMITER). When SESSION_KV binding wasn't set in some environments,
+ * this silently failed dedup → repeated alerts.
  */
 async function shouldAlert(env, alertKey) {
-  const kv = env.SESSION_KV;
+  const kv = env.RATE_LIMITER || env.STATE_KV || env.SESSION_KV;
   if (!kv) return true;
   const key = `alert:dedup:${alertKey}`;
   try {

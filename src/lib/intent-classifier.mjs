@@ -51,7 +51,12 @@ export async function classifyIntent(message, env, context = {}) {
       matched.push({ intent: 'menu_keyword', confidence: 0.95 });
       evidence.menu_keyword = { menu_id: kwMenu.id, title: kwMenu.title };
     }
-  } catch (_) {}
+  } catch (e) {
+    // Don't silently drop — this is shadow mode now, but a Step 2 migration
+    // depends on the classifier being trustworthy. Log so we can spot DB
+    // outages or schema drift.
+    console.warn('[intent-classifier] menu_keyword lookup failed:', e?.message);
+  }
 
   // 3. Machine spec (sync regex)
   const machineDetect = detectMachineQuery(msg);

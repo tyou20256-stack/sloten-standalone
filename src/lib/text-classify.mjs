@@ -6,7 +6,9 @@
 // different regex range (e.g. [぀-ヿ㐀-鿿] vs [぀-ゟ゠-ヿ一-鿿]).
 
 // Hiragana + Katakana + CJK Unified Ideographs (basic + ext-A subset).
-// Includes Halfwidth Katakana via the ゠-ヿ block boundary check.
+// NOTE: this does NOT include Halfwidth Katakana (U+FF66-FF9F, "ｦ-ﾟ") —
+// add it explicitly if half-width input matters. Earlier comment claimed
+// coverage; corrected 2026-05-08.
 const JA_CHAR_RE = /[぀-ゟ゠-ヿ一-鿿]/;
 
 // Latin / Hangul / Cyrillic — used for "non-Japanese language detection"

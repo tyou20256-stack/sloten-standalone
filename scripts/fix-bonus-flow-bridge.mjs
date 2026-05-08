@@ -82,7 +82,8 @@ for (const bc of bonusCodes) {
     // seraphim_game_* → seraphim_game_selected
     // stepup_game_* → stepup_game_selected etc.
     const gamePrefixes = ['stepup_game_','vamos_game_','akeome_game_','special_chance_game_',
-                          'tokubetsu_step_game_','tokubetsu_heavens_game_','arquel_game_','seraphim_game_'];
+                          'tokubetsu_step_game_','tokubetsu_heavens_game_','arquel_game_','seraphim_game_',
+                          'to_challenge_rengeki_game_','to_challenge_ichigeki_game_'];
     for (const prefix of gamePrefixes) {
       if (next && next.startsWith(prefix)) {
         const selectedStep = prefix.replace('_game_', '_game_selected');
@@ -120,15 +121,49 @@ for (const bc of bonusCodes) {
 // For arquel/seraphim, individual game values don't exist as steps. We don't
 // need them because the bridge step routes all games to *_game_selected. But
 // verify the *_game_selected steps exist.
+//
+// CUSTOM_SELECTED_CONTENT overrides the generic "機種選択ありがとうございます"
+// confirmation for promotions where we want to show full campaign details
+// after the user picks a game (e.g. T/Oチャレンジ which has period, terms,
+// and target-game disclaimer).
+// Note: kept tight to fit D1's 100KB SQL statement limit. Full UTF-8 bytes
+// (Japanese chars are 3 bytes each) add up fast across all bridge steps.
+const CUSTOM_SELECTED_CONTENT = {
+  to_challenge_rengeki_game_selected:
+    '✅ ご参加ありがとうございます 😊\n\n'
+    + '🎰 選択機種: {{vars._bonus_choice_title}}\n\n'
+    + '📅 4/27(月)〜5/3(日) 23:59\n'
+    + '🔗 https://slotenpromotion.com/rengeki-or-ichigeki/\n\n'
+    + '⚠️ 注意事項\n'
+    + '・コード送信後からベット額が集計対象になります。\n'
+    + '・コード「連打」と機種は後から変更できません。\n'
+    + '・対象機種は予告なく変更される場合があります。\n'
+    + '・FSは5/4(月) 12:00から順次付与、賭け条件1倍、有効期限7日。\n\n'
+    + '🎰 低額×多回数でコツコツ積み上げよう！',
+  to_challenge_ichigeki_game_selected:
+    '✅ ご参加ありがとうございます 😊\n\n'
+    + '🎰 選択機種: {{vars._bonus_choice_title}}\n\n'
+    + '📅 4/27(月)〜5/3(日) 23:59\n'
+    + '🔗 https://slotenpromotion.com/rengeki-or-ichigeki/\n\n'
+    + '⚠️ 注意事項\n'
+    + '・コード送信後からベット額が集計対象になります。\n'
+    + '・コード「一撃」と機種は後から変更できません。\n'
+    + '・対象機種は予告なく変更される場合があります。\n'
+    + '・FSは5/4(月) 12:00から順次付与、賭け条件1倍、有効期限7日。\n\n'
+    + '🎰 高額×少回数で一発逆転を狙おう！',
+};
+
 for (const prefix of ['arquel', 'seraphim', 'stepup', 'vamos', 'akeome',
-                       'special_chance', 'tokubetsu_step', 'tokubetsu_heavens']) {
+                       'special_chance', 'tokubetsu_step', 'tokubetsu_heavens',
+                       'to_challenge_rengeki', 'to_challenge_ichigeki']) {
   const selectedId = `${prefix}_game_selected`;
   if (!stepsById.has(selectedId)) {
     console.log(`  adding missing step: ${selectedId}`);
     newSteps.push({
       id: selectedId,
       type: 'message',
-      content: `✅ 機種選択ありがとうございます！\n\n🎰 選択機種: {{vars._bonus_choice}}\n\n担当スタッフがこの後の\n参加手順をご案内いたします。\n\n少々お待ちください✨`,
+      content: CUSTOM_SELECTED_CONTENT[selectedId]
+        || `✅ 機種選択ありがとうございます！\n\n🎰 選択機種: {{vars._bonus_choice}}\n\n担当スタッフがこの後の\n参加手順をご案内いたします。\n\n少々お待ちください✨`,
       next: null,
     });
   }
@@ -153,8 +188,15 @@ console.log(`Steps: ${steps.length} → ${merged.length} (added ${newSteps.lengt
 
 // 5. Write SQL + apply.
 const esc = s => String(s).replace(/'/g, "''");
-const sql = `UPDATE bot_flows SET steps='${esc(JSON.stringify(merged))}', updated_at=datetime('now') WHERE id=${FLOW_ID};`;
+const stepsJson = JSON.stringify(merged);
+console.log(`Steps JSON size: ${stepsJson.length} bytes (${(stepsJson.length / 1024).toFixed(1)} KB)`);
+const sql = `UPDATE bot_flows SET steps='${esc(stepsJson)}', updated_at=datetime('now') WHERE id=${FLOW_ID};`;
 writeFileSync(TMP_SQL, sql);
+const utf8Bytes = Buffer.byteLength(sql, 'utf8');
+console.log(`SQL file size: ${sql.length} chars / ${utf8Bytes} UTF-8 bytes`);
+if (utf8Bytes >= 100_000) {
+  console.warn(`⚠️  Approaching D1 100KB SQL statement limit (currently ${utf8Bytes} bytes). Trim CUSTOM_SELECTED_CONTENT or split the update.`);
+}
 try {
   console.log('Applying to D1...');
   execSync(`npx wrangler d1 execute ${DB} --config ${CONFIG} --remote --file=${TMP_SQL}`, { stdio: 'inherit', maxBuffer: 20 * 1024 * 1024 });

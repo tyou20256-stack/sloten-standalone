@@ -43,6 +43,17 @@ const DEFS = [
   ['seraphim',         'セレフィム',                     ['セレフィム','せれふぃむ'],                                         'case_insensitive',    'seraphim_success',         'BC_入学',   false],
   // BC_だっちゃん event (HEAVEN DAY 特別プロモーション)
   ['heavenday_daachin','HEAVEN DAY だっちゃん天国',        ['だっちゃん天国'],                                                   'case_insensitive',    'heavenday_daachin_success','BC_だっちゃん', false],
+  // BC_T/Oチャレンジ (週間ターンオーバーチャレンジ — 連打 / 一撃)
+  ['to_challenge_rengeki', 'T/Oチャレンジ 連打',           ['連打','れんだ','レンダ'],                                            'case_insensitive',    'to_challenge_rengeki_success', 'BC_T/Oチャレンジ', false],
+  ['to_challenge_ichigeki','T/Oチャレンジ 一撃',           ['一撃','いちげき','イチゲキ'],                                        'case_insensitive',    'to_challenge_ichigeki_success','BC_T/Oチャレンジ', false],
+  // BC_マルチハント event (Sweet Bonanza 2500 マルチハント, 2026/4/30〜5/14)
+  ['multi_hunt',       'マルチハント (Sweet Bonanza 2500)', ['マルチハント','まるちはんと'],                                       'case_insensitive',    'multi_hunt_success',       'BC_マルチハント', false],
+  // BC_SA道場 (SA Gaming ライブバカラ道場, 2026/5/1〜5/31)
+  ['sa_dojo',          'バカラ道場 (SA Gaming)',          ['バカラ道場','ばからどうじょう'],                                     'case_insensitive',    'sa_dojo_success',          'BC_SA道場',     false],
+  // BC_SAパスポート (SA Gaming ライブゲーム体験パスポート, 2026/5/1〜5/31)
+  ['sa_passport',      '体験パスポート (SA Gaming)',       ['体験パスポート','たいけんぱすぽーと'],                                 'case_insensitive',    'sa_passport_success',      'BC_SAパスポート', false],
+  // BC_GWフェスティバル (v9.7, 2026/5/4〜5/18) — GW限定初回入金キャンペーン
+  ['gw_festival',      'GWフェスティバル',                  ['GWフェスティバル','gwフェスティバル','gw festival','GW Festival','じーだぶりゅーふぇすてぃばる'], 'case_insensitive', 'gw_festival_success', 'BC_GWフェスティバル', false],
 ];
 
 const escSql = (s) => String(s == null ? '' : s).replace(/'/g, "''");

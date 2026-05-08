@@ -52,8 +52,13 @@ function sanitizeUntrusted(s, maxChars = 500) {
   out = out.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
   // Strip Unicode tag block (smuggling)
   out = out.replace(/[\u{E0000}-\u{E007F}]/gu, '');
-  // Strip zero-width
-  out = out.replace(/[​-‏﻿]/g, '');
+  // Strip zero-width / bidi / BOM. Use Unicode escape so the regex is
+  // visible in diff / grep / code review (literal invisibles are unreadable).
+  // U+200B-200F: ZWSP/ZWNJ/ZWJ/LRM/RLM
+  // U+202A-202E: explicit bidi formatting
+  // U+2060-206F: word joiner / invisible operators
+  // U+FEFF: BOM
+  out = out.replace(/[​-‏‪-‮⁠-⁯﻿]/g, '');
   // Neutralize markdown headers at line start so attacker can't inject "## 新ルール"
   out = out.replace(/^[ \t]*#{1,6}[ \t]+/gm, '');
   // Hard cap
@@ -116,23 +121,10 @@ function formatDate(s) {
 
 // HMAC sign cached payload so an attacker who acquires KV write access on the
 // shared RATE_LIMITER namespace cannot poison this cache to inject arbitrary
-// content into the system prompt. Uses SESSION_SIGNING_KEY (already provisioned)
-// with a dedicated context string so it can't be confused with session tokens.
-async function hmacSign(key, message) {
-  const enc = new TextEncoder();
-  const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(key), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  const sig = await crypto.subtle.sign('HMAC', keyMaterial, enc.encode(message));
-  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, '0')).join('');
-}
-async function hmacVerify(key, message, expectedHex) {
-  if (!expectedHex || typeof expectedHex !== 'string') return false;
-  const got = await hmacSign(key, message);
-  if (got.length !== expectedHex.length) return false;
-  // Constant-time compare
-  let diff = 0;
-  for (let i = 0; i < got.length; i++) diff |= got.charCodeAt(i) ^ expectedHex.charCodeAt(i);
-  return diff === 0;
-}
+// content into the system prompt. Uses RAG_CACHE_SIGNING_KEY (or legacy
+// SESSION_SIGNING_KEY during dual-verify rotation) with a dedicated context
+// string so the same key can't produce equivalent signatures elsewhere.
+import { hmacSignHex as hmacSign, hmacVerifyHex as hmacVerify } from '../lib/crypto.mjs';
 const HMAC_CONTEXT = 'announcements:v1:hmac';
 
 /**

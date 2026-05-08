@@ -335,6 +335,8 @@
       el('th', {}, 'コード'),
       el('th', {}, '照合'),
       el('th', {}, 'GAS'),
+      el('th', {}, 'シート名'),
+      el('th', {}, 'GS'),
       el('th', {}, '出典'),
       el('th', {}, '有効'),
       el('th', {}, 'アクション'),
@@ -347,6 +349,8 @@
       tr.appendChild(el('td', { style: 'font-size:12px;' }, (row.codes || []).join(', ')));
       tr.appendChild(el('td', { style: 'font-size:12px;' }, row.match_mode === 'exact' ? '完全一致' : '大文字小文字を区別しない'));
       tr.appendChild(el('td', { style: 'font-size:12px;' }, row.gas_type || '-'));
+      tr.appendChild(el('td', { style: 'font-size:12px;color:#6b7280;' }, row.sheet_name || (row.gas_type ? '(自動: BC_' + row.display_name + ')' : '-')));
+      tr.appendChild(el('td', { style: 'font-size:12px;text-align:center;' }, row.game_selection ? '✓' : '-'));
       tr.appendChild(el('td', { style: 'font-size:12px;' }, row.source === 'hardcoded' ? 'AgentBot' : 'カスタム'));
       const toggle = el('input', { type: 'checkbox', onchange: async (ev) => {
         try { await api('PATCH', `/api/bonus-codes/${row.id}`, { enabled: ev.target.checked }); (window.Sloten?.toast||(()=>{}))('更新しました', { type: 'success' }); }
@@ -391,6 +395,9 @@
       else form.appendChild(el('div', { style: 'margin-bottom:12px;font-size:13px;color:#6b7280;' },
         `type_key: ${row.type_key} (${row.source === 'hardcoded' ? 'AgentBot移植' : 'カスタム'})`));
       addField('表示名', 'bc-name', row?.display_name || '', { required: true });
+      addField('スプレッドシート名 (任意・GAS v10.0)', 'bc-sheet-name', row?.sheet_name || '', {
+        hint: '空欄なら GAS 受信時に「BC_<表示名>」が使用されます。改行/タブ/[]/?*:/\\\\ は不可、最大100文字。',
+      });
       addField('受付コード (カンマ または 改行で複数)', 'bc-codes', (row?.codes || []).join('\n'), { textarea: true, rows: 3 });
       form.appendChild(el('label', { for: 'bc-mode' }, '照合方法'));
       const modeSel = el('select', { id: 'bc-mode' },
@@ -447,15 +454,19 @@
       if (row?.transfer_after) tafter.checked = true;
       const en = el('input', { type: 'checkbox', id: 'bc-enabled' });
       if (!row || row.enabled) en.checked = true;
-      const cbWrap = el('div', { style: 'display:flex;gap:16px;margin:8px 0 12px;' });
+      const gameSel = el('input', { type: 'checkbox', id: 'bc-game-selection' });
+      if (row?.game_selection) gameSel.checked = true;
+      const cbWrap = el('div', { style: 'display:flex;gap:16px;margin:8px 0 12px;flex-wrap:wrap;' });
       cbWrap.appendChild(el('label', { style: 'font-size:13px;' }, tafter, ' 受付後にオペレーター転送'));
       cbWrap.appendChild(el('label', { style: 'font-size:13px;' }, en, ' 有効'));
+      cbWrap.appendChild(el('label', { style: 'font-size:13px;' }, gameSel, ' ゲーム選択あり (vamos / akeome 等)'));
       form.appendChild(cbWrap);
 
       actions.appendChild(el('button', { class: 'slo-adm-btn slo-adm-btn-secondary', onclick: closeModal }, 'キャンセル'));
       actions.appendChild(el('button', { class: 'slo-adm-btn slo-adm-btn-primary', onclick: async () => {
         const get = (id) => document.getElementById(id).value;
         const gasSuffixVal = (get('bc-gas-suffix') || '').trim();
+        const sheetNameRaw = get('bc-sheet-name').trim();
         const payload = {
           display_name: get('bc-name'),
           codes: get('bc-codes').split(/\n|,/).map(s => s.trim()).filter(Boolean),
@@ -464,6 +475,8 @@
           gas_type: gasSuffixVal ? 'BC_' + gasSuffixVal : null,
           transfer_after: document.getElementById('bc-transfer').checked,
           enabled: document.getElementById('bc-enabled').checked,
+          sheet_name: sheetNameRaw || null,
+          game_selection: document.getElementById('bc-game-selection').checked,
         };
         // 動的フォームから items を組み立てる: 両方空の行は無視、片方だけ入力の行はエラー
         const itemRows = Array.from(itemsWrap.querySelectorAll('.bc-item-row'));

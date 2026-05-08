@@ -25,6 +25,7 @@ import { resolveTenantId } from '../tenant-scope.mjs';
 import { signAttachmentUrl, baseUrlOf } from '../auth/attachment-signature.mjs';
 import { resolveEnvForTemplate } from '../env-resolver.mjs';
 import { logError as _logError } from '../audit.mjs';
+import { looksLikeFreeText } from '../lib/text-classify.mjs';
 
 const VALID_TRIGGER_TYPES = new Set(['entry', 'manual']);
 const VALID_STEP_TYPES = new Set(['message', 'input', 'select', 'webhook', 'handoff', 'collect']);
@@ -290,9 +291,7 @@ export async function executeFlow(env, conv, contact, inputText, ctx, inputAttrs
         // of stubbornly re-prompting "選択肢からお選びください". Heuristic:
         //   - Contains any Japanese character, OR length ≥ 5 chars
         // Short inputs like "a" or "?" are treated as typos (menu re-prompt).
-        const hasJa = /[぀-ゟ゠-ヿ一-鿿]/.test(pending);
-        const looksLikeFreeText = hasJa || pending.trim().length >= 5;
-        if (looksLikeFreeText) {
+        if (looksLikeFreeText(pending)) {
           // Preserve flow_state at the current select step so the caller can
           // re-offer the menu after the AI response. The caller is expected
           // to detect ai_fallback and invoke generateBotReply.
@@ -551,6 +550,23 @@ export async function startFlow(env, conv, contact, flow, ctx) {
 // to insert (empty array if no flow is active / matches). Also updates
 // conversation state side-effects (flow_state, handoff -> status).
 export async function runFlowForCustomerMessage(env, conv, contact, text, ctx, inputAttrs = null) {
+  // Detect stale "terminated" flow state: when a `message`-type step with
+  // next=null was the last advance, executeFlow leaves state as
+  // `{flow_id, step_id: null, vars}`. This persists in conv.flow_state but
+  // findStep returns undefined → executeFlow returns empty messages. The
+  // user appears stuck: clicking another menu button (e.g. ボーナス・プロモ
+  // from the still-visible welcome menu) hits AI fallback instead of the
+  // configured sub-menu. Clear stale state so the entry-flow logic below
+  // can match the click value to a fresh flow / menu jump.
+  if (conv.flow_state) {
+    let parsed = null;
+    try { parsed = typeof conv.flow_state === 'string' ? JSON.parse(conv.flow_state) : conv.flow_state; } catch { parsed = null; }
+    if (parsed && !parsed.step_id) {
+      await persistState(env, conv.id, null);
+      conv = { ...conv, flow_state: null };
+    }
+  }
+
   // Already in a flow?
   if (conv.flow_state) {
     const result = await executeFlow(env, conv, contact, text, ctx, inputAttrs);
@@ -563,5 +579,86 @@ export async function runFlowForCustomerMessage(env, conv, contact, text, ctx, i
   // Not in a flow: can we enter one?
   const entry = await findEntryFlow(env, conv.tenant_id, text);
   if (!entry) return { messages: [], state: null, handoff: false };
+
+  // Keyword → menu-jump: when the user's first message contains a phrase
+  // matching one of the known menu option titles or values (e.g. "コンビニ入金",
+  // "PayPay入金", "ボーナスコード申請"), jump directly to that step instead of
+  // showing the welcome menu and forcing the user to navigate down. Without
+  // this, "コンビニ入金" gets routed to ai_fallback which produces a generic
+  // explanation + the parent sub-menu — the user has to click again.
+  try {
+    // decorate(row) already parses steps from JSON to an array — never re-parse
+    const flowSteps = Array.isArray(entry.steps) ? entry.steps : [];
+    const trimmedKw = String(text || '').trim();
+    if (trimmedKw && flowSteps.length) {
+      // Build a map: option title (without leading emoji) AND value → next step id
+      const KEYWORD_MAP = new Map();
+      for (const s of flowSteps) {
+        if (s.type !== 'select' || !Array.isArray(s.options)) continue;
+        for (const o of s.options) {
+          if (!o.next) continue;
+          const v = String(o.value || '').trim();
+          const t = String(o.title || '').replace(/^([\p{Emoji_Presentation}\p{Extended_Pictographic}↩️☀-➿]+\s*)/u, '').trim();
+          if (v && v.length >= 3) KEYWORD_MAP.set(v.toLowerCase(), o.next);
+          if (t && t.length >= 3) KEYWORD_MAP.set(t.toLowerCase(), o.next);
+        }
+      }
+      // Exact match on lowercased text — guards against partial matches eating
+      // unrelated free-text questions ("出金方法を教えて" should still go to AI,
+      // not jump to a withdrawal step).
+      const lookup = trimmedKw.toLowerCase();
+      const targetStepId = KEYWORD_MAP.get(lookup);
+      if (targetStepId) {
+        const initial = { flow_id: entry.id, step_id: targetStepId, vars: {} };
+        await persistState(env, conv.id, initial);
+        const conv2 = { ...conv, flow_state: JSON.stringify(initial) };
+        // Execute with no user input — render the destination step's prompt
+        const result = await executeFlow(env, conv2, contact, null, ctx, inputAttrs);
+        await persistState(env, conv.id, result.state);
+        if (result.handoff) {
+          await env.DB.prepare(`UPDATE conversations SET status='open', updated_at=datetime('now') WHERE id=?`).bind(conv.id).run();
+        }
+        return result;
+      }
+    }
+  } catch (kwErr) {
+    // Don't silently drop — if KEYWORD_MAP build throws (malformed steps
+    // JSON, decorate edge case), operators need visibility. Falls through
+    // to looksLikeFreeText heuristic which still serves the user.
+    console.warn('[bot-flows] keyword→menu jump failed, falling through:', kwErr?.message);
+  }
+
+  // Heuristic: if the user's first message is non-trivial Japanese free text
+  // (e.g. "入金方法", "出金にどれくらい") rather than a generic greeting
+  // ("hi", "こんにちは"), treat it as in-flow input on the start step. This
+  // way the entry trigger consumes the message AND the start-step (a select)
+  // can route to ai_fallback, which messages-native uses to drive the AI +
+  // deep-menu jump. Without this, the message is "spent" on the entry trigger
+  // and the welcome menu is shown silently — losing the user's intent.
+  //
+  // Heuristic must match the in-flow select-step rule (bot-flows.mjs:294)
+  // so the same input triggers the same path whether it's the first message
+  // or a later one: hasJa OR length ≥ 5.
+  const trimmed = String(text || '').trim();
+  // Generic greetings should still get the welcome menu, not ai_fallback.
+  const GREETINGS = new Set(['hi', 'hello', 'こんにちは', 'こんばんは', 'おはよう', 'おはようございます', 'はじめまして', 'はい', 'お願いします', 'よろしく', 'よろしくお願いします', 'メニュー', 'menu']);
+  const isGreeting = GREETINGS.has(trimmed) || GREETINGS.has(trimmed.replace(/[。、！？!?\s]+$/, ''));
+
+  if (looksLikeFreeText(trimmed) && !isGreeting) {
+    // Set flow_state to the start step, then execute with the user's text as
+    // input. The start step (a select) will reach ai_fallback for free text,
+    // or auto-route for option-matching values.
+    const initial = { flow_id: entry.id, step_id: entry.start_step_id, vars: {} };
+    await persistState(env, conv.id, initial);
+    const conv2 = { ...conv, flow_state: JSON.stringify(initial) };
+    const result = await executeFlow(env, conv2, contact, text, ctx, inputAttrs);
+    await persistState(env, conv.id, result.state);
+    if (result.handoff) {
+      await env.DB.prepare(`UPDATE conversations SET status = 'open', updated_at = datetime('now') WHERE id = ?`).bind(conv.id).run();
+    }
+    return result;
+  }
+
+  // Greeting / short non-Japanese trigger — render the welcome menu.
   return startFlow(env, conv, contact, entry, ctx);
 }

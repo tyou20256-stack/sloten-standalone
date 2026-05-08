@@ -393,5 +393,147 @@
         "value": "transfer_to_agent"
       }
     ]
+  },
+  "to_challenge_rengeki_success": {
+    "content": "🎰「T/Oチャレンジ」へようこそ！ 🎰\nボーナスコード「連打」のお申し込みを受け付けました！\nご参加ありがとうございます 😊✨\n\n📅 開催期間：4/27(月) 0:00 〜 5/3(日) 23:59\n\n対象機種をお選びください 👇",
+    "items": [
+      {
+        "title": "🎰 Sweet Bonanza 1000",
+        "value": "to_challenge_rengeki_game_sweet_bonanza_1000"
+      },
+      {
+        "title": "🎰 Starlight Princess 1000",
+        "value": "to_challenge_rengeki_game_starlight_princess_1000"
+      },
+      {
+        "title": "🎰 Tome of Madness",
+        "value": "to_challenge_rengeki_game_tome_of_madness"
+      },
+      {
+        "title": "🎰 Rise of Olympus 1000",
+        "value": "to_challenge_rengeki_game_rise_of_olympus_1000"
+      },
+      {
+        "title": "🎰 San Quentin 2 Death Row",
+        "value": "to_challenge_rengeki_game_san_quentin_2"
+      },
+      {
+        "title": "🎰 Wanted Dead or a Wild",
+        "value": "to_challenge_rengeki_game_wanted_dead"
+      },
+      {
+        "title": "🎰 Money Cart 3",
+        "value": "to_challenge_rengeki_game_money_cart_3"
+      },
+      {
+        "title": "🎰 Bonanza Megaways",
+        "value": "to_challenge_rengeki_game_bonanza_megaways"
+      },
+      {
+        "title": "↩️ メインメニューに戻る",
+        "value": "welcome_message"
+      },
+      {
+        "title": "🙋 オペレーターと話す",
+        "value": "transfer_to_agent"
+      }
+    ]
+  },
+  "to_challenge_ichigeki_success": {
+    "content": "🎰「T/Oチャレンジ」へようこそ！ 🎰\nボーナスコード「一撃」のお申し込みを受け付けました！\nご参加ありがとうございます 😊✨\n\n📅 開催期間：4/27(月) 0:00 〜 5/3(日) 23:59\n\n対象機種をお選びください 👇",
+    "items": [
+      {
+        "title": "🎰 Sweet Bonanza 1000",
+        "value": "to_challenge_ichigeki_game_sweet_bonanza_1000"
+      },
+      {
+        "title": "🎰 Starlight Princess 1000",
+        "value": "to_challenge_ichigeki_game_starlight_princess_1000"
+      },
+      {
+        "title": "🎰 Tome of Madness",
+        "value": "to_challenge_ichigeki_game_tome_of_madness"
+      },
+      {
+        "title": "🎰 Rise of Olympus 1000",
+        "value": "to_challenge_ichigeki_game_rise_of_olympus_1000"
+      },
+      {
+        "title": "🎰 San Quentin 2 Death Row",
+        "value": "to_challenge_ichigeki_game_san_quentin_2"
+      },
+      {
+        "title": "🎰 Wanted Dead or a Wild",
+        "value": "to_challenge_ichigeki_game_wanted_dead"
+      },
+      {
+        "title": "🎰 Money Cart 3",
+        "value": "to_challenge_ichigeki_game_money_cart_3"
+      },
+      {
+        "title": "🎰 Bonanza Megaways",
+        "value": "to_challenge_ichigeki_game_bonanza_megaways"
+      },
+      {
+        "title": "↩️ メインメニューに戻る",
+        "value": "welcome_message"
+      },
+      {
+        "title": "🙋 オペレーターと話す",
+        "value": "transfer_to_agent"
+      }
+    ]
+  },
+  "multi_hunt_success": {
+    "content": "🍬「マルチハント」へようこそ！🔥\nボーナスコード「マルチハント」を確認しました！\nご参加ありがとうございます 😊✨\n\n📅 開催期間：4/30（木）〜 5/14（木）\n🎰 対象機種：Sweet Bonanza 2500\n\nキャンペーンの詳細はこちらからご確認ください👇\n🔗 https://slotenpromotion.com/sweetbonanzamulti/\n\n⚠️ 注意事項\n・対象は Sweet Bonanza 2500 のみです。\n・フリスピ中のマルチのみがポイント加算対象です。\n・各ステージ達成時は、該当フリスピのリプレイリンク提出が必要です。\n・**達成時のご報告がない場合は無効となる可能性があります。**\n・特典はイベント終了後翌営業日より順次付与されます。\n・報酬は最高到達ステージ1つ分のみ付与となります。\n・ボーナス・FSの賭け条件は1倍です。\n\nご不明な点はお気軽にチャットでお問い合わせください 💬✨\n🍭 マルチを貯めて、豪華特典を狙おう！🏆",
+    "items": [
+      {
+        "title": "↩️ メインメニューに戻る",
+        "value": "welcome_message"
+      },
+      {
+        "title": "🙋 オペレーターと話す",
+        "value": "transfer_to_agent"
+      }
+    ]
+  },
+  "sa_dojo_success": {
+    "content": "🥋「SA Gaming バカラ道場」へようこそ！🔥\nボーナスコード「バカラ道場」を確認しました！\nご参加ありがとうございます 😊✨\n📅 開催期間：5/1（木）〜 5/31（土）\n🎰 対象ゲーム：SA Gaming ライブバカラ\nキャンペーンの詳細はこちらからご確認ください👇\n🔗 https://slotenpromotion.com/sabaccaratdojo/\n⚠️ 注意事項\n・対象は SA Gaming のライブバカラのみです 。\n・各段位に到達した際は、チャットにてご報告をお願いします。\n・ご報告がない場合は報酬付与の対象外となる場合があります。\n・ボーナスの賭け条件は1倍です。\nご不明な点はお気軽にチャットでお問い合わせください 💬✨\n⚔️ 修行を積んで、師範の称号を目指せ！🏆",
+    "items": [
+      {
+        "title": "↩️ メインメニューに戻る",
+        "value": "welcome_message"
+      },
+      {
+        "title": "🙋 オペレーターと話す",
+        "value": "transfer_to_agent"
+      }
+    ]
+  },
+  "sa_passport_success": {
+    "content": "🗺「体験パスポート」へようこそ！🎰\nボーナスコード「体験パスポート」を確認しました！\nご参加ありがとうございます 😊✨\n📅 開催期間：5/1（木）〜 5/31（土）\n🎮 対象：SA Gaming ライブゲーム全5種\nキャンペーンの詳細はこちら👇\n🔗 https://slotenpromotion.com/sa-passport/\n⚠️ 注意事項\n・各ゲームで累計 5,000円以上のBETでスタンプ獲得（1回でも累計でもOK ）。\n・3ゲーム制覇で ¥2,000 / 全5ゲーム制覇で ¥5,000（合算なし）。\n・条件達成後はチャットにてご申請ください。\n・ボーナスの賭け条件は1倍です。\n🗺 全ゲームを制覇して豪華ボーナスをゲットしよう！🏆",
+    "items": [
+      {
+        "title": "↩️ メインメニューに戻る",
+        "value": "welcome_message"
+      },
+      {
+        "title": "🙋 オペレーターと話す",
+        "value": "transfer_to_agent"
+      }
+    ]
+  },
+  "gw_festival_success": {
+    "content": "🎰「GWフェスティバル」へようこそ！🔥\nボーナスコード「GWフェスティバル」を確認しました！\nご参加ありがとうございます 😊✨\n📅 開催期間：5/4（月）〜 5/18（月）\n💳 対象：初回入金（仮想通貨 or ATM決済）\nキャンペーンの詳細はこちらからご確認ください👇\nhttps://slotenpromotion.com/gw-festival/\n⚠️ 注意事項\n・対象は初回入金のみです。\n・入金完了後、入金完了画面のスクリーンショットをこちらのチャットへ送信してください。\n・特典は決済方法によって異なります（仮想通貨 or ATM決済）。\n・特典は条件達成確認後、順次手動にて付与いたします。\n・ボーナス・FSの賭け条件は1倍です。\n・FSステーク：20円\nご不明な点はお気軽にチャットでお問い合わせください 💬✨\n🌟 GW限定の超レア特典、しっかり受け取ってください！🏆",
+    "items": [
+      {
+        "title": "↩️ メインメニューに戻る",
+        "value": "welcome_message"
+      },
+      {
+        "title": "🙋 オペレーターと話す",
+        "value": "transfer_to_agent"
+      }
+    ]
   }
 }

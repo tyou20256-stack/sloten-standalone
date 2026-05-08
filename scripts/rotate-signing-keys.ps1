@@ -17,10 +17,12 @@
 
 $ErrorActionPreference = "Stop"
 
-# Generate 32-byte random keys (hex-encoded, 64 chars)
+# Generate 32-byte random keys (hex-encoded, 64 chars).
+# Use Create()+GetBytes() for PS 5.1 compatibility (Fill() is .NET Core 3+).
 function New-HexKey {
     $bytes = New-Object byte[] 32
-    [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
     return ($bytes | ForEach-Object { $_.ToString("x2") }) -join ''
 }
 

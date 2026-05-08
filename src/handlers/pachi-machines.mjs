@@ -30,6 +30,17 @@ function sanitizeUntrusted(s, max = 100) {
   return out;
 }
 
+// Probe lengths for compound machine name matching. Tuned to typical pachi
+// DB word lengths:
+// - SUFFIX_PROBE_LENGTHS: rightmost word lengths (ヴィレッジ=5, ガーデン=4,
+//   キングダム=5). 5 is sweet spot, 4/6 widen coverage.
+// - PREFIX_PROBE_LENGTHS: leading brand/series word (バイオハザード=7,
+//   モンスターハンター=9). 8 catches most, 5/6 are graceful fallbacks.
+// Used by both fetchPachiContext (search ladder) and isKnownMachine (exists
+// check). Keep in sync — they're the same DB structure assumption.
+const SUFFIX_PROBE_LENGTHS = [5, 6, 4];
+const PREFIX_PROBE_LENGTHS = [8, 6, 5];
+
 const json = (obj, status, corsHeaders) =>
   new Response(JSON.stringify(obj), {
     status,
@@ -219,16 +230,38 @@ export async function isKnownMachine(name, env) {
 
   // API call — fail-open: if pachi API is down or endpoint not deployed,
   // return true (allow pachi route) rather than blocking legitimate queries.
+  // Probe ladder: full → suffix → prefix. The pachi DB stores compound names
+  // like "スマスロ バイオハザード ヴィレッジ" with spaces, so user input
+  // "バイオハザードヴィレッジ" (no space) won't match a single substring query.
+  // We try sub-tokens until one matches, then cache the verdict for the full
+  // input. This keeps the cache key stable while widening the matching net.
   try {
-    const r = await callPachiAPI(env, `/api/exists?name=${encodeURIComponent(name)}`);
-    if (!r.ok) return true; // API error → fail-open (don't block)
-    const exists = r.data?.exists === true;
-    // Only cache definitive responses from the exists endpoint
+    // Use the same SUFFIX/PREFIX_PROBE_LENGTHS as fetchPachiContext for DRY
+    // and ensures both code paths agree on what counts as "known".
+    const probes = [name];
+    for (const len of SUFFIX_PROBE_LENGTHS) {
+      if (name.length > len) probes.push(name.slice(-len));
+    }
+    for (const len of PREFIX_PROBE_LENGTHS) {
+      if (name.length > len) probes.push(name.slice(0, len));
+    }
+    let exists = false;
+    let apiOk = true;
+    for (const probe of probes) {
+      const r = await callPachiAPI(env, `/api/exists?name=${encodeURIComponent(probe)}`);
+      if (!r.ok) { apiOk = false; break; }
+      if (r.data?.exists === true) { exists = true; break; }
+    }
+    if (!apiOk) {
+      console.warn(`[pachi-rag] isKnownMachine: API error for "${name.slice(0, 30)}" — fail-open`);
+      return true;
+    }
     if (kv) {
       try { await kv.put(cacheKey, exists ? '1' : '0', { expirationTtl: 3600 }); } catch (_) {}
     }
     return exists;
-  } catch (_) {
+  } catch (e) {
+    console.warn(`[pachi-rag] isKnownMachine: exception for "${name.slice(0, 30)}" — fail-open: ${e.message}`);
     return true; // fail-open
   }
 }
@@ -361,13 +394,8 @@ export async function fetchPachiContext(query, env) {
       // the relevant entry.
       const longest = katMatches[0];
       const probes = [longest];
-      // Probe lengths tuned to typical machine-name word lengths in the DB:
-      // - Suffix lengths target the rightmost word (ヴィレッジ=5, ガーデン=4,
-      //   キングダム=5). 5 is the sweet spot, 4 catches shorter, 6 longer.
-      // - Prefix lengths target the leading brand/series word (バイオハザード=7,
-      //   モンスターハンター=9). 8 catches most, 6/5 are graceful fallback.
-      const SUFFIX_PROBE_LENGTHS = [5, 6, 4];
-      const PREFIX_PROBE_LENGTHS = [8, 6, 5];
+      // Probe lengths defined at module top — see SUFFIX_PROBE_LENGTHS /
+      // PREFIX_PROBE_LENGTHS for tuning rationale.
       for (const len of SUFFIX_PROBE_LENGTHS) {
         if (longest.length > len) probes.push(longest.slice(-len));
       }
@@ -434,24 +462,28 @@ export async function fetchPachiContext(query, env) {
     };
   }
 
-  // LLM プロンプト用に整形
+  // LLM プロンプト用に整形 (Security: H6 修正 — fallback 経路と同じく
+  // sanitizeUntrusted を全フィールドに適用。pachi DB は外部サイトクロール
+  // データを含むため、機種名・メーカー名・タグ等にプロンプトインジェクション
+  // ペイロードが混入する可能性が常にある。)
+  const safeFilters = sanitizeUntrusted(JSON.stringify(result.data.extracted_filters || {}), 300);
   const lines = [
     `【機種データベース検索結果】(${machines.length}件、出典: pachi-slot-crawler)`,
-    `抽出条件: ${JSON.stringify(result.data.extracted_filters)}`,
+    `抽出条件: ${safeFilters}`,
     '',
   ];
   for (const m of machines) {
-    const tags = Array.isArray(m.tags) ? m.tags.join('/') : '';
+    const tags = Array.isArray(m.tags) ? sanitizeUntrusted(m.tags.join('/'), 200) : '';
     const parts = [
-      `■ ${m.name}`,
-      `  メーカー: ${m.manufacturer || '不明'}`,
-      `  リリース: ${m.release_date || '不明'}`,
-      m.spec_class ? `  分類: ${m.spec_class}` : '',
+      `■ ${sanitizeUntrusted(m.name)}`,
+      `  メーカー: ${sanitizeUntrusted(m.manufacturer) || '不明'}`,
+      `  リリース: ${sanitizeUntrusted(m.release_date, 30) || '不明'}`,
+      m.spec_class ? `  分類: ${sanitizeUntrusted(m.spec_class, 50)}` : '',
       tags ? `  タグ: ${tags}` : '',
-      m.probability ? `  確率: ${m.probability}` : '',
-      m.max_payout ? `  最大出玉: ${m.max_payout}` : '',
-      m.continuation ? `  継続率: ${m.continuation}` : '',
-      m.setting6_payout_rate ? `  設定6機械割: ${m.setting6_payout_rate}` : '',
+      m.probability ? `  確率: ${sanitizeUntrusted(m.probability, 50)}` : '',
+      m.max_payout ? `  最大出玉: ${sanitizeUntrusted(m.max_payout, 50)}` : '',
+      m.continuation ? `  継続率: ${sanitizeUntrusted(m.continuation, 50)}` : '',
+      m.setting6_payout_rate ? `  設定6機械割: ${sanitizeUntrusted(m.setting6_payout_rate, 50)}` : '',
     ].filter(Boolean);
     lines.push(parts.join('\n'));
     lines.push('');

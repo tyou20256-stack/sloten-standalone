@@ -1,0 +1,135 @@
+# sloten-standalone QA gate
+#
+# Runs Golden Set (AI regression suite) on every PR and on push to main.
+# Blocks merges that drop coverage below the threshold.
+#
+# Required repo secrets:
+#   - STAGING_BASE_URL (default: https://sloten-standalone-staging-bk.rcc-aoki.workers.dev)
+#
+# This workflow does NOT run k6 soak (too slow for CI — manual / cron only).
+# It does NOT deploy — that's a separate workflow gated on this passing.
+
+name: QA Gate
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: 'Override staging base URL'
+        required: false
+
+permissions:
+  contents: read
+  pull-requests: write  # for PR comment summary
+
+jobs:
+  golden-set:
+    name: Golden Set (AI regression)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install (skip prepare/postinstall if heavy)
+        run: npm ci --ignore-scripts || npm install --ignore-scripts
+
+      - name: Run Golden Set
+        id: gs
+        env:
+          BASE_URL: ${{ github.event.inputs.base_url || secrets.STAGING_BASE_URL || 'https://sloten-standalone-staging-bk.rcc-aoki.workers.dev' }}
+        run: |
+          set -e
+          # Capture stdout for summary, fail if exit non-zero
+          node tests/golden-set/run.mjs --base-url "$BASE_URL" 2>&1 | tee /tmp/gs-output.txt
+          # Extract score line: "Score: 100%" or "Score: 95%"
+          SCORE=$(grep -oE 'Score: [0-9]+%' /tmp/gs-output.txt | head -1 | grep -oE '[0-9]+' || true)
+          if [ -z "$SCORE" ]; then
+            # Distinguish "format changed / runner crashed" from "low score"
+            echo "::error::Could not extract Score from Golden Set output. Runner may have crashed or output format changed. See uploaded artifact."
+            echo "score=ERROR" >> "$GITHUB_OUTPUT"
+            exit 2
+          fi
+          echo "score=$SCORE" >> "$GITHUB_OUTPUT"
+
+      - name: Threshold gate (>= 95%)
+        run: |
+          SCORE="${{ steps.gs.outputs.score }}"
+          if [ "$SCORE" = "ERROR" ]; then
+            echo "::error::Score extraction failed in previous step — gate cannot evaluate"
+            exit 1
+          fi
+          if [ "$SCORE" -lt 95 ]; then
+            echo "::error::Golden Set score $SCORE% is below 95% threshold"
+            exit 1
+          fi
+          echo "::notice::Golden Set score $SCORE% — passing"
+
+      - name: Upload results JSON
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-set-results
+          path: tests/golden-set/results-*.json
+
+      - name: Comment summary on PR
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const out = fs.readFileSync('/tmp/gs-output.txt', 'utf8');
+            const tail = out.split('\n').slice(-30).join('\n');
+            const score = '${{ steps.gs.outputs.score }}';
+            const verdict = parseInt(score, 10) >= 95 ? '✅ PASS' : '❌ FAIL';
+            const body = `## Golden Set: ${verdict} (${score}%)\n\n<details><summary>Last 30 lines</summary>\n\n\`\`\`\n${tail}\n\`\`\`\n</details>`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            });
+
+  lint-secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Optional: trigger after merge to main only
+  k6-mini:
+    name: k6 mini-soak (5VUs × 60s)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: grafana/setup-k6-action@v1
+      - name: Run mini-soak
+        env:
+          BASE_URL: ${{ secrets.STAGING_BASE_URL || 'https://sloten-standalone-staging-bk.rcc-aoki.workers.dev' }}
+        run: |
+          k6 run --vus 5 --duration 60s --summary-export=summary.json tests/load/soak.js
+          # http_req_failed must be 0
+          FAILED=$(node -e "console.log(JSON.parse(require('fs').readFileSync('summary.json')).metrics.http_req_failed||0)")
+          echo "Failed rate: $FAILED"
+          # bot_replied >= 0.6 (more lenient than Golden because of concurrency)
+          BOT=$(node -e "console.log(JSON.parse(require('fs').readFileSync('summary.json')).metrics.bot_replied||0)")
+          echo "Bot replied rate: $BOT"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: k6-summary, path: summary.json }
