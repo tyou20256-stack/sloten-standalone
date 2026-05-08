@@ -109,6 +109,48 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # NOTE: gitleaks-action v2 may require GITLEAKS_LICENSE for org-level
+          # repos. If that becomes blocking, switch to direct binary install.
+
+  config-drift:
+    name: Wrangler config drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - name: Check prod vs staging-bk config
+        run: node scripts/check-config-drift.mjs
+        # Soft fail — any new prod-side bindings should be intentional and
+        # documented in docs/PROD-CONFIG-DRIFT.md before deploy.
+        continue-on-error: true
+
+  bundle-size:
+    name: Worker bundle size
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: 'npm' }
+      - run: npm ci --ignore-scripts || npm install --ignore-scripts
+      - name: Build with wrangler dry-run
+        run: |
+          npx wrangler deploy --dry-run --outdir=dist --config wrangler.staging-bk.toml 2>&1 | tee /tmp/build.log
+          # Cloudflare Workers free tier: 1 MiB compressed, 10 MiB uncompressed
+          # Paid: 10 MiB compressed. Alert at 80% of free tier (800 KiB compressed).
+          ls -la dist/ || true
+          SIZE=$(stat -c%s dist/index.mjs 2>/dev/null || stat -c%s dist/*.js 2>/dev/null || echo 0)
+          echo "Worker bundle: $SIZE bytes"
+          if [ "$SIZE" -gt 9437184 ]; then
+            echo "::error::Bundle size $SIZE > 9 MiB — approaching paid-tier limit"
+            exit 1
+          fi
+          if [ "$SIZE" -gt 7340032 ]; then
+            echo "::warning::Bundle size $SIZE > 7 MiB — monitor for further growth"
+          fi
+          echo "::notice::Worker bundle size: $SIZE bytes"
 
   # Optional: trigger after merge to main only
   k6-mini:

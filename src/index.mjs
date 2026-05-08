@@ -51,6 +51,7 @@ import { listBotMenus, createBotMenu, updateBotMenu, deleteBotMenu } from './han
 import { listBotFlows, createBotFlow, updateBotFlow, deleteBotFlow } from './handlers/bot-flows.mjs';
 import { listBonusCodes, createBonusCode, updateBonusCode, deleteBonusCode, listBonusSubmissions } from './handlers/bonus-codes-admin.mjs';
 import { adminTestBot, listGasUrls, setGasUrl, pingGasUrl, listAuditLog, listErrorLog, adminBackup, adminRestore, adminMenuTree } from './handlers/admin-ops.mjs';
+import { flushGenaiCache, flushFaqCache, cacheStats } from './handlers/cache-admin.mjs';
 import { uploadAttachment, downloadAttachment, downloadAttachmentSigned } from './handlers/attachments.mjs';
 import { getPublicJackpot } from './handlers/public-jackpot.mjs';
 import {
@@ -160,21 +161,43 @@ export default {
     try {
       // --- Public ---
       if (path === '/health' && method === 'GET') {
-        // Deep health: verify DB is reachable (not just Worker alive).
+        // Deep health: verify DB is reachable + check critical env presence.
+        // Critical secrets: missing → degraded so dashboard alerts fire.
+        // Optional secrets (Telegram, Anthropic): missing → reported but ok.
+        const CRITICAL_SECRETS = ['GEMINI_API_KEY'];
+        const CRITICAL_SIGNING_KEYS = ['SESSION_SIGNING_KEY', 'STAFF_SESSION_SIGNING_KEY'];
+        const OPTIONAL = ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID', 'ANTHROPIC_API_KEY',
+                          'BANK_TRANSFER_BOT_WEBHOOK_URL', 'GAS_BOT_WEBHOOK_URL',
+                          'EC_DEPOSIT_BOT_WEBHOOK_URL', 'BONUS_CODE_WEBHOOK_URL',
+                          'CONTACT_TOKEN_SIGNING_KEY', 'RAG_CACHE_SIGNING_KEY'];
+        const missingCritical = CRITICAL_SECRETS.filter((k) => !env[k]);
+        // For signing keys, treat ANY of them being present as ok (dual-verify pattern).
+        const hasAnySigningKey = CRITICAL_SIGNING_KEYS.some((k) => env[k]);
+        if (!hasAnySigningKey) missingCritical.push('SIGNING_KEY (any of: ' + CRITICAL_SIGNING_KEYS.join('|') + ')');
+        const missingOptional = OPTIONAL.filter((k) => !env[k]);
         try {
           const dbCheck = await env.DB.prepare('SELECT 1 AS ping').first();
           const kvCheck = env.SESSION_KV ? 'ok' : 'missing';
-          return ok({
-            status: 'ok',
+          const status = (missingCritical.length === 0 && dbCheck?.ping === 1) ? 'ok' : 'degraded';
+          const httpStatus = status === 'ok' ? 200 : 503;
+          return new Response(JSON.stringify({
+            status,
             db: dbCheck?.ping === 1 ? 'ok' : 'error',
             kv: kvCheck,
+            env: {
+              critical_missing: missingCritical,
+              optional_missing: missingOptional,
+              critical_count: CRITICAL_SECRETS.length + 1, // +1 for signing key requirement
+              optional_count: OPTIONAL.length,
+            },
             timestamp: new Date().toISOString(),
-          }, corsHeaders);
+          }), { status: httpStatus, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
         } catch (e) {
           return new Response(JSON.stringify({
             status: 'degraded',
             db: 'error',
             error: e.message,
+            env: { critical_missing: missingCritical, optional_missing: missingOptional },
             timestamp: new Date().toISOString(),
           }), { status: 503, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
         }
@@ -475,6 +498,9 @@ export default {
       if (path === '/api/admin/backup' && method === 'GET')    return requireAdminRole(adminBackup)(request, env, corsHeaders);
       if (path === '/api/admin/restore' && method === 'POST')  return requireAdminRole(adminRestore)(request, env, corsHeaders);
       if (path === '/api/admin/menu-tree' && method === 'GET')  return requireStaff(adminMenuTree)(request, env, corsHeaders);
+      if (path === '/api/admin/cache/flush'      && method === 'POST') return requireAdminRole(flushGenaiCache)(request, env, corsHeaders);
+      if (path === '/api/admin/cache/flush-faq'  && method === 'POST') return requireAdminRole(flushFaqCache)(request, env, corsHeaders);
+      if (path === '/api/admin/cache/stats'      && method === 'GET')  return requireAdminRole(cacheStats)(request, env, corsHeaders);
 
       // Bot menus (admin-role)
       if (path === '/api/bot-menus' && method === 'GET') return requireStaff(listBotMenus)(request, env, corsHeaders);
