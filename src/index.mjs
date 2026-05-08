@@ -52,6 +52,7 @@ import { listBotFlows, createBotFlow, updateBotFlow, deleteBotFlow } from './han
 import { listBonusCodes, createBonusCode, updateBonusCode, deleteBonusCode, listBonusSubmissions } from './handlers/bonus-codes-admin.mjs';
 import { adminTestBot, listGasUrls, setGasUrl, pingGasUrl, listAuditLog, listErrorLog, adminBackup, adminRestore, adminMenuTree } from './handlers/admin-ops.mjs';
 import { flushGenaiCache, flushFaqCache, cacheStats } from './handlers/cache-admin.mjs';
+import { exportContactData, eraseContactData } from './handlers/gdpr.mjs';
 import { uploadAttachment, downloadAttachment, downloadAttachmentSigned } from './handlers/attachments.mjs';
 import { getPublicJackpot } from './handlers/public-jackpot.mjs';
 import {
@@ -586,6 +587,13 @@ export default {
       if (path === '/api/admin/cache/flush'      && method === 'POST') return requireAdminRole(flushGenaiCache)(request, env, corsHeaders);
       if (path === '/api/admin/cache/flush-faq'  && method === 'POST') return requireAdminRole(flushFaqCache)(request, env, corsHeaders);
       if (path === '/api/admin/cache/stats'      && method === 'GET')  return requireAdminRole(cacheStats)(request, env, corsHeaders);
+      // GDPR: data subject access request endpoints (admin-only)
+      {
+        const m = path.match(/^\/api\/admin\/gdpr\/contact\/([^\/]+)$/);
+        if (m && method === 'GET') return requireAdminRole((req, e, h) => exportContactData(req, e, h, m[1]))(request, env, corsHeaders);
+        const me = path.match(/^\/api\/admin\/gdpr\/contact\/([^\/]+)\/erase$/);
+        if (me && method === 'POST') return requireAdminRole((req, e, h) => eraseContactData(req, e, h, me[1]))(request, env, corsHeaders);
+      }
 
       // Bot menus (admin-role)
       if (path === '/api/bot-menus' && method === 'GET') return requireStaff(listBotMenus)(request, env, corsHeaders);

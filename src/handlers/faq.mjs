@@ -137,6 +137,12 @@ export async function handleFaqPut(request, env, corsHeaders, id) {
     vals.push(id);
     await env.DB.prepare(`UPDATE faq SET ${sets.join(', ')} WHERE id = ?`).bind(...vals).run();
     const faq = await env.DB.prepare('SELECT * FROM faq WHERE id = ?').bind(id).first();
+    // Fire-and-forget: flush genai response cache so the next user query
+    // sees the updated FAQ instead of a stale cached LLM answer.
+    try {
+      const { invalidateGenaiCache } = await import('../lib/cache-invalidator.mjs');
+      await invalidateGenaiCache(env);
+    } catch (_) { /* non-blocking */ }
     return ok({ success: true, faq: decorateFaq(faq) }, corsHeaders);
   } catch (e) {
     console.error('handleFaqPut:', e.message);
@@ -149,6 +155,10 @@ export async function handleFaqDelete(request, env, corsHeaders, id) {
     const existing = await env.DB.prepare('SELECT id FROM faq WHERE id = ?').bind(id).first();
     if (!existing) return err('FAQ not found', 404, corsHeaders);
     await env.DB.prepare('DELETE FROM faq WHERE id = ?').bind(id).run();
+    try {
+      const { invalidateGenaiCache } = await import('../lib/cache-invalidator.mjs');
+      await invalidateGenaiCache(env);
+    } catch (_) { /* non-blocking */ }
     return ok({ success: true, deleted: Number(id) }, corsHeaders);
   } catch (e) {
     console.error('handleFaqDelete:', e.message);

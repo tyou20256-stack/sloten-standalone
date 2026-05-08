@@ -1,10 +1,30 @@
 # sloten-standalone
 
-Standalone (Chatwoot-independent) version of the Sloten AI Customer Support system.
+Standalone (Chatwoot-independent) AI customer support for sloten.io. Cloudflare
+Workers + D1 + KV + R2 + Vectorize + Durable Objects.
+
+![Worker](https://img.shields.io/badge/Cloudflare-Workers-orange)
+![D1](https://img.shields.io/badge/Cloudflare-D1-blue)
+![Tests](https://img.shields.io/badge/property_tests-916_pass-brightgreen)
+![Golden Set](https://img.shields.io/badge/Golden_Set-58%2F58_100%25-brightgreen)
+![License](https://img.shields.io/badge/license-private-lightgrey)
 
 ## Status
 
-**Planning / skeleton.** Implementation starts after the v1.0 Chatwoot-dependent deliverable is handed off.
+**Staging-bk in production-quality, awaiting external blockers** for first
+production deploy. See `HANDOFF/11-external-requests.md` for what's blocked.
+
+Latest staging-bk worker: see `/version` endpoint or recent `git log`.
+
+## Quick links
+
+- [`SECURITY.md`](SECURITY.md) — vulnerability reporting
+- [`CHANGELOG.md`](CHANGELOG.md) — release history
+- [`docs/PROD-CONFIG-DRIFT.md`](docs/PROD-CONFIG-DRIFT.md) — pre-deploy config gaps
+- [`docs/P95-LATENCY-PLAN.md`](docs/P95-LATENCY-PLAN.md) — performance roadmap
+- [`docs/AUTO-ROLLBACK.md`](docs/AUTO-ROLLBACK.md) — incident recovery strategy
+- [`HANDOFF/`](HANDOFF/) — operational handoffs
+- [`tests/`](tests/) — Golden Set + property tests + multi-turn fixtures
 
 ## Relationship to `chatwoot-ai-cloudflare`
 
