@@ -138,7 +138,7 @@ export async function sendMessage(request, env, corsHeaders, conversationId, opt
           const staff = body.sender_id
             ? await env.DB.prepare('SELECT id, email, name, role FROM staff_members WHERE id = ?').bind(body.sender_id).first()
             : (request.__staff ? { id: request.__staff.id, email: request.__staff.email, name: request.__staff.name, role: request.__staff.role } : null);
-          const signedUrl = await signAttachmentUrl(env, attachmentId, baseUrlOf(request, env));
+          const signedUrl = await signAttachmentUrl(env, attachmentId, baseUrlOf(request, env), undefined, conversationId);
           const payload = {
             event: 'operator.attachment_sent',
             conversation_id: conversationId,

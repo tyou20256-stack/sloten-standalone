@@ -497,7 +497,7 @@ export async function executeFlow(env, conv, contact, inputText, ctx, inputAttrs
               const base = env.PUBLIC_WORKER_URL || '';
               attachments[k] = {
                 id: att.id, filename: att.filename, content_type: att.content_type, size_bytes: att.size_bytes,
-                url: base ? await signAttachmentUrl(env, att.id, base) : null,
+                url: base ? await signAttachmentUrl(env, att.id, base, undefined, conv.id) : null,
               };
             }
           } catch (_) {}

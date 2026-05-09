@@ -55,7 +55,10 @@ export async function loginHandler(request, env, corsHeaders) {
       WHERE id = ?`
   ).bind(tokenHash, expiresAt, staff.id).run();
 
-  const cookie = cookieSerialize(COOKIE_NAME, token, { maxAge: ttl });
+  // SameSite=Strict on admin cookie — admin panel is never embedded in 3rd-
+  // party flows, so we trade off the rare "click email link to admin → no
+  // session" UX for a hardened CSRF posture (CWE-352, audit 2026-05-09).
+  const cookie = cookieSerialize(COOKIE_NAME, token, { maxAge: ttl, sameSite: 'Strict' });
   const headers = { ...corsHeaders, 'Content-Type': 'application/json; charset=utf-8', 'Set-Cookie': cookie };
   return new Response(JSON.stringify({ success: true, staff: sanitize(staff) }), { status: 200, headers });
 }
@@ -120,8 +123,9 @@ export async function resolveStaffFromCookie(request, env) {
       await env.DB.prepare(
         'UPDATE staff_members SET session_token_hash = ?, session_expires_at = ? WHERE id = ?'
       ).bind(newHash, expiresAt, staff.id).run();
-      // Attach refreshed cookie for middleware to set on response
-      staff._refreshedCookie = cookieSerialize(COOKIE_NAME, newToken, { maxAge: ttl });
+      // Attach refreshed cookie for middleware to set on response.
+      // Match SameSite=Strict from issue path so cookie attributes don't drift.
+      staff._refreshedCookie = cookieSerialize(COOKIE_NAME, newToken, { maxAge: ttl, sameSite: 'Strict' });
     } catch (_) { /* refresh failure is non-fatal — old token still valid */ }
   }
 

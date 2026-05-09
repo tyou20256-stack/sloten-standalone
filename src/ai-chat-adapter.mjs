@@ -108,13 +108,20 @@ async function loadContext(env, tenantId, userQuery, opts = {}) {
 }
 
 /**
- * Fingerprint a (input, prompt-id, flags) tuple for response caching. The
- * key ties the cached output to the exact context that produced it — different
- * RAG paths (pachi vs announcement) produce different answers and must not
- * share cache entries.
+ * Fingerprint a (tenant, input, prompt-id, flags) tuple for response caching.
+ * The key ties the cached output to the exact context that produced it —
+ * different RAG paths (pachi vs announcement) produce different answers and
+ * must not share cache entries.
+ *
+ * Tenant inclusion (added 2026-05-09 audit, Architect MEDIUM #6):
+ *   Without tenant_id in the key, two tenants asking the same question with
+ *   the same active prompt id share cached answers — broken at multi-tenant
+ *   cutover. Including it costs nothing today (single tenant) and prevents
+ *   silent cross-tenant response leakage when a second tenant onboards.
  */
-async function responseCacheKey(maskedInput, promptId, flags) {
-  const parts = [maskedInput.trim().slice(0, 200), promptId || '0',
+async function responseCacheKey(tenantId, maskedInput, promptId, flags) {
+  const parts = [tenantId || 'tenant_default',
+                 maskedInput.trim().slice(0, 200), promptId || '0',
                  flags.willFirePachi ? 'P' : '', flags.willFireAnnouncements ? 'A' : '',
                  flags.menuContext ? 'M' : ''].join('|');
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(parts));
@@ -478,7 +485,7 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
   let cacheHit = false;
   if (cacheable && respCacheKv) {
     try {
-      respCacheKey = await responseCacheKey(maskedInput, promptRow?.id, {
+      respCacheKey = await responseCacheKey(tenantId, maskedInput, promptRow?.id, {
         willFirePachi, willFireAnnouncements, menuContext: false,
       });
       const cached = await respCacheKv.get(respCacheKey, 'json');

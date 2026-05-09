@@ -115,9 +115,20 @@ export async function handleFaqPut(request, env, corsHeaders, id) {
     if (body.title !== undefined && body.question === undefined) body.question = body.title;
     if (body.content !== undefined && body.answer === undefined) body.answer = body.content;
     if (Array.isArray(body.keywords)) body.keywords = JSON.stringify(body.keywords);
-    // Prompt-injection defense on admin update
+    // Prompt-injection defense on admin update.
+    // Build the FINAL merged row (what would be persisted) and run threat
+    // detection against the union — covers fields the caller didn't touch.
+    // This guards against partial-update bypass where e.g. only `answer` is
+    // changed and `question` is reused with stale-but-fresh injection text,
+    // and against future schema additions (extra LLM-influencing columns).
     {
-      const contentToCheck = `${body.question ?? existing.question ?? ''} ${body.answer ?? existing.answer ?? ''}`;
+      const merged = {
+        question: body.question ?? existing.question ?? '',
+        answer: body.answer ?? existing.answer ?? '',
+        category: body.category ?? existing.category ?? '',
+        keywords: body.keywords ?? existing.keywords ?? '',
+      };
+      const contentToCheck = `${merged.question} ${merged.answer} ${merged.category} ${merged.keywords}`;
       const threat = detectInputThreat(contentToCheck);
       if (threat?.suspicious) {
         console.warn('[faq] Injection attempt in FAQ update:', threat.category);
