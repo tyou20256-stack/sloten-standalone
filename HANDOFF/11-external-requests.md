@@ -1,8 +1,8 @@
 # 外部依頼集約 — sloten-standalone 本番投入のための残作業
 
-> 2026-05-08 作成 / 本番投入の最後のブロッカー解消用
+> 2026-05-08 作成 / 2026-05-09 更新 / 本番投入の最後のブロッカー解消用
 > オーナー: rcc.aoki@gmail.com
-> 現状: staging-bk Worker `956860de-f16e-40e9-a705-9c4b6932f41e` / Golden Set 53/53 PASS / Soak 30min 完走 / 本番投入評価 68/100
+> 現状: staging-bk Worker `0fc76ae3-1201-4ad6-99c5-aa5a95eb9d88` / Golden Set 58/58 PASS / Property tests 36/36 PASS / Soak 30min 完走 / Playwright v3 再走 31+ PASS (2026-05-09 完) / 本番投入評価 **78-80/100 想定** (Reality Checker B1-R 解消済)
 
 ---
 
@@ -170,13 +170,13 @@ npx wrangler rollback <previous-version-id>
 
 ---
 
-## 進捗トラッキング
-
-各依頼先で進捗を週次ステータスとして:
+## 進捗トラッキング (2026-05-09 更新)
 
 ```
-- [外部依頼 1: BK Webhook] _未提供_ ← 本日依頼
-- [外部依頼 2: Telegram] _未提供_ ← 本日依頼
-- [外部依頼 3: CS Golden Set 9件] _未提供_ ← 本日依頼
-- [外部依頼 4: PM 本番デプロイ判断] _準備中_
+- [外部依頼 1: BK Webhook]            _未提供_   ← 残ブロッカー
+- [外部依頼 2: Telegram]              _未提供_   ← 残ブロッカー
+- [外部依頼 3: CS Golden Set 9件]     _未提供_   ← 残ブロッカー
+- [自分作業 4: Playwright v3 再走]    ✅ 完了     ← 2026-05-09 31+ PASS
+- [自分作業 5: wrangler.toml drift]   _未着手_   ← 自分で実行可能
+- [外部依頼 6: PM 本番デプロイ判断]   _BLOCKED_  ← 1, 2, 3, 5 待ち
 ```

@@ -122,9 +122,9 @@ jobs:
         with: { node-version: '20' }
       - name: Check prod vs staging-bk config
         run: node scripts/check-config-drift.mjs
-        # Soft fail — any new prod-side bindings should be intentional and
-        # documented in docs/PROD-CONFIG-DRIFT.md before deploy.
-        continue-on-error: true
+        # Hard fail (since 2026-05-09): drift was resolved, regressions must
+        # be fixed in the same PR. To intentionally diverge, update both this
+        # script's "intentionally allowed" list AND docs/PROD-CONFIG-DRIFT.md.
 
   bundle-size:
     name: Worker bundle size

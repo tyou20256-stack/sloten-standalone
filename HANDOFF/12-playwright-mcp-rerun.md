@@ -1,7 +1,16 @@
 # Playwright MCP セッション起動手順 + v3 完全再走プロンプト
 
-> 2026-05-08 / Reality Checker Critical #1 解消用 (BK 依存ゼロで即実施可能)
-> 対象 Worker: `956860de-f16e-40e9-a705-9c4b6932f41e` (現行 staging-bk)
+> 2026-05-08 / 2026-05-09 完了
+> Reality Checker Critical #1 解消用 (BK 依存ゼロで即実施可能)
+> 当初対象 Worker: `956860de-f16e-40e9-a705-9c4b6932f41e`
+> 完了時 Worker: `0fc76ae3-1201-4ad6-99c5-aa5a95eb9d88` (ID判定 fix + lifecycle test 含む直近版)
+>
+> ## ✅ 完了 (2026-05-09)
+>
+> - 結果: **31+ PASS / 合格基準クリア** (一部既知 SKIP)
+> - サーバー観測: err 0% / p95 2812ms / Gemini 503 retry handled / pachi-rag + announcements 動作確認
+> - Reality Checker B1-R **解消** → 想定スコア 68 → 78-80/100
+> - 残ブロッカー: BK Webhook (B2), Telegram secrets, CS Golden Set 9 件, wrangler.toml drift
 
 ---
 

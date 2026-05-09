@@ -17,6 +17,10 @@ DEFAULT_TENANT_ID = "tenant_default"
 # Override per environment.
 AI_PROVIDER = "gemini"
 STAFF_SESSION_TTL_SECONDS = "14400"
+# Public-facing Worker URL — used by attachments.mjs to sign R2 file URLs.
+PUBLIC_WORKER_URL = "https://sloten-standalone.rcc-aoki.workers.dev"
+# pachi-slot-crawler RAG endpoint — Cloudflare Tunnel to VPS pachi-api.
+PACHI_API_URL = "https://pachi-api.bkpay.app"
 
 # D1 — create with: wrangler d1 create sloten_standalone_db
 [[d1_databases]]
@@ -42,8 +46,27 @@ class_name = "ConversationRoom"
 tag = "v1"
 new_classes = ["ConversationRoom"]
 
+# R2 — file uploads (attachments). Bucket must be created before deploy:
+#   wrangler r2 bucket create sloten-standalone-files
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "sloten-standalone-files"
+
+# Workers AI — Gemini/Anthropic embeddings + on-Worker inference fallback.
+[ai]
+binding = "AI"
+
+# Vectorize — dense retrieval for KB hybrid search. Index must be created:
+#   wrangler vectorize create sloten-kb-index-prod --dimensions=1024 --metric=cosine
+[[vectorize]]
+binding = "VECTORIZE"
+index_name = "sloten-kb-index-prod"
+
 [triggers]
-crons = ["* * * * *"]
+crons = [
+  "* * * * *",         # every minute: snooze wake / metrics dispatch
+  "0 18 * * SUN",      # weekly: Sunday 18:00 UTC = Monday 03:00 JST — FAQ extraction
+]
 
 # Secrets (set via wrangler secret put):
 #   ADMIN_API_TOKEN        — admin bearer auth

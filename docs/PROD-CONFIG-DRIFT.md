@@ -1,9 +1,21 @@
 # Production wrangler.toml Drift — Pre-Deploy Checklist
 
-> 2026-05-08 / `node scripts/check-config-drift.mjs` で発見された差分
+> 2026-05-08 / 2026-05-09 構造修正完了
+> `node scripts/check-config-drift.mjs` で発見された差分
 > 本番初回デプロイ前に **必ず解消** すること
+>
+> ## ✅ 2026-05-09 解消ステータス
+>
+> wrangler.toml の構造修正は完了 (cron / vars 2 / R2 / Vectorize bindings 追加)。
+> drift check **0 件** で CI は `continue-on-error` 削除済 → ハード fail。
+>
+> ### 残作業 (本番初回デプロイ時)
+> - [ ] R2 バケット `sloten-standalone-files` を本番アカウントに作成
+> - [ ] Vectorize index `sloten-kb-index-prod` を本番アカウントに作成
+> - [ ] D1 / KV の REPLACE_WITH_*_ID プレースホルダーを実 ID に置換
+> - [ ] secret 全 provisioning + 段階デプロイ
 
-## 検出ドリフト 4 件
+## 検出ドリフト 4 件 (履歴)
 
 `wrangler.toml` (prod 本体) と `wrangler.staging-bk.toml` (staging-bk) を比較:
 
