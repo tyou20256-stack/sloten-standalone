@@ -26,6 +26,7 @@ import { signAttachmentUrl, baseUrlOf } from '../auth/attachment-signature.mjs';
 import { resolveEnvForTemplate } from '../env-resolver.mjs';
 import { logError as _logError } from '../audit.mjs';
 import { looksLikeFreeText } from '../lib/text-classify.mjs';
+import { signOutgoingWebhook } from '../lib/webhook-signature.mjs';
 
 const VALID_TRIGGER_TYPES = new Set(['entry', 'manual']);
 const VALID_STEP_TYPES = new Set(['message', 'input', 'select', 'webhook', 'handoff', 'collect']);
@@ -519,10 +520,17 @@ export async function executeFlow(env, conv, contact, inputText, ctx, inputAttrs
         };
         const ac = new AbortController();
         const timer = setTimeout(() => ac.abort(), step.timeout_ms || 8000);
+        // Sign the outgoing payload so the receiver can authenticate it as
+        // genuinely from sloten (CWE-345). Skipped silently if WEBHOOK_SIGNING_SECRET
+        // isn't provisioned — receivers that don't verify simply won't notice.
+        // To enable per-receiver verification: send `secret` to BK + add to
+        // wrangler secret; document {context: 'webhook:v1', algo: 'HMAC-SHA256-hex'}.
+        const bodyStr = JSON.stringify(payload);
+        const sigHeaders = await signOutgoingWebhook(env.WEBHOOK_SIGNING_SECRET, bodyStr);
         const r = await fetch(url, {
           method: step.method || 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
+          headers: { 'Content-Type': 'application/json', ...sigHeaders },
+          body: bodyStr,
           signal: ac.signal,
         });
         clearTimeout(timer);

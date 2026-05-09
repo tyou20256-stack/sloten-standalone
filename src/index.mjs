@@ -414,6 +414,19 @@ export default {
       // require a contact_token (because the caller doesn't have one yet).
       if (path === '/api/widget/contacts' && method === 'POST') return createContact(request, env, corsHeaders);
 
+      // POST /api/widget/contacts/logout — explicit token revocation. The
+      // widget should call this when the user clicks "ログアウト" / closes a
+      // shared-device session. Server-side equivalent of localStorage clear.
+      if (path === '/api/widget/contacts/logout' && method === 'POST') {
+        const token = extractContactToken(request);
+        const payload = await verifyContactToken(env, token);
+        if (!payload) return err('Unauthorized', 401, corsHeaders);
+        const { revokeContactJti } = await import('./auth/contact-token.mjs');
+        const remainingSec = Math.max(60, payload.exp - Math.floor(Date.now() / 1000));
+        await revokeContactJti(env, payload.jti, remainingSec);
+        return ok({ success: true, revoked: true }, corsHeaders);
+      }
+
       // PATCH /api/widget/contacts/:id — runtime profile update (Chatwoot
       // `$chatwoot.setUser()` equivalent). Requires contact_token ownership.
       {

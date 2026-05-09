@@ -1,12 +1,25 @@
-// Widget contact ownership token. HMAC-signed, 30-day TTL. Proves that the
+// Widget contact ownership token. HMAC-signed, 7-day TTL. Proves that the
 // caller owns a specific contact_id without requiring a full staff session.
 //
 // Wire format: b64url(payloadJson) "." b64url(hmac)
-// Payload: { cid: string, iat: number, exp: number }
+// Payload: { cid: string, jti: string, iat: number, exp: number }
+//
+// Revocation:
+//   The token includes a `jti` (random 16-byte id). On GDPR erase or explicit
+//   widget logout, we write `contact-revoked:<jti>` to KV with TTL ≥ remaining
+//   token life. verifyContactToken consults this on every call. KV miss = OK
+//   to use; KV hit = reject. Fail-open on KV transient errors (revocation is a
+//   security improvement, not a hard gate; logged for monitoring).
+//
+// TTL was reduced 30d → 7d as part of 2026-05-09 audit (Security #2).
+// Browsers retain widget tokens via localStorage; shared-device leakage is
+// the main threat vector. 7d window minimizes blast radius while preserving
+// "open chat → reload tomorrow → still logged in" UX.
 
 const ENC = new TextEncoder();
 const DEC = new TextDecoder();
-const TTL_SEC = 30 * 24 * 60 * 60;
+const TTL_SEC = 7 * 24 * 60 * 60;
+const REVOKE_KEY_PREFIX = 'contact-revoked:';
 
 function b64url(buf) {
   const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
@@ -33,11 +46,19 @@ function resolveContactKey(env) {
   return env.CONTACT_TOKEN_SIGNING_KEY || env.SESSION_SIGNING_KEY;
 }
 
+/** 16 random bytes as hex — token-unique id for revocation lookups. */
+function randomJti() {
+  const b = new Uint8Array(16);
+  crypto.getRandomValues(b);
+  return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+}
+
 export async function issueContactToken(env, contactId) {
   const signingKey = resolveContactKey(env);
   if (!signingKey) throw new Error('CONTACT_TOKEN_SIGNING_KEY / SESSION_SIGNING_KEY not set');
   const payload = {
     cid: contactId,
+    jti: randomJti(),
     iat: Math.floor(Date.now() / 1000),
     exp: Math.floor(Date.now() / 1000) + TTL_SEC,
   };
@@ -45,6 +66,21 @@ export async function issueContactToken(env, contactId) {
   const key = await importKey(signingKey);
   const sig = await crypto.subtle.sign('HMAC', key, ENC.encode(payloadB64));
   return `${payloadB64}.${b64url(sig)}`;
+}
+
+async function isRevoked(env, jti) {
+  if (!jti) return false;
+  const kv = env.SESSION_KV || env.RATE_LIMITER;
+  if (!kv) return false;
+  try {
+    const flag = await kv.get(REVOKE_KEY_PREFIX + jti);
+    return !!flag;
+  } catch (e) {
+    // Fail-open on KV transient errors. Revocation is a security improvement;
+    // hard-failing on every KV outage would break all widget traffic.
+    console.warn('[contact-token] revoke check failed (fail-open):', e?.message);
+    return false;
+  }
 }
 
 export async function verifyContactToken(env, token) {
@@ -55,30 +91,69 @@ export async function verifyContactToken(env, token) {
   const parts = token.split('.');
   if (parts.length !== 2) return null;
   try {
+    let payload = null;
     // Try dedicated key first
     if (newKey) {
       const key = await importKey(newKey);
       if (await crypto.subtle.verify('HMAC', key, b64urlDecode(parts[1]), ENC.encode(parts[0]))) {
-        const payload = JSON.parse(DEC.decode(b64urlDecode(parts[0])));
-        if (!payload?.cid || !payload?.exp) return null;
-        if (payload.exp * 1000 < Date.now()) return null;
-        return payload;
+        payload = JSON.parse(DEC.decode(b64urlDecode(parts[0])));
       }
     }
     // Dual-verify: fallback to legacy shared key
-    if (oldKey && oldKey !== newKey) {
+    if (!payload && oldKey && oldKey !== newKey) {
       const key = await importKey(oldKey);
       if (await crypto.subtle.verify('HMAC', key, b64urlDecode(parts[1]), ENC.encode(parts[0]))) {
         console.log('[contact-token] verified with legacy SESSION_SIGNING_KEY — rotate pending');
-        const payload = JSON.parse(DEC.decode(b64urlDecode(parts[0])));
-        if (!payload?.cid || !payload?.exp) return null;
-        if (payload.exp * 1000 < Date.now()) return null;
-        return payload;
+        payload = JSON.parse(DEC.decode(b64urlDecode(parts[0])));
       }
     }
-    return null;
+    if (!payload) return null;
+    if (!payload.cid || !payload.exp) return null;
+    if (payload.exp * 1000 < Date.now()) return null;
+    // jti may be absent on tokens issued before 2026-05-09 (legacy 30d).
+    // Treat missing jti as a candidate for revocation-by-cid (set by GDPR
+    // erase) so legacy tokens can also be revoked.
+    if (await isRevoked(env, payload.jti)) return null;
+    if (await isRevoked(env, 'cid:' + payload.cid)) return null;
+    return payload;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Revoke a contact token by its jti. TTL set to remaining token lifetime
+ * (or 7d max). KV write is non-blocking from the caller's perspective.
+ *
+ * Use cases:
+ *   - GDPR erase: revoke all tokens for a contact_id
+ *   - Explicit /api/widget/contacts/logout
+ */
+export async function revokeContactJti(env, jti, ttlSec = TTL_SEC) {
+  const kv = env.SESSION_KV || env.RATE_LIMITER;
+  if (!kv || !jti) return false;
+  try {
+    await kv.put(REVOKE_KEY_PREFIX + jti, '1', { expirationTtl: Math.max(60, Math.min(ttlSec, TTL_SEC)) });
+    return true;
+  } catch (e) {
+    console.warn('[contact-token] revoke write failed:', e?.message);
+    return false;
+  }
+}
+
+/**
+ * Revoke ALL outstanding tokens for a contact_id (used by GDPR erase
+ * since legacy tokens have no jti). 7d TTL covers max token life.
+ */
+export async function revokeAllContactTokens(env, contactId) {
+  const kv = env.SESSION_KV || env.RATE_LIMITER;
+  if (!kv || !contactId) return false;
+  try {
+    await kv.put(REVOKE_KEY_PREFIX + 'cid:' + contactId, '1', { expirationTtl: TTL_SEC });
+    return true;
+  } catch (e) {
+    console.warn('[contact-token] cid-revoke write failed:', e?.message);
+    return false;
   }
 }
 

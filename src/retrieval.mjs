@@ -215,8 +215,9 @@ async function retrievalHybrid(env, tenantId, userQuery, faqLimit, kbLimit) {
   const q = sanitizeFtsQuery(userQuery);
   if (!q) return null;
   try {
-    // Dense query
+    // Dense query — tenantId required (fail-closed cross-tenant guard).
     const denseMatches = await vectorizeQueryInternal(env, userQuery, {
+      tenantId,
       topK: kbLimit * 2,
       filter: { kind: 'kb_chunk' },
     });

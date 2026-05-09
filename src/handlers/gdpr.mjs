@@ -15,6 +15,7 @@
 // to respond cleanly to operator requests.
 
 import { ok, err } from '../json.mjs';
+import { revokeAllContactTokens } from '../auth/contact-token.mjs';
 
 /** GET /api/admin/gdpr/contact/:id */
 export async function exportContactData(request, env, corsHeaders, contactId) {
@@ -106,6 +107,11 @@ export async function eraseContactData(request, env, corsHeaders, contactId) {
               avatar_url=NULL, external_id=NULL, updated_at=datetime('now')
         WHERE id = ?`,
     ).bind(contactId).run();
+
+    // Revoke any outstanding widget tokens — without this, the contact's
+    // localStorage-cached token would continue to work for up to 7 days,
+    // letting a leaked-or-shared device write to the (now-erased) record.
+    await revokeAllContactTokens(env, contactId);
 
     // Anonymize message content for this contact's conversations.
     // Keep id/conversation_id/created_at/sender_type for analytics.

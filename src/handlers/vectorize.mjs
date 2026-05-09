@@ -7,8 +7,16 @@
 //   GET  /api/admin/vectorize/state    — index status (last reindex, count, dim)
 //
 // All endpoints are admin-only (index.mjs wires via requireAdminRole).
+//
+// Tenant isolation (added 2026-05-09 per architecture audit):
+//   Vectorize is a single global index — without tenant scoping, KB content
+//   from one tenant leaks into another's RAG retrieval. We namespace IDs as
+//   `${tenant_id}:kb_${id}` and embed `tenant_id` in metadata, then apply
+//   `filter: { tenant_id }` on every query. Queries from staff/widget always
+//   provide tenant_id; query without it is rejected.
 
 import { ok, err, parseJson } from '../json.mjs';
+import { resolveTenantId } from '../tenant-scope.mjs';
 
 const EMBED_MODEL = '@cf/baai/bge-m3';
 const EMBED_DIM = 1024;
@@ -35,17 +43,26 @@ export async function vectorizeReindex(request, env, corsHeaders) {
   const kind = body.kind || 'kb_chunks';
   const force = !!body.force;
 
+  // Reindex is staff-scoped: pull only this tenant's content. Multi-tenant
+  // production must reindex per tenant or under a super-admin loop.
+  const tenantId = resolveTenantId(request, env);
+
   let rows = [];
   if (kind === 'kb_chunks') {
+    // NOTE: knowledge_sources currently has no tenant_id column (single-tenant
+    // legacy schema). We tag every chunk with the staff's resolved tenantId so
+    // queries can filter; once knowledge_sources gains tenant_id, switch the
+    // SELECT to filter by it. Until then, all chunks belong to tenantId.
     const { results } = await env.DB.prepare(
       `SELECT id, content, heading_path, content_hash FROM knowledge_chunks
         WHERE content IS NOT NULL AND length(content) > 50`,
     ).all();
     rows = (results || []).map((r) => ({
-      id: `kb_${r.id}`,
+      id: `${tenantId}:kb_${r.id}`,
       text: r.content,
       metadata: {
         kind: 'kb_chunk',
+        tenant_id: tenantId,
         source_id: r.id,
         heading: r.heading_path || '',
       },
@@ -55,12 +72,17 @@ export async function vectorizeReindex(request, env, corsHeaders) {
   } else if (kind === 'faq_candidates') {
     const { results } = await env.DB.prepare(
       `SELECT id, question, embedding_hash FROM faq_candidates
-        WHERE question IS NOT NULL AND length(question) > 4 AND status = 'pending'`,
-    ).all();
+        WHERE question IS NOT NULL AND length(question) > 4 AND status = 'pending'
+          AND tenant_id = ?`,
+    ).bind(tenantId).all();
     rows = (results || []).map((r) => ({
-      id: `faq_${r.id}`,
+      id: `${tenantId}:faq_${r.id}`,
       text: r.question,
-      metadata: { kind: 'faq_candidate', candidate_id: r.id },
+      metadata: {
+        kind: 'faq_candidate',
+        tenant_id: tenantId,
+        candidate_id: r.id,
+      },
       hashColumn: 'embedding_hash',
       dbId: r.id,
     }));
@@ -70,6 +92,19 @@ export async function vectorizeReindex(request, env, corsHeaders) {
 
   if (rows.length === 0) {
     return ok({ success: true, kind, embedded: 0, note: 'nothing to embed' }, corsHeaders);
+  }
+
+  // Clean up legacy non-namespaced IDs from the pre-2026-05-09 index format.
+  // Best-effort: failures don't block reindex (Vectorize tolerates orphans).
+  // After tenant scoping, queries filter by tenant_id metadata which excludes
+  // legacy vectors anyway, so leftover orphans degrade only storage cost.
+  try {
+    const legacyIds = rows.map((r) => kind === 'kb_chunks' ? `kb_${r.dbId}` : `faq_${r.dbId}`);
+    if (legacyIds.length > 0) {
+      await env.VECTORIZE.deleteByIds(legacyIds);
+    }
+  } catch (e) {
+    console.warn('[vectorize:reindex] legacy cleanup failed (non-blocking):', e?.message);
   }
 
   // Batched embedding + upsert
@@ -131,7 +166,12 @@ export async function vectorizeQuery(request, env, corsHeaders) {
   const text = String(body.text || '').trim();
   if (!text) return err('text required', 400, corsHeaders);
   const topK = Math.min(body.top_k || 8, 30);
-  const filter = body.kind ? { kind: body.kind } : undefined;
+  // Tenant-scoped filter — staff session enforces own tenant_id; super-admin
+  // (Bearer + ?tenant_id=) can target a specific tenant. Without this filter
+  // the dev/test endpoint would reveal another tenant's KB embeddings.
+  const tenantId = resolveTenantId(request, env);
+  const filter = { tenant_id: tenantId };
+  if (body.kind) filter.kind = body.kind;
 
   try {
     const [embeddings] = await embed(env, [text]);
@@ -145,7 +185,8 @@ export async function vectorizeQuery(request, env, corsHeaders) {
       })),
     }, corsHeaders);
   } catch (e) {
-    return err(`vectorize query failed: ${e.message}`, 500, corsHeaders);
+    console.error('[vectorize:query]', e?.message);
+    return err('vectorize query failed', 500, corsHeaders);
   }
 }
 
@@ -188,13 +229,22 @@ export async function setVectorizeFlags(request, env, corsHeaders) {
 
 // Internal helper — called from retrieval.mjs when hybrid mode is on.
 // Returns an array of { id, score, metadata } from Vectorize.
+//
+// `opts.tenantId` is REQUIRED — fail-closed to prevent cross-tenant retrieval.
+// Caller (retrieval.mjs) must pass the resolved tenant_id from the conversation
+// or the staff session.
 export async function vectorizeQueryInternal(env, text, opts = {}) {
   if (!env.VECTORIZE || !env.AI || !text) return null;
+  if (!opts.tenantId) {
+    console.warn('[vectorize:internal] tenantId required, refusing query');
+    return null;
+  }
   try {
     const [vec] = await embed(env, [String(text).slice(0, 2000)]);
+    const filter = { tenant_id: opts.tenantId, ...(opts.filter || {}) };
     const result = await env.VECTORIZE.query(vec, {
       topK: opts.topK || 8,
-      filter: opts.filter,
+      filter,
       returnMetadata: 'all',
     });
     return result?.matches || [];
