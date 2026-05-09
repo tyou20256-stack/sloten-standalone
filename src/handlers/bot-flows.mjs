@@ -38,6 +38,29 @@ function parseSteps(steps) {
   return null;
 }
 
+// Per-isolate parsed-flow cache. Key: `${id}:${updated_at}`.
+// Cloudflare Workers: module-level state persists across requests within a
+// single isolate. sloten-main has 123 steps + 5 bonus flows × 109 steps —
+// re-parsing 600+ steps per chat message wastes 5-15ms p50 + GC pressure.
+// Hit rate at steady state is ~100% because flows rarely change.
+const PARSED_FLOW_CACHE = new Map();
+const PARSED_FLOW_CACHE_MAX = 32;
+
+function getCachedSteps(row) {
+  if (!row) return null;
+  // updated_at acts as a version key — any admin edit forces re-parse.
+  const key = `${row.id}:${row.updated_at || ''}`;
+  let parsed = PARSED_FLOW_CACHE.get(key);
+  if (parsed) return parsed;
+  parsed = parseSteps(row.steps) || [];
+  if (PARSED_FLOW_CACHE.size >= PARSED_FLOW_CACHE_MAX) {
+    const firstKey = PARSED_FLOW_CACHE.keys().next().value;
+    PARSED_FLOW_CACHE.delete(firstKey);
+  }
+  PARSED_FLOW_CACHE.set(key, parsed);
+  return parsed;
+}
+
 function validateSteps(steps) {
   if (!Array.isArray(steps) || steps.length === 0) return 'steps must be a non-empty array';
   const ids = new Set();
@@ -65,7 +88,7 @@ function validateSteps(steps) {
 
 function decorate(row) {
   if (!row) return row;
-  return { ...row, steps: parseSteps(row.steps) || [] };
+  return { ...row, steps: getCachedSteps(row) };
 }
 
 // --- CRUD ---

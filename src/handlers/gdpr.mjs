@@ -17,12 +17,31 @@
 import { ok, err } from '../json.mjs';
 
 /** GET /api/admin/gdpr/contact/:id */
-export async function exportContactData(_request, env, corsHeaders, contactId) {
+export async function exportContactData(request, env, corsHeaders, contactId) {
   if (!contactId) return err('contact_id required', 400, corsHeaders);
 
   try {
     const contact = await env.DB.prepare(`SELECT * FROM contacts WHERE id = ?`).bind(contactId).first();
     if (!contact) return err('Contact not found', 404, corsHeaders);
+
+    // Audit-log the export — accessing all PII for a contact is a sensitive
+    // action and must leave a trail equal to GDPR_ERASE.
+    const staff = request.__staff || null;
+    try {
+      await env.DB.prepare(
+        `INSERT INTO audit_log (tenant_id, staff_id, staff_email, action, resource_type, resource_id, ip, user_agent, created_at)
+         VALUES (?, ?, ?, 'GDPR_EXPORT', 'contact', ?, ?, ?, datetime('now'))`,
+      ).bind(
+        contact.tenant_id || 'tenant_default',
+        staff?.id ?? null,
+        staff?.email ?? null,
+        String(contactId),
+        request.headers.get('CF-Connecting-IP') || 'unknown',
+        (request.headers.get('User-Agent') || '').slice(0, 200),
+      ).run();
+    } catch (auditErr) {
+      console.warn('[gdpr.export] audit_log failed:', auditErr?.message);
+    }
 
     const conversations = await env.DB.prepare(
       `SELECT * FROM conversations WHERE contact_id = ? ORDER BY created_at ASC`,
@@ -60,7 +79,9 @@ export async function exportContactData(_request, env, corsHeaders, contactId) {
       },
     }, corsHeaders);
   } catch (e) {
-    return err(`Export failed: ${e.message}`, 500, corsHeaders);
+    // Don't leak schema/PII through error messages.
+    console.error('[gdpr.export] failed:', e?.message, e?.stack?.slice(0, 500));
+    return err('Export failed', 500, corsHeaders);
   }
 }
 
@@ -76,7 +97,7 @@ export async function eraseContactData(request, env, corsHeaders, contactId) {
   }
 
   try {
-    const contact = await env.DB.prepare(`SELECT id, email FROM contacts WHERE id = ?`).bind(contactId).first();
+    const contact = await env.DB.prepare(`SELECT id, email, tenant_id FROM contacts WHERE id = ?`).bind(contactId).first();
     if (!contact) return err('Contact not found', 404, corsHeaders);
 
     // Anonymize contact PII
@@ -100,13 +121,18 @@ export async function eraseContactData(request, env, corsHeaders, contactId) {
       msgsErased = r.meta?.changes || 0;
     }
 
-    // Audit-log the erasure (auditor can see WHO did it later)
+    // Audit-log the erasure (auditor can see WHO did it later).
+    // request.__staff is injected by requireAdminRole — capture id+email so a
+    // GDPR_ERASE has accountability even if the staff record is later deleted.
+    const staff = request.__staff || null;
     try {
       await env.DB.prepare(
         `INSERT INTO audit_log (tenant_id, staff_id, staff_email, action, resource_type, resource_id, ip, user_agent, created_at)
-         VALUES (?, NULL, NULL, 'GDPR_ERASE', 'contact', ?, ?, ?, datetime('now'))`,
+         VALUES (?, ?, ?, 'GDPR_ERASE', 'contact', ?, ?, ?, datetime('now'))`,
       ).bind(
         contact.tenant_id || 'tenant_default',
+        staff?.id ?? null,
+        staff?.email ?? null,
         String(contactId),
         request.headers.get('CF-Connecting-IP') || 'unknown',
         (request.headers.get('User-Agent') || '').slice(0, 200),
@@ -121,6 +147,7 @@ export async function eraseContactData(request, env, corsHeaders, contactId) {
       timestamp: new Date().toISOString(),
     }, corsHeaders);
   } catch (e) {
-    return err(`Erasure failed: ${e.message}`, 500, corsHeaders);
+    console.error('[gdpr.erase] failed:', e?.message, e?.stack?.slice(0, 500));
+    return err('Erasure failed', 500, corsHeaders);
   }
 }
