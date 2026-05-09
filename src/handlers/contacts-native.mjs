@@ -26,7 +26,18 @@ function pickIdentifier(body) {
 export async function createContact(request, env, corsHeaders) {
   const { body, response } = await parseJson(request, corsHeaders);
   if (response) return response;
-  const tenantId = body.tenant_id || env.DEFAULT_TENANT_ID || 'tenant_default';
+  // Tenant resolution for the public widget endpoint:
+  // - If a staff session is present, lock to that staff's tenant.
+  // - Else if the request Origin matches a configured tenant mapping, use it.
+  // - Else fall back to env.DEFAULT_TENANT_ID.
+  // Body-supplied tenant_id is IGNORED — anonymous clients must not be able
+  // to inject contacts into a tenant of their choosing (CWE-639/284, audit
+  // 2026-05-09 re-eval). Multi-tenant deploys should add a per-Origin
+  // ALLOWED_WIDGET_TENANTS env binding instead of accepting body.tenant_id.
+  let tenantId = env.DEFAULT_TENANT_ID || 'tenant_default';
+  if (request.__staff?.tenant_id) {
+    tenantId = request.__staff.tenant_id;
+  }
   // Always server-generated — never trust body.id from a public widget endpoint.
   const id = uuid();
   const { email = null, phone = null, name = null, avatar_url = null } = body;

@@ -240,10 +240,18 @@ async function retrievalHybrid(env, tenantId, userQuery, faqLimit, kbLimit) {
         ORDER BY score LIMIT ?`,
     ).bind(q, tenantId, faqLimit).all();
 
-    // RRF fusion on KB chunks
+    // RRF fusion on KB chunks.
+    // Vectorize ID format: `${tenant_id}:kb_${dbId}` (post tenant scoping
+    // 2026-05-09). Pre-scoping format was just `kb_${dbId}` — split on
+    // ':kb_' picks dbId in both, then a defensive fallback for legacy.
     const bm25Ranked = (chunkBm25 || []).map((r, i) => ({ key: r.id, rank: i, source: 'bm25' }));
     const denseRanked = (denseMatches || [])
-      .map((m, i) => ({ key: parseInt(String(m.id).replace(/^kb_/, ''), 10), rank: i, source: 'dense', vec_score: m.score }))
+      .map((m, i) => {
+        const idStr = String(m.id);
+        // Try tenant-scoped format first, fall back to legacy `kb_N`.
+        const after = idStr.includes(':kb_') ? idStr.split(':kb_').pop() : idStr.replace(/^kb_/, '');
+        return { key: parseInt(after, 10), rank: i, source: 'dense', vec_score: m.score };
+      })
       .filter((m) => Number.isFinite(m.key));
     const fused = rrfFuse([bm25Ranked, denseRanked]).slice(0, kbLimit);
     const fusedIds = fused.map((f) => f.key);

@@ -110,11 +110,15 @@ export async function verifyContactToken(env, token) {
     if (!payload) return null;
     if (!payload.cid || !payload.exp) return null;
     if (payload.exp * 1000 < Date.now()) return null;
-    // jti may be absent on tokens issued before 2026-05-09 (legacy 30d).
-    // Treat missing jti as a candidate for revocation-by-cid (set by GDPR
-    // erase) so legacy tokens can also be revoked.
-    if (await isRevoked(env, payload.jti)) return null;
-    if (await isRevoked(env, 'cid:' + payload.cid)) return null;
+    // Revocation check: parallel KV reads to avoid sequential 30-50ms × 2
+    // latency on every widget API call. jti may be absent on tokens issued
+    // before 2026-05-09 (legacy 30d) — cid revocation set by GDPR erase
+    // covers those. Both lookups are independent so Promise.all is safe.
+    const [revokedByJti, revokedByCid] = await Promise.all([
+      isRevoked(env, payload.jti),
+      isRevoked(env, 'cid:' + payload.cid),
+    ]);
+    if (revokedByJti || revokedByCid) return null;
     return payload;
   } catch {
     return null;

@@ -21,9 +21,24 @@ const MAX_AGE_SEC = 300;
 /**
  * Sign an outgoing webhook request body. Returns headers to attach.
  * The receiver is expected to verify body + timestamp before trusting.
+ *
+ * Production fail-closed: when env.ENVIRONMENT === 'production' and the
+ * secret is missing, throw rather than silently sending unsigned webhooks.
+ * Without this guard, a deploy that forgot to provision WEBHOOK_SIGNING_SECRET
+ * silently downgrades to no-auth, defeating the purpose of signing.
+ *
+ * Pass `env` (Worker env) to enable the production guard. Callers that don't
+ * have env (tests / scripts) can call with a single `secret` arg as before;
+ * missing secret returns {} (no-op) for backward compat with non-prod paths.
  */
-export async function signOutgoingWebhook(secret, body) {
-  if (!secret) return {};
+export async function signOutgoingWebhook(secret, body, env) {
+  if (!secret) {
+    const isProd = (env?.ENVIRONMENT || '').toLowerCase() === 'production';
+    if (isProd) {
+      throw new Error('WEBHOOK_SIGNING_SECRET not set in production — refusing to send unsigned webhook');
+    }
+    return {};
+  }
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const payload = `${SIGNING_CONTEXT}|${timestamp}|${body}`;
   const sig = await hmacSignHex(secret, payload);

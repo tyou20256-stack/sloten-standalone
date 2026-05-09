@@ -14,6 +14,19 @@
 > - [ ] Vectorize index `sloten-kb-index-prod` を本番アカウントに作成
 > - [ ] D1 / KV の REPLACE_WITH_*_ID プレースホルダーを実 ID に置換
 > - [ ] secret 全 provisioning + 段階デプロイ
+> - [ ] **Vectorize metadata index 作成** (tenant filter 用、CF Vectorize は明示的な metadata index 必須):
+>   ```powershell
+>   npx wrangler vectorize create-metadata-index sloten-kb-index-prod \
+>     --property-name tenant_id --type string
+>   ```
+>   未作成だと `query({filter:{tenant_id:...}})` が常に空配列返却 → hybrid retrieval が
+>   silent に BM25-only に退化する。staging-bk では 2026-05-09 に作成済。
+> - [ ] Reindex 初期化 (admin UI または API):
+>   ```
+>   POST /api/admin/vectorize/reindex {"kind":"kb_chunks"}
+>   POST /api/admin/vectorize/reindex {"kind":"faq_candidates"}
+>   ```
+>   tenant scoped IDs (`${tenant_id}:kb_${id}`) で投入される。
 
 ## 検出ドリフト 4 件 (履歴)
 

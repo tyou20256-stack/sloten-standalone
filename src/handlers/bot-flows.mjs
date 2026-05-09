@@ -526,7 +526,7 @@ export async function executeFlow(env, conv, contact, inputText, ctx, inputAttrs
         // To enable per-receiver verification: send `secret` to BK + add to
         // wrangler secret; document {context: 'webhook:v1', algo: 'HMAC-SHA256-hex'}.
         const bodyStr = JSON.stringify(payload);
-        const sigHeaders = await signOutgoingWebhook(env.WEBHOOK_SIGNING_SECRET, bodyStr);
+        const sigHeaders = await signOutgoingWebhook(env.WEBHOOK_SIGNING_SECRET, bodyStr, env);
         const r = await fetch(url, {
           method: step.method || 'POST',
           headers: { 'Content-Type': 'application/json', ...sigHeaders },
