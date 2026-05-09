@@ -126,6 +126,28 @@ jobs:
         # be fixed in the same PR. To intentionally diverge, update both this
         # script's "intentionally allowed" list AND docs/PROD-CONFIG-DRIFT.md.
 
+  property-tests:
+    name: Property tests (sanitize/pii/rate-limit/escalation/webhook/bonus)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - name: Run all property tests
+        run: npm run test:property
+
+  migration-lint:
+    name: Migration SQL lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - name: Lint migrations for unsafe DROP/ALTER/UPDATE-without-WHERE
+        run: npm run lint:migrations
+
   bundle-size:
     name: Worker bundle size
     runs-on: ubuntu-latest

@@ -7,7 +7,9 @@
 //   recordSubmission(env, { tenantId, conversationId, contactId, match, code })
 //   getBonusReply(row) -> { content, items: [{title, value}] | [] }
 
-function removeSpaces(s) {
+// Internal helpers \u2014 exported for property tests to exercise the matcher
+// without spinning up a fake D1.
+export function removeSpaces(s) {
   return String(s || '').replace(/[\s\u3000]/g, '');
 }
 
@@ -17,7 +19,7 @@ function parseJson(s, fallback) {
   try { return JSON.parse(s); } catch { return fallback; }
 }
 
-function matchOne(codes, normalizedInput, matchMode) {
+export function matchOne(codes, normalizedInput, matchMode) {
   if (matchMode === 'case_insensitive') {
     const lower = normalizedInput.toLowerCase();
     for (const c of codes) {
