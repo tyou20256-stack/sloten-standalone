@@ -40,6 +40,13 @@ test('non-jp: mixed JP+EN → false', () => assert.equal(isNonJapaneseQuery('Pay
 test('non-jp: short ascii (2 chars) → false', () => assert.equal(isNonJapaneseQuery('ok'), false));
 test('non-jp: emoji only → false', () => assert.equal(isNonJapaneseQuery('🎰🎰🎰'), false));
 test('non-jp: numbers only → false', () => assert.equal(isNonJapaneseQuery('12345'), false));
+// ID/code heuristic — alphanumeric tokens with digits and no whitespace
+// are user IDs / order numbers, not English queries. Real English has spaces.
+test('non-jp: account ID syt2525m → false (ID, not query)', () => assert.equal(isNonJapaneseQuery('syt2525m'), false));
+test('non-jp: account ID riv3633 → false (ID, not query)', () => assert.equal(isNonJapaneseQuery('riv3633'), false));
+test('non-jp: order code DEP-12345 → false (ID, not query)', () => assert.equal(isNonJapaneseQuery('DEP-12345'), false));
+test('non-jp: alphanum noise aaaxyz123 → false (looks like ID)', () => assert.equal(isNonJapaneseQuery('aaaxyz123'), false));
+test('non-jp: real English question with digits → true', () => assert.equal(isNonJapaneseQuery('I want to deposit 100 USD'), true));
 
 // ─── sanitizeUntrusted (announcements.mjs internal logic, replicated) ──
 function sanitizeUntrusted(s, maxChars = 500) {

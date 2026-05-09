@@ -42,5 +42,12 @@ export function isNonJapaneseQuery(s) {
   const t = String(s || '').trim();
   if (t.length < 3) return false;
   if (hasJapanese(t)) return false;
-  return NON_JA_LETTER_RE.test(t);
+  if (!NON_JA_LETTER_RE.test(t)) return false;
+  // ID/code heuristic: alphanumeric tokens with digits and no whitespace
+  // are usernames/order IDs/codes ("syt2525m", "DEP-12345"), not English
+  // queries. Real English questions ("How do I deposit?") have whitespace.
+  // Without this, customers pasting their account ID get a "Japanese only"
+  // canned response instead of being routed to the right flow.
+  if (/\d/.test(t) && !/\s/.test(t)) return false;
+  return true;
 }
