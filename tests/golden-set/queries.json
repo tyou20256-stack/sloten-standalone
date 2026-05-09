@@ -212,42 +212,46 @@
   {
     "id": "g-022",
     "category": "machine_spec",
-    "input": "TBD: 実顧客が実際に問い合わせた機種名での質問",
-    "expected_phrases": [],
-    "forbidden_phrases": [],
+    "input": "天井800Gの機種を教えて",
+    "expected_phrases": ["機種"],
+    "forbidden_phrases": ["FAQ から", "BUY機能"],
     "expected_handoff": false,
     "expected_jump": null,
-    "source": "tbd_bk_team"
+    "source": "constructed_2026-05",
+    "note": "machine_spec フォールバック動作確認 (W8-2 verified) - 該当機種なし→絞込み失敗の正常応答"
   },
   {
     "id": "g-023",
     "category": "machine_spec",
-    "input": "TBD: ユーザーがよく聞く機種スペック質問",
-    "expected_phrases": [],
-    "forbidden_phrases": [],
+    "input": "アイムジャグラーEX-AEの機械割を教えて",
+    "expected_phrases": ["ジャグラー"],
+    "forbidden_phrases": ["不明", "わかりません"],
     "expected_handoff": false,
     "expected_jump": null,
-    "source": "tbd_bk_team"
+    "source": "constructed_2026-05",
+    "note": "機種名+機械割パターン (構築) - ジャグラー系定番"
   },
   {
     "id": "g-024",
     "category": "machine_spec",
-    "input": "TBD: マイナー機種名での問い合わせ",
-    "expected_phrases": [],
-    "forbidden_phrases": [],
+    "input": "スマスロ北斗の拳の継続率は?",
+    "expected_phrases": ["北斗"],
+    "forbidden_phrases": ["不明", "わかりません"],
     "expected_handoff": false,
     "expected_jump": null,
-    "source": "tbd_bk_team"
+    "source": "constructed_2026-05",
+    "note": "6.5号機+継続率パターン (構築)"
   },
   {
     "id": "g-025",
     "category": "machine_spec",
-    "input": "TBD: 新台情報の問い合わせ",
-    "expected_phrases": [],
-    "forbidden_phrases": [],
+    "input": "炎炎ノ消防隊2のスペックを教えて",
+    "expected_phrases": ["炎炎"],
+    "forbidden_phrases": ["不明", "わかりません"],
     "expected_handoff": false,
     "expected_jump": null,
-    "source": "tbd_bk_team"
+    "source": "constructed_2026-05",
+    "note": "machine_spec hit (W8-1 verified - スマスロ継続率対象機種)"
   },
   {
     "id": "g-026",
@@ -282,22 +286,24 @@
   {
     "id": "g-029",
     "category": "announcement",
-    "input": "TBD: 期間限定キャンペーンの問い合わせ",
-    "expected_phrases": [],
-    "forbidden_phrases": [],
+    "input": "休みの日は反映が遅いんでしょうか?",
+    "expected_phrases": ["営業"],
+    "forbidden_phrases": ["不明"],
     "expected_handoff": false,
     "expected_jump": null,
-    "source": "tbd_bk_team"
+    "source": "real_chatwoot_2026-05",
+    "note": "実顧客 verbatim (conv 81522) - 営業時間/休日に関する典型クエリ"
   },
   {
     "id": "g-030",
     "category": "announcement",
-    "input": "TBD: メンテナンス予定の問い合わせ",
-    "expected_phrases": [],
+    "input": "ゲームの不具合についてサポートを依頼しても取り合わない",
+    "expected_phrases": ["不具合"],
     "forbidden_phrases": [],
     "expected_handoff": false,
     "expected_jump": null,
-    "source": "tbd_bk_team"
+    "source": "real_chatwoot_2026-05",
+    "note": "実顧客 verbatim (conv 86502) - 不具合不満は menu jump (FAQ) で受け、handoff は二次"
   },
   {
     "id": "g-031",
@@ -472,32 +478,35 @@
   {
     "id": "g-048",
     "category": "faq",
-    "input": "TBD: 実顧客のエッジケース FAQ",
-    "expected_phrases": [],
-    "forbidden_phrases": [],
+    "input": "銀行出金の手数料はいくらですか?",
+    "expected_phrases": ["銀行", "手数料"],
+    "forbidden_phrases": ["不明"],
     "expected_handoff": false,
     "expected_jump": null,
-    "source": "tbd_bk_team"
+    "source": "real_chatwoot_2026-05",
+    "note": "実顧客 verbatim (conv 86448) - 手数料 FAQ"
   },
   {
     "id": "g-049",
     "category": "faq",
-    "input": "TBD: 実顧客のエッジケース FAQ (2)",
-    "expected_phrases": [],
-    "forbidden_phrases": [],
+    "input": "コンビニ入金は何時頃反映されますか?",
+    "expected_phrases": ["コンビニ"],
+    "forbidden_phrases": ["不明"],
     "expected_handoff": false,
     "expected_jump": null,
-    "source": "tbd_bk_team"
+    "source": "real_chatwoot_2026-05",
+    "note": "実顧客 verbatim (conv 86273) - 反映時間 FAQ"
   },
   {
     "id": "g-050",
     "category": "menu_keyword",
-    "input": "TBD: 実顧客がよく使うメニュー遷移キーワード",
-    "expected_phrases": [],
+    "input": "出金キャンセル",
+    "expected_phrases": ["出金"],
     "forbidden_phrases": [],
     "expected_handoff": false,
     "expected_jump": null,
-    "source": "tbd_bk_team"
+    "source": "real_chatwoot_2026-05",
+    "note": "実顧客頻出 verbatim (conv 86512/86451/86437/86506) - 高頻度メニュージャンプ語"
   },
   {
     "id": "g-051",
