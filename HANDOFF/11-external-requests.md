@@ -173,10 +173,23 @@ npx wrangler rollback <previous-version-id>
 ## 進捗トラッキング (2026-05-09 更新)
 
 ```
-- [外部依頼 1: BK Webhook]            _未提供_   ← 残ブロッカー
-- [外部依頼 2: Telegram]              _未提供_   ← 残ブロッカー
-- [外部依頼 3: CS Golden Set 9件]     _未提供_   ← 残ブロッカー
+- [外部依頼 1: BK Webhook]            _部分提供_ ← GAS_BOT 動作確認済 / BANK_TRANSFER 未設定 (URL 後日提供予定)
+- [外部依頼 2: Telegram]              _保留_     ← token 取得は当面保留
+- [外部依頼 3: CS Golden Set 9件]     ✅ 完了     ← 2026-05-09 実 Chatwoot data + 構築 (commit b79d32f)
 - [自分作業 4: Playwright v3 再走]    ✅ 完了     ← 2026-05-09 31+ PASS
-- [自分作業 5: wrangler.toml drift]   _未着手_   ← 自分で実行可能
-- [外部依頼 6: PM 本番デプロイ判断]   _BLOCKED_  ← 1, 2, 3, 5 待ち
+- [自分作業 5: wrangler.toml drift]   ✅ 完了     ← 2026-05-09 構造修正 (commit 56855cf)
+- [自分作業 5b: R2 / Vectorize 検証]  ✅ 完了     ← 2026-05-09 R2 read/write OK / Vectorize 55 vectors populated
+- [外部依頼 6: PM 本番デプロイ判断]   _BLOCKED_  ← 1 (BANK_TRANSFER URL) 待ち
 ```
+
+## 2026-05-09 staging-bk 動作確認サマリ
+
+| 項目 | 結果 |
+|---|---|
+| R2 (`sloten-standalone-staging-bk-files`) | ✅ put/get/delete 全て成功 |
+| Vectorize (`sloten-kb-index-staging`) | ✅ 55 vectors (kb_chunks) populated, 1024-dim, query top-1 score 0.62 |
+| Vectorize embedding model | `@cf/baai/bge-m3` (Workers AI 内蔵, 外部 API 課金なし) |
+| `retrieval.use_vectorize` flag | `0` (まだ FTS5 がデフォルト, 切替は admin UI 経由) |
+| GAS_BOT webhook (PayPayマネー) | ✅ 発火 + GAS 200 応答 ("テストスプレッドシートに記録しました") |
+| BANK_TRANSFER webhook (銀行振込) | ❌ secret 未設定 → fallback 発動 |
+| Telegram alerts | ❌ secrets 未設定 → silent no-op (cron は動作中, dispatch だけ無効) |

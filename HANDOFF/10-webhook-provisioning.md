@@ -1,12 +1,26 @@
 # Webhook Provisioning Blocker — BK 側依頼書
 
-> 2026-05-07 作成 / 本番投入の **Reality Checker B2 ブロッカー** 解消用
+> 2026-05-07 作成 / 2026-05-09 検証更新 / 本番投入の **Reality Checker B2 ブロッカー** 解消用
 > 担当オーナー: rcc.aoki@gmail.com
 > 依頼先: BK エンジニアリングチーム
 
 ---
 
-## 概要
+## 2026-05-09 staging-bk 検証結果
+
+| Secret | bot_flow 参照箇所 | staging-bk 設定 | 動作 |
+|---|---|---|---|
+| `GAS_BOT_WEBHOOK_URL` | PayPayマネー / マネーライト (各 flow `paypay_money*`) | ✅ 設定済 | ✅ **動作確認済** ("テストスプレッドシートに記録しました" 応答) |
+| `BANK_TRANSFER_BOT_WEBHOOK_URL` | 銀行振込 + ATM (`bank_transfer` / `atm_deposit__webhook`) | ❌ **未設定** | ❌ **fallback 発動** ("ただいま自動案内を準備しています。AIがご質問を承ります") |
+| `EC_DEPOSIT_BOT_WEBHOOK_URL` | (現フローで未使用) | ✅ 設定済 (休眠中) | n/a |
+| `BONUS_CODE_WEBHOOK_URL` | (現フローで未使用) | ❌ 未設定 (休眠中) | n/a |
+
+**結論**: PayPay 系は staging で動作確認済。銀行振込 + ATM は webhook 失敗 → AI モード退避 (degraded)。
+EC_DEPOSIT / BONUS_CODE は将来 flow から参照する想定だが、現フロー定義 (sloten-main / bonus-* / deposit-test) では使われていない。
+
+---
+
+## 概要 (2026-05-07 オリジナル)
 
 sloten-standalone の AI チャットフロー (銀行振込/PayPay/コンビニATM/ボーナスコード申請) は **bot_flows の webhook step 経由で BK 側受付システムに転送**される設計。
 
