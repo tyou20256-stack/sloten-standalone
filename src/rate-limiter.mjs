@@ -48,7 +48,15 @@ async function alertKvFailure(env, error) {
  * @param {number} windowSeconds - Window size in seconds
  * @returns {Promise<{allowed: boolean, remaining: number, resetAt: number, limit: number}>}
  */
-export async function checkRateLimit(env, key, limit, windowSeconds, ctx) {
+/**
+ * @param {object} [opts]
+ * @param {boolean} [opts.critical] - When true, the increment is AWAITED and
+ *   a write failure returns allowed:false. Use for endpoints where allowing
+ *   a request without consuming a quota slot would be a security gap (login,
+ *   password reset, OTP). Default false for soft rate limiting.
+ */
+export async function checkRateLimit(env, key, limit, windowSeconds, ctx, opts = {}) {
+  const critical = opts.critical === true;
   if (!env || !env.RATE_LIMITER) {
     console.warn('[rate-limit] KV binding RATE_LIMITER not configured, allowing');
     return {
@@ -98,20 +106,44 @@ export async function checkRateLimit(env, key, limit, windowSeconds, ctx) {
 
   // Eventual-consistency increment. Fine for soft rate limiting.
   // When ctx is provided, offload the KV put so it doesn't block the request.
-  const putPromise = env.RATE_LIMITER.put(kvKey, String(current + 1), {
-    expirationTtl: windowSeconds * 2,
-  }).catch((e) => {
-    console.error('[rate-limit] KV write failed, degrading open:', e.message);
-    if (ctx && typeof ctx.waitUntil === 'function') {
-      ctx.waitUntil(alertKvFailure(env, e));
-    } else {
-      alertKvFailure(env, e).catch(() => {});
+  // For `critical` callers (login, OTP), we AWAIT the put and fail-closed on
+  // write error so an attacker can't bypass the counter via KV outage.
+  if (critical) {
+    try {
+      await env.RATE_LIMITER.put(kvKey, String(current + 1), {
+        expirationTtl: windowSeconds * 2,
+      });
+    } catch (e) {
+      console.error('[rate-limit] critical KV write failed, fail-closed:', e.message);
+      if (ctx && typeof ctx.waitUntil === 'function') {
+        ctx.waitUntil(alertKvFailure(env, e));
+      } else {
+        alertKvFailure(env, e).catch(() => {});
+      }
+      return {
+        allowed: false,
+        remaining: 0,
+        resetAt: (windowStart + windowSeconds) * 1000,
+        limit,
+        degraded: true,
+      };
     }
-  });
-  if (ctx && typeof ctx.waitUntil === 'function') {
-    ctx.waitUntil(putPromise);
   } else {
-    await putPromise;
+    const putPromise = env.RATE_LIMITER.put(kvKey, String(current + 1), {
+      expirationTtl: windowSeconds * 2,
+    }).catch((e) => {
+      console.error('[rate-limit] KV write failed, degrading open:', e.message);
+      if (ctx && typeof ctx.waitUntil === 'function') {
+        ctx.waitUntil(alertKvFailure(env, e));
+      } else {
+        alertKvFailure(env, e).catch(() => {});
+      }
+    });
+    if (ctx && typeof ctx.waitUntil === 'function') {
+      ctx.waitUntil(putPromise);
+    } else {
+      await putPromise;
+    }
   }
 
   return {

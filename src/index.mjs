@@ -322,8 +322,10 @@ export default {
       // --- Staff auth (cookie-based) ---
       if (path === '/api/staff/login' && method === 'POST') {
         // IP-level rate limit to stop credential-stuffing across many accounts.
+        // critical:true → KV write fail-closed so an attacker can't bypass
+        // the counter via KV outage (Security #7).
         const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
-        const check = await checkRateLimit(env, `login:${ip}`, 10, 60, ctx);
+        const check = await checkRateLimit(env, `login:${ip}`, 10, 60, ctx, { critical: true });
         if (!check.allowed) return rateLimitResponse(check, corsHeaders);
         return loginHandler(request, env, corsHeaders);
       }

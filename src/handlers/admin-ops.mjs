@@ -7,6 +7,7 @@ import { getEnvValue, clearEnvCache, OVERRIDABLE_KEYS } from '../env-resolver.mj
 import { audit, logError } from '../audit.mjs';
 import { sendMessage } from './messages-native.mjs';
 import { uuid } from '../id.mjs';
+import { bestEffortSync } from '../lib/best-effort.mjs';
 
 // --- Webhook test: sends a synthetic customer message and returns the bot
 //     replies (does NOT broadcast / persist a real conversation).
@@ -341,8 +342,11 @@ export async function adminMenuTree(request, env, corsHeaders) {
        FROM bonus_codes WHERE tenant_id = ? AND enabled = 1 ORDER BY priority DESC, id ASC`,
   ).bind(tenantId).all();
   const bonusFlows = (codeRows || []).map((r) => {
-    let codes = []; try { codes = JSON.parse(r.codes); } catch (_) {}
-    let items = []; try { items = JSON.parse(r.success_items) || []; } catch (_) {}
+    // bonus_codes.codes / success_items are TEXT (JSON-encoded). Parse with
+    // labelled best-effort so corrupted rows are visible in logs (catch (_) {}
+    // previously would have silently treated as empty arrays).
+    let codes = bestEffortSync('admin-ops:menu-tree:codes', () => JSON.parse(r.codes)) || [];
+    let items = bestEffortSync('admin-ops:menu-tree:success_items', () => JSON.parse(r.success_items)) || [];
     items = (Array.isArray(items) ? items : []).map((it) => ({ title: it.title || '', value: it.value || '' }));
     const codeLabel = codes.length ? ` [${codes[0]}${codes.length > 1 ? '+' + (codes.length - 1) : ''}]` : '';
     const content = r.success_content || '';

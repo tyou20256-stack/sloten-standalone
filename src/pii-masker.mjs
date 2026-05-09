@@ -25,9 +25,13 @@ const PHONE_LANDLINE_JP_RE = /\b0\d{1,4}[-\s]?\d{1,4}[-\s]?\d{4}\b/g;
 // (matches order numbers / dates), so we require explicit Korean indicator.
 const PHONE_KR_MOBILE_RE = /(?:\+82[-\s]?|\b)0?1[0-9][-\s]?\d{3,4}[-\s]?\d{4}\b/g;
 // Chinese mobile: 11 digits starting with 1[3-9].
-// τ-M: keep contiguous-only OR explicit +86 prefix. Bare spaced "1XX XXXX XXXX"
-// over-matches Japanese phone book strings; require boundary or country code.
-const PHONE_CN_MOBILE_RE = /(?:\+86[-\s]?|\b)1[3-9]\d(?:\d{8}|[-\s]\d{4}[-\s]\d{4})\b/g;
+// 2026-05-09 audit follow-up: prior regex required EXACTLY one form
+// ({contiguous 8} OR {[-space]4-[-space]4}) — missed mixed forms like
+// "139 12345678" (space then contiguous 8) and "139-1234 5678" (mixed sep).
+// Now any combination of optional separators between groups matches.
+// Still gated on \b boundary or +86 prefix to avoid over-matching JP phone
+// book strings.
+const PHONE_CN_MOBILE_RE = /(?:\+86[-\s]?|\b)1[3-9]\d[-\s]?\d{4}[-\s]?\d{4}\b/g;
 // Candidate card numbers: 13–19 digits with optional spaces/hyphens (multi-space tolerant)
 const CARD_CANDIDATE_RE = /(?:\d[\s-]*){13,19}/g;
 // Bank account with Japanese context label

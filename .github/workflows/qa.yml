@@ -148,6 +148,17 @@ jobs:
       - name: Lint migrations for unsafe DROP/ALTER/UPDATE-without-WHERE
         run: npm run lint:migrations
 
+  migration-replay-smoke:
+    name: Migration replay smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - name: Static replay verification (catches duplicate names + bad ALTER)
+        run: npm run smoke:migrations
+
   bundle-size:
     name: Worker bundle size
     runs-on: ubuntu-latest

@@ -68,13 +68,54 @@ export async function issueContactToken(env, contactId) {
   return `${payloadB64}.${b64url(sig)}`;
 }
 
+// Per-isolate negative-result cache for revocation lookups.
+// Revocations are rare (GDPR erase / explicit logout); 99%+ of calls are
+// "not revoked". KV.get costs 30-50ms p50 — by caching the negative answer
+// per-isolate for a short window, we cut that cost on hot paths.
+//
+// Cache holds the lookup key → expiry timestamp (ms). On any positive result
+// we DO NOT cache (security-conservative — re-check every time so a
+// recently-revoked token doesn't slip through).
+//
+// TTL is intentionally short (5s). Cloudflare Workers route requests across
+// isolates non-deterministically — same-isolate revocation invalidation only
+// helps when the same isolate is hit again. 5s is enough to amortize KV cost
+// for high-traffic widgets (chat-bursty users) while keeping cross-isolate
+// revocation propagation lag acceptable for security purposes.
+const REVOKE_NEGATIVE_CACHE = new Map();
+const REVOKE_NEGATIVE_CACHE_MAX = 1024;
+const REVOKE_NEGATIVE_TTL_MS = 5_000;
+
+function cacheRevokedNegative(key) {
+  if (REVOKE_NEGATIVE_CACHE.size >= REVOKE_NEGATIVE_CACHE_MAX) {
+    const oldest = REVOKE_NEGATIVE_CACHE.keys().next().value;
+    REVOKE_NEGATIVE_CACHE.delete(oldest);
+  }
+  REVOKE_NEGATIVE_CACHE.set(key, Date.now() + REVOKE_NEGATIVE_TTL_MS);
+}
+
+function isCachedNegative(key) {
+  const exp = REVOKE_NEGATIVE_CACHE.get(key);
+  if (!exp) return false;
+  if (exp < Date.now()) {
+    REVOKE_NEGATIVE_CACHE.delete(key);
+    return false;
+  }
+  return true;
+}
+
 async function isRevoked(env, jti) {
   if (!jti) return false;
+  const cacheKey = REVOKE_KEY_PREFIX + jti;
+  // Fast path: recently confirmed not-revoked.
+  if (isCachedNegative(cacheKey)) return false;
   const kv = env.SESSION_KV || env.RATE_LIMITER;
   if (!kv) return false;
   try {
-    const flag = await kv.get(REVOKE_KEY_PREFIX + jti);
-    return !!flag;
+    const flag = await kv.get(cacheKey);
+    if (flag) return true;          // hit → don't cache (rare, must re-check)
+    cacheRevokedNegative(cacheKey); // miss → safe to cache for 60s
+    return false;
   } catch (e) {
     // Fail-open on KV transient errors. Revocation is a security improvement;
     // hard-failing on every KV outage would break all widget traffic.
@@ -132,12 +173,19 @@ export async function verifyContactToken(env, token) {
  * Use cases:
  *   - GDPR erase: revoke all tokens for a contact_id
  *   - Explicit /api/widget/contacts/logout
+ *
+ * Same-isolate immediate effect: the per-isolate negative cache for this
+ * key is dropped, so a follow-up verify in the same isolate sees the
+ * revocation immediately. Cross-isolate propagation still depends on
+ * KV consistency (typically &lt;1s).
  */
 export async function revokeContactJti(env, jti, ttlSec = TTL_SEC) {
   const kv = env.SESSION_KV || env.RATE_LIMITER;
   if (!kv || !jti) return false;
+  const cacheKey = REVOKE_KEY_PREFIX + jti;
+  REVOKE_NEGATIVE_CACHE.delete(cacheKey);
   try {
-    await kv.put(REVOKE_KEY_PREFIX + jti, '1', { expirationTtl: Math.max(60, Math.min(ttlSec, TTL_SEC)) });
+    await kv.put(cacheKey, '1', { expirationTtl: Math.max(60, Math.min(ttlSec, TTL_SEC)) });
     return true;
   } catch (e) {
     console.warn('[contact-token] revoke write failed:', e?.message);
@@ -148,12 +196,16 @@ export async function revokeContactJti(env, jti, ttlSec = TTL_SEC) {
 /**
  * Revoke ALL outstanding tokens for a contact_id (used by GDPR erase
  * since legacy tokens have no jti). 7d TTL covers max token life.
+ *
+ * Same-isolate immediate effect: drops the cid-keyed negative cache entry.
  */
 export async function revokeAllContactTokens(env, contactId) {
   const kv = env.SESSION_KV || env.RATE_LIMITER;
   if (!kv || !contactId) return false;
+  const cacheKey = REVOKE_KEY_PREFIX + 'cid:' + contactId;
+  REVOKE_NEGATIVE_CACHE.delete(cacheKey);
   try {
-    await kv.put(REVOKE_KEY_PREFIX + 'cid:' + contactId, '1', { expirationTtl: TTL_SEC });
+    await kv.put(cacheKey, '1', { expirationTtl: TTL_SEC });
     return true;
   } catch (e) {
     console.warn('[contact-token] cid-revoke write failed:', e?.message);

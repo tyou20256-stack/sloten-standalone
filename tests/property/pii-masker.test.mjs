@@ -82,6 +82,30 @@ test('mask: extremely long input doesn\'t hang (10k chars)', () => {
   assert.equal(out.includes('a@b.com'), false);
 });
 
+// ── CN mobile (regex tightening 2026-05-10) ──────────────────
+test('CN mobile: contiguous 11-digit', () => {
+  assert.match(maskPII('連絡: 13812345678'), /\[PHONE\]/);
+});
+test('CN mobile: 3-4-4 with dashes', () => {
+  assert.match(maskPII('139-1234-5678'), /\[PHONE\]/);
+});
+test('CN mobile: 3-4-4 with spaces', () => {
+  assert.match(maskPII('139 1234 5678'), /\[PHONE\]/);
+});
+test('CN mobile: 3-then-contiguous-8 (mixed sep)', () => {
+  assert.match(maskPII('139 12345678'), /\[PHONE\]/);
+});
+test('CN mobile: dash-then-space (mixed sep)', () => {
+  assert.match(maskPII('139-1234 5678'), /\[PHONE\]/);
+});
+test('CN mobile: explicit +86 prefix is masked (CARD or PHONE)', () => {
+  // 13 contiguous digits (after removing spaces) collide with Luhn-validated
+  // card matcher; either tag is acceptable — the security goal (no raw PII
+  // reaches LLM) is met.
+  const out = maskPII('+86 138 1234 5678');
+  assert.match(out, /\[(?:PHONE|CARD)/, `expected mask, got: ${out}`);
+});
+
 // ── Adversarial / borderline ─────────────────────────────────
 test('mask: full-width email', () => {
   // Full-width characters should not bypass — best effort

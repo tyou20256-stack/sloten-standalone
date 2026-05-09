@@ -80,18 +80,30 @@ export async function listConversations(request, env, corsHeaders) {
   const teamId = url.searchParams.get('team_id');
   const snoozed = url.searchParams.get('snoozed'); // '1' = only snoozed, '0' = exclude snoozed
   const limit = Math.min(parseInt(url.searchParams.get('limit') || '50', 10), 200);
-  let q = 'SELECT * FROM conversations WHERE tenant_id = ?';
+  // 2026-05-10: JOIN contacts so the operator UI doesn't need a per-row
+  // GET /api/contacts/:id roundtrip for the conversation list (was N+1 at
+  // ~50 conv/page). Aliases avoid clobbering conversations.* columns.
+  let q = `SELECT c.*,
+                  ct.name  AS contact_name,
+                  ct.email AS contact_email,
+                  ct.phone AS contact_phone,
+                  ct.avatar_url AS contact_avatar_url,
+                  ct.is_identified AS contact_is_identified,
+                  ct.external_id AS contact_external_id
+             FROM conversations c
+             LEFT JOIN contacts ct ON ct.id = c.contact_id
+            WHERE c.tenant_id = ?`;
   const vals = [tenantId];
-  if (status && VALID_STATUS.has(status)) { q += ' AND status = ?'; vals.push(status); }
-  if (priority && VALID_PRIORITY.has(priority)) { q += ' AND priority = ?'; vals.push(priority); }
+  if (status && VALID_STATUS.has(status)) { q += ' AND c.status = ?'; vals.push(status); }
+  if (priority && VALID_PRIORITY.has(priority)) { q += ' AND c.priority = ?'; vals.push(priority); }
   if (label) {
-    q += ` AND (',' || COALESCE(labels,'') || ',') LIKE ?`;
+    q += ` AND (',' || COALESCE(c.labels,'') || ',') LIKE ?`;
     vals.push(`%,${label},%`);
   }
-  if (teamId) { q += ' AND team_id = ?'; vals.push(parseInt(teamId, 10)); }
-  if (snoozed === '1') q += ` AND snoozed_until IS NOT NULL AND snoozed_until > datetime('now')`;
-  else if (snoozed === '0') q += ` AND (snoozed_until IS NULL OR snoozed_until <= datetime('now'))`;
-  q += ' ORDER BY COALESCE(last_message_at, created_at) DESC LIMIT ?';
+  if (teamId) { q += ' AND c.team_id = ?'; vals.push(parseInt(teamId, 10)); }
+  if (snoozed === '1') q += ` AND c.snoozed_until IS NOT NULL AND c.snoozed_until > datetime('now')`;
+  else if (snoozed === '0') q += ` AND (c.snoozed_until IS NULL OR c.snoozed_until <= datetime('now'))`;
+  q += ` ORDER BY COALESCE(c.last_message_at, c.created_at) DESC LIMIT ?`;
   vals.push(limit);
   const { results } = await env.DB.prepare(q).bind(...vals).all();
   return ok({ success: true, conversations: results || [] }, corsHeaders);

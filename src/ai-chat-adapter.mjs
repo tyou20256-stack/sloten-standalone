@@ -14,6 +14,7 @@ import { maskPII } from './pii-masker.mjs';
 import { filterResponse, detectInputThreat, detectOverPromise, detectPersonalDataRequest } from './responseFilter.mjs';
 import { retrieveContext } from './retrieval.mjs';
 import { decideEscalation } from './escalation.mjs';
+import { bestEffort } from './lib/best-effort.mjs';
 import { classifyIntent } from './lib/intent-classifier.mjs';
 import { scheduleShadowCalls } from './shadow.mjs';
 
@@ -696,11 +697,11 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
 
   if (!text) {
     // 2) Empty AI response — try fallback menu, otherwise plain handoff text.
-    try {
+    const fbPayload = await bestEffort('ai-chat:empty-fallback-menu', async () => {
       const fb = await findFallbackMenu(env, tenantId);
-      const payload = menuToMessagePayload(fb);
-      if (payload) return payload;
-    } catch (_) {}
+      return menuToMessagePayload(fb);
+    });
+    if (fbPayload) return fbPayload;
     return { content: 'ただいま担当者におつなぎします。少々お待ちください。', content_type: 'text' };
   }
   // Expose pachi citations as content_attributes when machine RAG fired.

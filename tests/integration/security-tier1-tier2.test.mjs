@@ -63,10 +63,13 @@ await step('explicit logout revokes the token', async () => {
   assert.equal(b.revoked, true);
 });
 
-await step('revoked token rejected by subsequent call (KV propagation may take ~1s)', async () => {
-  // KV writes are eventually consistent; allow brief retry
+await step('revoked token rejected (KV + per-isolate cache propagation 5-10s)', async () => {
+  // The verifier has a 5s per-isolate negative cache. Cloudflare may route
+  // subsequent requests to the same isolate that cached "not revoked" before
+  // logout. Wait long enough for that cache window to expire AND the KV
+  // revocation to propagate.
   let lastStatus = null;
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 10; i++) {
     const r = await fetch(`${BASE}/api/widget/conversations/${conversationId}`, {
       headers: { 'X-Sloten-Contact-Token': contactToken },
     });

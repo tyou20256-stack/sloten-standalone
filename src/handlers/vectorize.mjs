@@ -49,20 +49,22 @@ export async function vectorizeReindex(request, env, corsHeaders) {
 
   let rows = [];
   if (kind === 'kb_chunks') {
-    // NOTE: knowledge_sources currently has no tenant_id column (single-tenant
-    // legacy schema). We tag every chunk with the staff's resolved tenantId so
-    // queries can filter; once knowledge_sources gains tenant_id, switch the
-    // SELECT to filter by it. Until then, all chunks belong to tenantId.
+    // 2026-05-10: migration 026 added knowledge_sources.tenant_id, so we now
+    // filter chunks via JOIN by the source's actual tenant_id. This unblocks
+    // multi-tenant: tenant A reindexing no longer rewrites tenant B vectors.
     const { results } = await env.DB.prepare(
-      `SELECT id, content, heading_path, content_hash FROM knowledge_chunks
-        WHERE content IS NOT NULL AND length(content) > 50`,
-    ).all();
+      `SELECT kc.id, kc.content, kc.heading_path, kc.content_hash, ks.tenant_id
+         FROM knowledge_chunks kc
+         INNER JOIN knowledge_sources ks ON kc.source_id = ks.id
+        WHERE kc.content IS NOT NULL AND length(kc.content) > 50
+          AND ks.tenant_id = ?`,
+    ).bind(tenantId).all();
     rows = (results || []).map((r) => ({
-      id: `${tenantId}:kb_${r.id}`,
+      id: `${r.tenant_id}:kb_${r.id}`,
       text: r.content,
       metadata: {
         kind: 'kb_chunk',
-        tenant_id: tenantId,
+        tenant_id: r.tenant_id,
         source_id: r.id,
         heading: r.heading_path || '',
       },

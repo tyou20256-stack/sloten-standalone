@@ -26,7 +26,9 @@ const HARD_ESCALATION_PATTERNS = [
   { re: /(?:オペレーター|オペレータ|担当者|人[とに]|スタッフ).*(?:話|繋|つな|呼|お願い)|(?:話したい|繋いで|つないで|呼んで).*(?:オペレーター|オペレータ|担当者|人[とに]|スタッフ)/, reason: 'operator_request' },
 ];
 
-// 依存症兆候 — Responsible Gambling (RG) 対応が必須
+// 依存症兆候 — Responsible Gambling (RG) 対応が必須.
+// Casino vertical compliance (added 2026-05-10): self-exclusion / cooling-off
+// requests must reach a human + log to audit_log for regulator evidence.
 const RG_PATTERNS = [
   /(?:もう|全部|もう全部)(?:やめ|終わ|負け|失)/,
   /(?:ギャンブル|スロット|カジノ)(?:依存|中毒|やめたい)/,
@@ -34,6 +36,13 @@ const RG_PATTERNS = [
   /(?:生活費|家賃|食費)(?:まで|を)(?:使|注ぎ|溶か)/,
   /(?:死に|しにたい|消えたい|自殺)/,
   /(?:家族|嫁|旦那|親)(?:にバレ|に言え|にバレる)/,
+  // Self-exclusion / cooling-off — explicit user request to stop.
+  // Required by Georgia iGaming sublicense N138/1 RG framework: must offer
+  // self-exclusion form when user asks to be blocked / cooled off.
+  /(?:自己|アカウント|セルフ)(?:制限|排除|閉鎖|凍結)(?:し|を|お願い|したい)/,
+  /(?:クーリング(?:オフ|・オフ)|cooling[- ]?off)/i,
+  /(?:プレイ|ゲーム|遊ぶの)(?:を|が)(?:止め|やめ|やめさせ)(?:させて|たい|てください)/,
+  /(?:遊び過ぎ|遊びすぎ|やり過ぎ|やりすぎ).*(?:止め|やめ|抑え)/,
 ];
 
 // 怒り・不満 — AI 続行すると炎上、即エスカ
