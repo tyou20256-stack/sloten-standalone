@@ -4,6 +4,7 @@ import { uuid } from '../id.mjs';
 import { ok, created, err, parseJson } from '../json.mjs';
 import { issueContactToken, verifyContactToken, extractContactToken } from '../auth/contact-token.mjs';
 import { resolveTenantId } from '../tenant-scope.mjs';
+import { bestEffortSync } from '../lib/best-effort.mjs';
 
 function decorate(row) {
   if (!row) return row;
@@ -92,8 +93,9 @@ export async function updateContact(request, env, corsHeaders, contactId) {
   if (body.metadata !== undefined) {
     // Merge metadata with existing row so partial updates don't clobber prior keys.
     const existing = await env.DB.prepare('SELECT metadata FROM contacts WHERE id = ?').bind(contactId).first();
-    let merged = {};
-    try { if (existing?.metadata) merged = JSON.parse(existing.metadata) || {}; } catch { /* keep empty */ }
+    const merged = (existing?.metadata
+      ? bestEffortSync('contacts:updateContact:merge', () => JSON.parse(existing.metadata))
+      : null) || {};
     if (body.metadata && typeof body.metadata === 'object') Object.assign(merged, body.metadata);
     apply('metadata', JSON.stringify(merged));
   }

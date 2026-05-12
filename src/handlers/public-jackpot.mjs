@@ -11,6 +11,7 @@
 //                     'db-fallback' | 'default' }
 
 import { ok } from '../json.mjs';
+import { bestEffortSync } from '../lib/best-effort.mjs';
 
 const LIVE_URL = 'https://sloten.io/api/jackpot/campaign/current';
 const CACHE_KEY = 'public:jackpot:v2'; // bump key to invalidate v1 (string-only) entries
@@ -82,8 +83,8 @@ export async function getPublicJackpot(request, env, corsHeaders, ctx) {
     if (env.RATE_LIMITER) {
       const cached = await env.RATE_LIMITER.get(CACHE_KEY);
       if (cached) {
-        let entry = null;
-        try { entry = JSON.parse(cached); } catch { entry = { n: parseInt(cached, 10), ts: 0 }; }
+        const entry = bestEffortSync('public-jackpot:parse-cached', () => JSON.parse(cached))
+          || { n: parseInt(cached, 10), ts: 0 };
         const n = entry?.n;
         const ts = entry?.ts || 0;
         const ageS = Math.max(0, Math.floor(Date.now() / 1000) - ts);

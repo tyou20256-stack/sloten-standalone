@@ -9,6 +9,7 @@
 
 import { ok, created, err, parseJson } from '../json.mjs';
 import { resolveTenantId } from '../tenant-scope.mjs';
+import { bestEffortSync } from '../lib/best-effort.mjs';
 
 const VALID_MATCH_MODES = new Set(['exact', 'case_insensitive']);
 
@@ -26,7 +27,8 @@ function decorate(row) {
   if (!row) return row;
   const parse = (s, fb) => {
     if (!s) return fb;
-    try { return JSON.parse(s); } catch { return fb; }
+    const v = bestEffortSync('bonus-codes-admin:decorate', () => JSON.parse(s));
+    return v === undefined ? fb : v;
   };
   return {
     ...row,

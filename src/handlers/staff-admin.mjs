@@ -3,6 +3,7 @@
 
 import { ok, created, err, parseJson } from '../json.mjs';
 import { hashPassword } from '../auth/password.mjs';
+import { bestEffortSync } from '../lib/best-effort.mjs';
 
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!#%&';
 const VALID_ROLES = new Set(['admin', 'agent', 'viewer']);
@@ -139,13 +140,13 @@ export async function importStaffFromChatwoot(request, env, corsHeaders) {
   ).all();
   const emailToConvs = new Map();
   for (const c of (convs || [])) {
-    try {
-      const m = JSON.parse(c.metadata);
-      const email = (m?.chatwoot_assignee_email || '').toLowerCase().trim();
-      if (!email) continue;
-      if (!emailToConvs.has(email)) emailToConvs.set(email, []);
-      emailToConvs.get(email).push(c.id);
-    } catch (_) { /* bad JSON, skip */ }
+    const m = bestEffortSync('staff-admin:importChatwoot:metadata',
+      () => JSON.parse(c.metadata));
+    if (!m) continue;
+    const email = (m?.chatwoot_assignee_email || '').toLowerCase().trim();
+    if (!email) continue;
+    if (!emailToConvs.has(email)) emailToConvs.set(email, []);
+    emailToConvs.get(email).push(c.id);
   }
 
   // 2) Fetch existing staff by email

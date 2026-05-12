@@ -2,13 +2,15 @@
 
 import { ok, created, err, parseJson } from '../json.mjs';
 import { resolveTenantId } from '../tenant-scope.mjs';
+import { bestEffortSync } from '../lib/best-effort.mjs';
 
 const VALID_TYPES = new Set(['default', 'keyword', 'fallback']);
 
 function parseItems(items) {
   if (Array.isArray(items)) return items;
   if (typeof items === 'string') {
-    try { const a = JSON.parse(items); return Array.isArray(a) ? a : null; } catch { return null; }
+    const a = bestEffortSync('bot-menus:parseItems', () => JSON.parse(items));
+    return Array.isArray(a) ? a : null;
   }
   return null;
 }

@@ -27,6 +27,7 @@ import { resolveEnvForTemplate } from '../env-resolver.mjs';
 import { logError as _logError } from '../audit.mjs';
 import { looksLikeFreeText } from '../lib/text-classify.mjs';
 import { signOutgoingWebhook } from '../lib/webhook-signature.mjs';
+import { bestEffortSync } from '../lib/best-effort.mjs';
 
 const VALID_TRIGGER_TYPES = new Set(['entry', 'manual']);
 const VALID_STEP_TYPES = new Set(['message', 'input', 'select', 'webhook', 'handoff', 'collect']);
@@ -34,7 +35,8 @@ const VALID_STEP_TYPES = new Set(['message', 'input', 'select', 'webhook', 'hand
 function parseSteps(steps) {
   if (Array.isArray(steps)) return steps;
   if (typeof steps === 'string') {
-    try { const a = JSON.parse(steps); return Array.isArray(a) ? a : null; } catch { return null; }
+    const a = bestEffortSync('bot-flows:parseSteps', () => JSON.parse(steps));
+    return Array.isArray(a) ? a : null;
   }
   return null;
 }
@@ -245,7 +247,11 @@ async function persistState(env, conversationId, state) {
 // The engine stops when it hits an interactive step (input/select) or flow end.
 // `input` is the customer's latest message (null when just entering a flow).
 export async function executeFlow(env, conv, contact, inputText, ctx, inputAttrs = null) {
-  const rawState = conv.flow_state ? (typeof conv.flow_state === 'string' ? JSON.parse(conv.flow_state) : conv.flow_state) : null;
+  const rawState = conv.flow_state
+    ? (typeof conv.flow_state === 'string'
+        ? bestEffortSync('bot-flows:executeFlow:state', () => JSON.parse(conv.flow_state))
+        : conv.flow_state)
+    : null;
   if (!rawState) return { messages: [], state: null, handoff: false };
   const flow = await getFlow(env, rawState.flow_id);
   if (!flow) { await persistState(env, conv.id, null); return { messages: [], state: null, handoff: false }; }
@@ -590,8 +596,9 @@ export async function runFlowForCustomerMessage(env, conv, contact, text, ctx, i
   // configured sub-menu. Clear stale state so the entry-flow logic below
   // can match the click value to a fresh flow / menu jump.
   if (conv.flow_state) {
-    let parsed = null;
-    try { parsed = typeof conv.flow_state === 'string' ? JSON.parse(conv.flow_state) : conv.flow_state; } catch { parsed = null; }
+    const parsed = typeof conv.flow_state === 'string'
+      ? bestEffortSync('bot-flows:resumeStaleState', () => JSON.parse(conv.flow_state))
+      : conv.flow_state;
     if (parsed && !parsed.step_id) {
       await persistState(env, conv.id, null);
       conv = { ...conv, flow_state: null };

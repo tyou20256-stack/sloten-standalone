@@ -7,6 +7,8 @@
 //   recordSubmission(env, { tenantId, conversationId, contactId, match, code })
 //   getBonusReply(row) -> { content, items: [{title, value}] | [] }
 
+import { bestEffortSync } from './lib/best-effort.mjs';
+
 // Internal helpers \u2014 exported for property tests to exercise the matcher
 // without spinning up a fake D1.
 export function removeSpaces(s) {
@@ -16,7 +18,8 @@ export function removeSpaces(s) {
 function parseJson(s, fallback) {
   if (!s) return fallback;
   if (typeof s !== 'string') return s;
-  try { return JSON.parse(s); } catch { return fallback; }
+  const parsed = bestEffortSync('bonus-codes:parseJson', () => JSON.parse(s));
+  return parsed === undefined ? fallback : parsed;
 }
 
 export function matchOne(codes, normalizedInput, matchMode) {

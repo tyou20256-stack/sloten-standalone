@@ -288,8 +288,8 @@ export async function adminMenuTree(request, env, corsHeaders) {
   const flow = await env.DB.prepare(
     `SELECT * FROM bot_flows WHERE tenant_id = ? AND name = 'sloten-main' LIMIT 1`,
   ).bind(tenantId).first();
-  let steps = [];
-  try { steps = JSON.parse(flow?.steps || '[]'); } catch (_) { steps = []; }
+  const steps = bestEffortSync('admin-ops:menu-tree:flow-steps',
+    () => JSON.parse(flow?.steps || '[]')) || [];
   const stepsById = new Map(steps.map((s) => [s.id, s]));
 
   const visited = new Set();
