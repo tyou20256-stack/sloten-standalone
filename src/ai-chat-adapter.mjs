@@ -222,8 +222,9 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
   const escalation = decideEscalation(customerMessage, history || []);
   if (escalation.shouldEscalate) {
     // Record this as an ai_log even though we skipped the LLM — so operators
-    // can see why escalation fired and build Golden Set from it.
-    const logPromise = recordAiCall(env, {
+    // can see why escalation fired and build Golden Set from it. ctx.waitUntil
+    // keeps the INSERT off the response critical path.
+    const escalationLog = recordAiCall(env, {
       tenant_id: tenantId,
       conversation_id: conversationId,
       provider: 'n/a',
@@ -243,9 +244,8 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
           confidence: classifierResult.confidence,
         } : null,
       }),
-    });
-    if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(logPromise);
-    else await logPromise;
+    }, ctx);
+    if (!ctx || typeof ctx.waitUntil !== 'function') await escalationLog.promise;
     return {
       content: escalation.responseText,
       content_type: 'text',
@@ -355,23 +355,23 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
       if (pachiResult.filter_failed) {
         console.log('[pachi-rag] filter_failed — bypassing LLM for deterministic response');
         pachiFilterFailed = true;
-        // Log this case so we can later add the missing pachi extractor
-        try {
-          await recordAiCall(env, {
-            tenant_id: tenantId,
-            conversation_id: conversationId,
-            provider: 'n/a',
-            model: 'pachi-filter-failed',
-            system_prompt: 'pachi_filter_failed_bypass',
-            input: maskPII(customerMessage || ''),
-            output: 'filter_failed_canned',
-            latency_ms: 0,
-            status: 'pachi_filter_failed',
-            error_message: null,
-            prompt_id: null,
-            retrieval_trace: JSON.stringify({ pachi_filters: pachiResult.filters || null }),
-          });
-        } catch (_) {}
+        // Log this case so we can later add the missing pachi extractor.
+        // ctx.waitUntil → off the response critical path; doInsertAiLog swallows
+        // errors internally so the surrounding try/catch is no longer needed.
+        recordAiCall(env, {
+          tenant_id: tenantId,
+          conversation_id: conversationId,
+          provider: 'n/a',
+          model: 'pachi-filter-failed',
+          system_prompt: 'pachi_filter_failed_bypass',
+          input: maskPII(customerMessage || ''),
+          output: 'filter_failed_canned',
+          latency_ms: 0,
+          status: 'pachi_filter_failed',
+          error_message: null,
+          prompt_id: null,
+          retrieval_trace: JSON.stringify({ pachi_filters: pachiResult.filters || null }),
+        }, ctx);
         return {
           content: 'ご質問の条件で機種データベースから絞り込めませんでした。\n具体的な機種名（例: 「バイオハザードヴィレッジ」）でお問い合わせいただければ、その機種の仕様をご案内できます。\nまた「スマスロで継続率80%以上」のような形式でも検索できます。',
           content_type: 'text',
@@ -459,7 +459,7 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
   if (threat.suspicious) {
     // Telemetry — Security M9: silent drops were preventing detection of
     // recon attempts. Log so operators can rate-limit / alert on repeats.
-    const threatLog = recordAiCall(env, {
+    recordAiCall(env, {
       tenant_id: tenantId,
       conversation_id: conversationId,
       provider: 'n/a',
@@ -472,8 +472,7 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
       error_message: null,
       prompt_id: null,
       retrieval_trace: JSON.stringify({ threat_category: threat.category }),
-    }).catch(() => {});
-    if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(threatLog);
+    }, ctx);
     return { content: 'サポートに関するご質問をお願いいたします。', content_type: 'text' };
   }
 
@@ -493,7 +492,7 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
       if (cached && cached.text && cached.text.length >= RESPONSE_CACHE_MIN_LEN) {
         cacheHit = true;
         // Log the cache hit for observability + cost analysis (genai_cache_hit metric)
-        const hitLog = recordAiCall(env, {
+        recordAiCall(env, {
           tenant_id: tenantId, conversation_id: conversationId,
           provider: 'cache', model: 'genai-cache',
           system_prompt: 'cache_hit',
@@ -501,8 +500,7 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
           latency_ms: 0, status: 'ok',
           error_message: null, prompt_id: promptRow?.id || null,
           retrieval_trace: JSON.stringify({ cache_key: respCacheKey, cache_hit: true }),
-        }).catch(() => {});
-        if (ctx?.waitUntil) ctx.waitUntil(hitLog);
+        }, ctx);
         return { content: cached.text, content_type: 'text' };
       }
     } catch (_) { /* cache read failure → fall through to LLM */ }
@@ -635,8 +633,9 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
   }
 
   // Record primary with retrieval trace + tokens + over-promise audit.
-  // We await this (not waitUntil) so primaryLogId is known for shadow linking.
-  const primaryLogId = await recordAiCall(env, {
+  // Since migration 027, recordAiCall returns the UUID synchronously so
+  // shadow linking no longer blocks on the INSERT round trip.
+  const { id: primaryLogId } = recordAiCall(env, {
     tenant_id: tenantId,
     conversation_id: conversationId,
     provider,
@@ -677,7 +676,7 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
         confidence: classifierResult.confidence,
       } : null,
     }),
-  });
+  }, ctx);
 
   // Shadow mode (Phase 2 D): fire-and-forget candidate prompt evaluation.
   // Uses ctx.waitUntil so user latency is unaffected. Off by default —

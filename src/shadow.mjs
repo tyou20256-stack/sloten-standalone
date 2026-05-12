@@ -127,6 +127,10 @@ export async function scheduleShadowCalls(env, ctx, args) {
         status = 'error';
         errorMessage = e.message;
       }
+      // Shadow log already runs inside ctx.waitUntil(task()) so we await the
+      // returned promise rather than wrapping again. shadow_of references the
+      // primary log id (now a UUID generated synchronously by the primary's
+      // recordAiCall call — no race because the id is assigned client-side).
       await recordAiCall(env, {
         tenant_id: args.tenantId,
         conversation_id: args.conversationId,
@@ -143,7 +147,7 @@ export async function scheduleShadowCalls(env, ctx, args) {
         prompt_id: pid,
         is_shadow: 1,
         shadow_of: args.primaryLogId || null,
-      });
+      }).promise;
     }
   };
 

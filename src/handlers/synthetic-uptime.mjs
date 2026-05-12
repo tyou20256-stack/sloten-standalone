@@ -57,7 +57,11 @@ export async function runSyntheticUptime(env, ctx) {
   const latencies = results.map((r) => r.latency).sort((a, b) => a - b);
   const p95 = latencies[Math.min(Math.floor(latencies.length * 0.95), latencies.length - 1)] || 0;
 
-  // Record to ai_logs for trend tracking
+  // Record to ai_logs for trend tracking. Cron context has no ctx.waitUntil,
+  // so we await the INSERT directly via the returned promise. doInsertAiLog
+  // swallows errors internally — the surrounding catch was previously needed
+  // because recordAiCall returned a raw promise; the new shape is { id, promise }
+  // and the promise resolves to null on failure rather than rejecting.
   await recordAiCall(env, {
     tenant_id: tenantId,
     conversation_id: 'synthetic-uptime',
@@ -71,7 +75,7 @@ export async function runSyntheticUptime(env, ctx) {
     error_message: allOk ? null : results.filter((r) => !r.ok).map((r) => r.err || 'no_match').join(';'),
     prompt_id: null,
     retrieval_trace: JSON.stringify({ synthetic: true, results }),
-  }).catch(() => {});
+  }).promise;
 
   console.log(`[synthetic-uptime] ${passed}/${total} probes ok, p95=${p95}ms`);
 

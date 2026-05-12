@@ -2,6 +2,7 @@
 
 import { ok, err, parseJson } from '../json.mjs';
 import { resolveTenantId } from '../tenant-scope.mjs';
+import { uuid } from '../id.mjs';
 
 const MAX_LIMIT = 200;
 
@@ -105,18 +106,44 @@ export async function aiStats(request, env, corsHeaders) {
   }, corsHeaders);
 }
 
-// Internal helper — called from ai-chat-adapter + shadow.mjs.
-// Returns the inserted row id (or null on failure). Callers who need the id
-// — e.g. shadow mode, which links shadow_of → primary — await the return.
-export async function recordAiCall(env, entry) {
+// Internal helper — called from ai-chat-adapter, messages-native, shadow,
+// synthetic-uptime. As of migration 027, ai_logs.id is a TEXT UUID generated
+// client-side so callers know the id without waiting for the INSERT round
+// trip. This lets us push the INSERT off the request critical path via
+// ctx.waitUntil while shadow mode keeps linking shadow_of → primary
+// synchronously (no DB await).
+//
+// Signature:
+//   recordAiCall(env, entry, ctx?)
+//     - Generates a UUID upfront (unless entry.id is supplied for testing).
+//     - Returns synchronously: { id, promise }
+//         id: the UUID assigned to this log row (always present)
+//         promise: resolves to id on successful INSERT, null on failure
+//     - If `ctx` is passed and exposes waitUntil, the INSERT is scheduled via
+//       ctx.waitUntil so the caller can return its response without awaiting.
+//
+// Callers who need the id immediately (shadow_of linkage, future feedback URL)
+// read `result.id`. Callers who want to await completion (synthetic-uptime
+// cron) read `result.promise`. The vast majority just fire and forget.
+export function recordAiCall(env, entry, ctx) {
+  const id = entry.id || uuid();
+  const promise = doInsertAiLog(env, id, entry);
+  if (ctx && typeof ctx.waitUntil === 'function') {
+    ctx.waitUntil(promise);
+  }
+  return { id, promise };
+}
+
+async function doInsertAiLog(env, id, entry) {
   try {
-    const r = await env.DB.prepare(
+    await env.DB.prepare(
       `INSERT INTO ai_logs
-        (tenant_id, conversation_id, message_id, provider, model, system_prompt, input, output,
+        (id, tenant_id, conversation_id, message_id, provider, model, system_prompt, input, output,
          tokens_in, tokens_out, latency_ms, status, error_message, prompt_id,
          retrieval_trace, escalation_reason, is_shadow, shadow_of)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
+      id,
       entry.tenant_id || 'tenant_default',
       entry.conversation_id || null,
       entry.message_id || null,
@@ -136,7 +163,7 @@ export async function recordAiCall(env, entry) {
       entry.is_shadow ? 1 : 0,
       entry.shadow_of ?? null,
     ).run();
-    return r?.meta?.last_row_id ?? null;
+    return id;
   } catch (e) {
     console.warn('[ai-logs] record failed:', e.message);
     return null;
