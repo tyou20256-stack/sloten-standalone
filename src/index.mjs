@@ -1,5 +1,24 @@
 // Sloten Standalone — Phase 1 Worker entry point.
 // Self-contained chat backend (no Chatwoot).
+//
+// Routing model (2026-05-13 refactor):
+//   - Special routes (health probes, static assets, WebSocket upgrades, and
+//     the widget routes that need contact-token-plus-conversation-ownership
+//     checks) stay inline near the top of fetch() — their logic is too coupled
+//     to env bindings or per-request closures to fit a declarative table.
+//   - All standard CRUD endpoints live in the ROUTES table at the bottom of
+//     this file. Each entry declares its method(s), path pattern, handler,
+//     auth mode, and (rarely) extra arguments. dispatchRoute walks the table
+//     in order and short-circuits on the first match.
+//
+// Adding a new endpoint:
+//   1. Find the section in ROUTES that matches the resource ("Bonus codes",
+//      "AI logs", etc.) and add the entry there.
+//   2. If the handler needs more than (request, env, corsHeaders, ...params),
+//      add `extras: [...]` — the dispatcher splices them in before ctx.
+//   3. If the route needs custom verification beyond requireStaff /
+//      requireAdminRole, keep it inline rather than forcing the table to
+//      learn another auth mode.
 
 import { buildCorsHeaders, handleCorsPreflight, isAllowedOrigin } from './cors-helper.mjs';
 import { checkRateLimit, rateLimitResponse } from './rate-limiter.mjs';
@@ -124,8 +143,6 @@ function requireStaff(handler) {
     return err('Unauthorized', 401, corsHeaders);
   };
 }
-// `requireAdmin` is deliberately removed — all routes now use either
-// requireStaff (any authenticated staff) or requireAdminRole (admin only).
 
 // Admin-role-only: Bearer (super-admin) OR cookie staff with role='admin'.
 function requireAdminRole(handler) {
@@ -147,6 +164,45 @@ function requireAdminRole(handler) {
   };
 }
 
+// Route dispatcher: walks ROUTES in order, returns the handler's Response on
+// first match or null if nothing matched (caller falls through to 404).
+//
+// Pattern types:
+//   - string: exact path match
+//   - RegExp: capture groups become trailing handler args, in order.
+//
+// Per-entry options:
+//   intParams: indices of params to parseInt(_, 10) before passing.
+//   extras: extra args spliced in between params and ctx (e.g. `{}` opts).
+//   auth: 'public' | 'staff' | 'admin'
+async function dispatchRoute(routes, request, env, corsHeaders, ctx) {
+  const url = new URL(request.url);
+  const path = url.pathname;
+  const method = request.method.toUpperCase();
+  for (const r of routes) {
+    const methods = Array.isArray(r.m) ? r.m : [r.m];
+    if (!methods.includes(method)) continue;
+    let params;
+    if (typeof r.p === 'string') {
+      if (path !== r.p) continue;
+      params = [];
+    } else {
+      const m = path.match(r.p);
+      if (!m) continue;
+      params = m.slice(1);
+      if (r.intParams) {
+        params = params.map((v, i) => (r.intParams.includes(i) ? parseInt(v, 10) : v));
+      }
+    }
+    let handler = r.h;
+    if (r.auth === 'admin') handler = requireAdminRole(handler);
+    else if (r.auth === 'staff') handler = requireStaff(handler);
+    const extras = r.extras || [];
+    return handler(request, env, corsHeaders, ...params, ...extras, ctx);
+  }
+  return null;
+}
+
 export default {
   async scheduled(event, env, ctx) {
     return handleScheduled(event, env, ctx);
@@ -160,14 +216,8 @@ export default {
     if (method === 'OPTIONS') return handleCorsPreflight(request, env);
 
     try {
-      // --- Public ---
+      // ── Public probes + static assets + redirects ────────────────────
       // Build / version info — useful for debug, ops dashboards, and rollback.
-      // Fields:
-      //   - worker_version: CF-injected hash of the deployed bundle (when available)
-      //   - environment: var from wrangler.*.toml
-      //   - api_provider: gemini|anthropic
-      //   - has_anthropic_fallback: true when ANTHROPIC_API_KEY is set
-      //   - cron_features: list of scheduled jobs that are wired up
       if (path === '/version' && method === 'GET') {
         return ok({
           worker_version: env.CF_VERSION_METADATA?.id || null,
@@ -185,8 +235,7 @@ export default {
           timestamp: new Date().toISOString(),
         }, corsHeaders);
       }
-      // Per-binding deep health (operational deep-dive endpoints).
-      // Each returns 200 only when that binding is fully functional.
+      // Per-binding deep health probes.
       if (path === '/health/db' && method === 'GET') {
         try {
           const r = await env.DB.prepare('SELECT COUNT(*) AS n FROM messages WHERE created_at > datetime(\'now\', \'-1 hour\')').first();
@@ -223,7 +272,6 @@ export default {
       if (path === '/health/vectorize' && method === 'GET') {
         if (!env.VECTORIZE) return new Response('{"status":"missing","binding":"VECTORIZE"}', { status: 503, headers: corsHeaders });
         try {
-          // Vectorize doesn't have a cheap probe — describe is closest
           const r = await env.VECTORIZE.describe?.();
           return ok({ status: 'ok', binding: 'VECTORIZE', dimensions: r?.config?.dimensions ?? null }, corsHeaders);
         } catch (e) {
@@ -246,9 +294,7 @@ export default {
         }
       }
       if (path === '/health' && method === 'GET') {
-        // Deep health: verify DB is reachable + check critical env presence.
-        // Critical secrets: missing → degraded so dashboard alerts fire.
-        // Optional secrets (Telegram, Anthropic): missing → reported but ok.
+        // Deep health: verify DB reachable + critical env presence.
         const CRITICAL_SECRETS = ['GEMINI_API_KEY'];
         const CRITICAL_SIGNING_KEYS = ['SESSION_SIGNING_KEY', 'STAFF_SESSION_SIGNING_KEY'];
         const OPTIONAL = ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID', 'ANTHROPIC_API_KEY',
@@ -256,7 +302,6 @@ export default {
                           'EC_DEPOSIT_BOT_WEBHOOK_URL', 'BONUS_CODE_WEBHOOK_URL',
                           'CONTACT_TOKEN_SIGNING_KEY', 'RAG_CACHE_SIGNING_KEY'];
         const missingCritical = CRITICAL_SECRETS.filter((k) => !env[k]);
-        // For signing keys, treat ANY of them being present as ok (dual-verify pattern).
         const hasAnySigningKey = CRITICAL_SIGNING_KEYS.some((k) => env[k]);
         if (!hasAnySigningKey) missingCritical.push('SIGNING_KEY (any of: ' + CRITICAL_SIGNING_KEYS.join('|') + ')');
         const missingOptional = OPTIONAL.filter((k) => !env[k]);
@@ -272,7 +317,7 @@ export default {
             env: {
               critical_missing: missingCritical,
               optional_missing: missingOptional,
-              critical_count: CRITICAL_SECRETS.length + 1, // +1 for signing key requirement
+              critical_count: CRITICAL_SECRETS.length + 1,
               optional_count: OPTIONAL.length,
             },
             timestamp: new Date().toISOString(),
@@ -292,24 +337,16 @@ export default {
       }
 
       // /widget alias → /widget/index.html (convenience).
-      if (path === '/widget' && method === 'GET') {
-        return Response.redirect(new URL('/widget/', request.url).toString(), 302);
-      }
-      if (path === '/operator' && method === 'GET') {
-        return Response.redirect(new URL('/operator/', request.url).toString(), 302);
-      }
-      if (path === '/admin' && method === 'GET') {
-        return Response.redirect(new URL('/admin/', request.url).toString(), 302);
-      }
+      if (path === '/widget' && method === 'GET') return Response.redirect(new URL('/widget/', request.url).toString(), 302);
+      if (path === '/operator' && method === 'GET') return Response.redirect(new URL('/operator/', request.url).toString(), 302);
+      if (path === '/admin' && method === 'GET') return Response.redirect(new URL('/admin/', request.url).toString(), 302);
+
       // Static assets — serve from ASSETS binding.
       if (env.ASSETS && (path.startsWith('/widget/') || path.startsWith('/operator/') || path.startsWith('/admin/') || path.startsWith('/shared/')) && method === 'GET') {
         const assetRes = await env.ASSETS.fetch(request);
         // Force browsers + CF edges to always revalidate widget/operator/admin
-        // JS+CSS so bug fixes propagate within seconds, not hours. HTML is
-        // already cache-busting via script src anyway; the extra revalidate
-        // cost is trivial (304s from CF).
+        // JS+CSS so bug fixes propagate within seconds, not hours.
         if (assetRes.ok && /\.(m?js|css|html)$/.test(path)) {
-          // Cache-control override (security headers come from public/_headers).
           const headers = new Headers(assetRes.headers);
           headers.set('Cache-Control', 'no-cache, no-store, must-revalidate');
           headers.set('Pragma', 'no-cache');
@@ -319,7 +356,7 @@ export default {
         return assetRes;
       }
 
-      // --- Staff auth (cookie-based) ---
+      // ── Staff auth (cookie-based) ────────────────────────────────────
       if (path === '/api/staff/login' && method === 'POST') {
         // IP-level rate limit to stop credential-stuffing across many accounts.
         // critical:true → KV write fail-closed so an attacker can't bypass
@@ -336,7 +373,7 @@ export default {
       }
       if (path === '/api/staff/me' && method === 'GET') return meHandler(request, env, corsHeaders);
 
-      // --- Attachments ---
+      // ── Attachments (token-gated for widget, staff-gated for admin) ──
       // Widget customer upload: token-gated, own conversation only.
       {
         const m = path.match(/^\/api\/widget\/conversations\/([^/]+)\/attachments$/);
@@ -350,7 +387,7 @@ export default {
           return uploadAttachment(request, env, corsHeaders, m[1], 'customer');
         }
       }
-      // Widget customer download: token-gated
+      // Widget customer download: token-gated.
       {
         const m = path.match(/^\/api\/widget\/attachments\/([^/]+)$/);
         if (m && method === 'GET') {
@@ -364,15 +401,15 @@ export default {
           return downloadAttachment(request, env, corsHeaders, m[1]);
         }
       }
-      // Staff upload + download (admin console)
+      // Staff upload (admin console).
       {
         const m = path.match(/^\/api\/conversations\/([^/]+)\/attachments$/);
         if (m && method === 'POST') return requireStaff(uploadAttachment)(request, env, corsHeaders, m[1], 'staff');
       }
+      // Staff download (signed-URL bypass for GAS / webhook callers).
       {
         const m = path.match(/^\/api\/attachments\/([^/]+)$/);
         if (m && method === 'GET') {
-          // Signed URL (GAS/webhook caller) takes precedence over staff cookie.
           const u = new URL(request.url);
           if (u.searchParams.has('sig') && u.searchParams.has('exp')) {
             return downloadAttachmentSigned(request, env, corsHeaders, m[1]);
@@ -381,7 +418,7 @@ export default {
         }
       }
 
-      // --- WebSocket upgrade to ConversationRoom Durable Object ---
+      // ── WebSocket upgrades → ConversationRoom Durable Object ─────────
       {
         const upgrade = request.headers.get('Upgrade');
         let m;
@@ -403,7 +440,7 @@ export default {
         }
       }
 
-      // --- Widget-facing (public: contact create, conversation create, message send) ---
+      // ── Widget-facing public/token routes ────────────────────────────
       // Rate-limited: 120 requests per minute per IP. Normal menu navigation
       // should never hit this; burst abuse still gets throttled quickly.
       if (method !== 'GET' && method !== 'OPTIONS' && path.startsWith('/api/widget/')) {
@@ -412,13 +449,12 @@ export default {
         if (!check.allowed) return rateLimitResponse(check, corsHeaders);
       }
 
-      // POST /api/widget/contacts is the only widget endpoint that doesn't
-      // require a contact_token (because the caller doesn't have one yet).
+      // Public contact creation — the one widget endpoint that doesn't require
+      // a contact_token (because the caller doesn't have one yet).
       if (path === '/api/widget/contacts' && method === 'POST') return createContact(request, env, corsHeaders);
 
-      // POST /api/widget/contacts/logout — explicit token revocation. The
-      // widget should call this when the user clicks "ログアウト" / closes a
-      // shared-device session. Server-side equivalent of localStorage clear.
+      // Explicit token revocation — widget calls this on "ログアウト" / shared
+      // device cleanup. Server-side equivalent of localStorage clear.
       if (path === '/api/widget/contacts/logout' && method === 'POST') {
         const token = extractContactToken(request);
         const payload = await verifyContactToken(env, token);
@@ -430,13 +466,13 @@ export default {
       }
 
       // PATCH /api/widget/contacts/:id — runtime profile update (Chatwoot
-      // `$chatwoot.setUser()` equivalent). Requires contact_token ownership.
+      // `$chatwoot.setUser()` equivalent). Verifies contact_token ownership.
       {
         const m = path.match(/^\/api\/widget\/contacts\/([^/]+)$/);
         if (m && method === 'PATCH') return updateContact(request, env, corsHeaders, m[1]);
       }
 
-      // Helper: verify contact_token matches the conversation's contact_id.
+      // Helper closure: verify contact_token matches the conversation's contact_id.
       async function verifyWidgetOwnership(conversationId) {
         const token = extractContactToken(request);
         const payload = await verifyContactToken(env, token);
@@ -458,7 +494,6 @@ export default {
         }
         return createConversation(request, env, corsHeaders);
       }
-
       {
         const m = path.match(/^\/api\/widget\/conversations\/([^/]+)\/messages$/);
         if (m) {
@@ -477,241 +512,17 @@ export default {
         }
       }
 
-      // --- Admin (Bearer auth) ---
-      // Contacts
-      if (path === '/api/contacts' && method === 'GET') return requireStaff(listContacts)(request, env, corsHeaders);
-      {
-        const m = path.match(/^\/api\/contacts\/([^/]+)\/conversations$/);
-        if (m && method === 'GET') return requireStaff(listContactConversations)(request, env, corsHeaders, m[1]);
-      }
-      {
-        const m = path.match(/^\/api\/contacts\/([^/]+)$/);
-        if (m && method === 'GET') return requireStaff(getContact)(request, env, corsHeaders, m[1]);
-      }
-
-      // Conversations (staff view)
-      if (path === '/api/conversations' && method === 'GET') return requireStaff(listConversations)(request, env, corsHeaders);
-      {
-        const m = path.match(/^\/api\/conversations\/([^/]+)$/);
-        if (m && method === 'GET') return requireStaff(getConversation)(request, env, corsHeaders, m[1]);
-        if (m && method === 'PATCH') return requireStaff(updateConversation)(request, env, corsHeaders, m[1]);
-      }
-      {
-        const m = path.match(/^\/api\/conversations\/([^/]+)\/messages$/);
-        if (m && method === 'GET') return requireStaff(listMessages)(request, env, corsHeaders, m[1]);
-        if (m && method === 'POST') return requireStaff(sendMessage)(request, env, corsHeaders, m[1], {}, ctx);
-      }
-      {
-        const m = path.match(/^\/api\/conversations\/([^/]+)\/mark_read$/);
-        if (m && method === 'POST') return requireStaff(markRead)(request, env, corsHeaders, m[1]);
-      }
-
-      // Search (staff)
-      if (path === '/api/search' && method === 'GET') return requireStaff(searchHandler)(request, env, corsHeaders);
-
-      // Dashboard (staff)
-      if (path === '/api/dashboard/stats' && method === 'GET') return requireStaff(dashboardStats)(request, env, corsHeaders);
-
-      // Staff admin (admin role only, except self via /api/staff/me above)
-      if (path === '/api/staff' && method === 'GET') return requireAdminRole(listStaff)(request, env, corsHeaders);
-      // Directory lookup for any authenticated staff (id/name/role only, no secrets).
-      if (path === '/api/staff/lookup' && method === 'GET') return requireStaff(listStaffLookup)(request, env, corsHeaders);
-      if (path === '/api/staff' && method === 'POST') return requireAdminRole(createStaff)(request, env, corsHeaders);
-      if (path === '/api/staff/import_from_chatwoot' && method === 'POST') return requireAdminRole(importStaffFromChatwoot)(request, env, corsHeaders);
-      {
-        const m = path.match(/^\/api\/staff\/(\d+)$/);
-        if (m && method === 'PATCH') return requireAdminRole(updateStaff)(request, env, corsHeaders, parseInt(m[1], 10));
-        if (m && method === 'DELETE') return requireAdminRole(deleteStaff)(request, env, corsHeaders, parseInt(m[1], 10));
-      }
-      {
-        const m = path.match(/^\/api\/staff\/(\d+)\/reset_password$/);
-        if (m && method === 'POST') return requireAdminRole(resetStaffPassword)(request, env, corsHeaders, parseInt(m[1], 10));
-      }
-
-      // Export CSV (admin only)
-      {
-        const m = path.match(/^\/api\/export\/([a-z_]+)\.csv$/);
-        if (m && method === 'GET') return requireAdminRole(exportCsv)(request, env, corsHeaders, m[1]);
-      }
-
-      // Teams — reads = any staff, writes = admin
-      if (path === '/api/teams' && method === 'GET') return requireStaff(listTeams)(request, env, corsHeaders);
-      if (path === '/api/teams' && method === 'POST') return requireAdminRole(createTeam)(request, env, corsHeaders);
-      {
-        const m = path.match(/^\/api\/teams\/(\d+)$/);
-        if (m && method === 'PATCH')  return requireAdminRole(updateTeam)(request, env, corsHeaders, parseInt(m[1], 10));
-        if (m && method === 'DELETE') return requireAdminRole(deleteTeam)(request, env, corsHeaders, parseInt(m[1], 10));
-      }
-      {
-        const m = path.match(/^\/api\/teams\/(\d+)\/members$/);
-        if (m && method === 'POST') return requireAdminRole(addTeamMember)(request, env, corsHeaders, parseInt(m[1], 10));
-      }
-      {
-        const m = path.match(/^\/api\/teams\/(\d+)\/members\/(\d+)$/);
-        if (m && method === 'DELETE') return requireAdminRole(removeTeamMember)(request, env, corsHeaders, parseInt(m[1], 10), parseInt(m[2], 10));
-      }
-
-      // FAQ candidates (weekly extraction review) — staff can read, admin acts
-      if (path === '/api/faq-candidates' && method === 'GET') return requireStaff(listCandidates)(request, env, corsHeaders);
-      if (path === '/api/faq-candidates/run' && method === 'POST') return requireAdminRole(runExtractionNow)(request, env, corsHeaders);
-      if (path === '/api/faq-candidates/bulk' && method === 'POST') return requireAdminRole(bulkAction)(request, env, corsHeaders);
-      {
-        const m = path.match(/^\/api\/faq-candidates\/(\d+)$/);
-        if (m && method === 'PATCH') return requireAdminRole(updateCandidate)(request, env, corsHeaders, parseInt(m[1], 10));
-      }
-      {
-        const m = path.match(/^\/api\/faq-candidates\/(\d+)\/approve$/);
-        if (m && method === 'POST') return requireAdminRole(approveCandidate)(request, env, corsHeaders, parseInt(m[1], 10));
-      }
-      {
-        const m = path.match(/^\/api\/faq-candidates\/(\d+)\/reject$/);
-        if (m && method === 'POST') return requireAdminRole(rejectCandidate)(request, env, corsHeaders, parseInt(m[1], 10));
-      }
-
-      // Bot flows (multi-step workflows; admin-role writes)
-      if (path === '/api/bot-flows' && method === 'GET') return requireStaff(listBotFlows)(request, env, corsHeaders);
-      if (path === '/api/bot-flows' && method === 'POST') return requireAdminRole(createBotFlow)(request, env, corsHeaders);
-      {
-        const m = path.match(/^\/api\/bot-flows\/(\d+)$/);
-        if (m && method === 'PATCH')  return requireAdminRole(updateBotFlow)(request, env, corsHeaders, parseInt(m[1], 10));
-        if (m && method === 'DELETE') return requireAdminRole(deleteBotFlow)(request, env, corsHeaders, parseInt(m[1], 10));
-      }
-
-      // Bonus codes (admin-role writes; reads open to staff)
-      if (path === '/api/bonus-codes' && method === 'GET') return requireStaff(listBonusCodes)(request, env, corsHeaders);
-      if (path === '/api/bonus-codes' && method === 'POST') return requireAdminRole(createBonusCode)(request, env, corsHeaders);
-      {
-        const m = path.match(/^\/api\/bonus-codes\/(\d+)$/);
-        if (m && method === 'PATCH')  return requireAdminRole(updateBonusCode)(request, env, corsHeaders, parseInt(m[1], 10));
-        if (m && method === 'DELETE') return requireAdminRole(deleteBonusCode)(request, env, corsHeaders, parseInt(m[1], 10));
-      }
-      if (path === '/api/bonus-code-submissions' && method === 'GET') return requireStaff(listBonusSubmissions)(request, env, corsHeaders);
-
-      // Admin operations (admin-role): test webhook, GAS URL editor, ping,
-      // audit/error logs, backup/restore. Mirrors production chatwoot-bot
-      // admin "運用・監視" tab.
-      if (path === '/api/admin/test-bot' && method === 'POST') return requireAdminRole((req, e, h) => adminTestBot(req, e, h, ctx))(request, env, corsHeaders);
-      if (path === '/api/admin/gas-urls' && method === 'GET')  return requireAdminRole(listGasUrls)(request, env, corsHeaders);
-      if (path === '/api/admin/gas-urls' && method === 'POST') return requireAdminRole(setGasUrl)(request, env, corsHeaders);
-      if (path === '/api/admin/gas-ping' && method === 'POST') return requireAdminRole(pingGasUrl)(request, env, corsHeaders);
-      if (path === '/api/admin/audit-log' && method === 'GET') return requireAdminRole(listAuditLog)(request, env, corsHeaders);
-      if (path === '/api/admin/error-log' && method === 'GET') return requireAdminRole(listErrorLog)(request, env, corsHeaders);
-      if (path === '/api/admin/backup' && method === 'GET')    return requireAdminRole(adminBackup)(request, env, corsHeaders);
-      if (path === '/api/admin/restore' && method === 'POST')  return requireAdminRole(adminRestore)(request, env, corsHeaders);
-      if (path === '/api/admin/menu-tree' && method === 'GET')  return requireStaff(adminMenuTree)(request, env, corsHeaders);
-      if (path === '/api/admin/cache/flush'      && method === 'POST') return requireAdminRole(flushGenaiCache)(request, env, corsHeaders);
-      if (path === '/api/admin/cache/flush-faq'  && method === 'POST') return requireAdminRole(flushFaqCache)(request, env, corsHeaders);
-      if (path === '/api/admin/cache/stats'      && method === 'GET')  return requireAdminRole(cacheStats)(request, env, corsHeaders);
-      // GDPR: data subject access request endpoints (admin-only)
-      {
-        const m = path.match(/^\/api\/admin\/gdpr\/contact\/([^\/]+)$/);
-        if (m && method === 'GET') return requireAdminRole((req, e, h) => exportContactData(req, e, h, m[1]))(request, env, corsHeaders);
-        const me = path.match(/^\/api\/admin\/gdpr\/contact\/([^\/]+)\/erase$/);
-        if (me && method === 'POST') return requireAdminRole((req, e, h) => eraseContactData(req, e, h, me[1]))(request, env, corsHeaders);
-      }
-
-      // Bot menus (admin-role)
-      if (path === '/api/bot-menus' && method === 'GET') return requireStaff(listBotMenus)(request, env, corsHeaders);
-      if (path === '/api/bot-menus' && method === 'POST') return requireAdminRole(createBotMenu)(request, env, corsHeaders);
-      {
-        const m = path.match(/^\/api\/bot-menus\/(\d+)$/);
-        if (m && method === 'PATCH')  return requireAdminRole(updateBotMenu)(request, env, corsHeaders, parseInt(m[1], 10));
-        if (m && method === 'DELETE') return requireAdminRole(deleteBotMenu)(request, env, corsHeaders, parseInt(m[1], 10));
-      }
-
-      // AI prompts (admin-role)
-      if (path === '/api/ai-prompts' && method === 'GET') return requireAdminRole(listPrompts)(request, env, corsHeaders);
-      if (path === '/api/ai-prompts' && method === 'POST') return requireAdminRole(createPrompt)(request, env, corsHeaders);
-      {
-        const m = path.match(/^\/api\/ai-prompts\/(\d+)$/);
-        if (m && method === 'PATCH')  return requireAdminRole(updatePrompt)(request, env, corsHeaders, parseInt(m[1], 10));
-        if (m && method === 'DELETE') return requireAdminRole(deletePrompt)(request, env, corsHeaders, parseInt(m[1], 10));
-      }
-
-      // AI logs + feedback (admin only)
-      if (path === '/api/ai-logs' && method === 'GET') return requireAdminRole(listAiLogs)(request, env, corsHeaders);
-      if (path === '/api/ai-logs/stats' && method === 'GET') return requireAdminRole(aiStats)(request, env, corsHeaders);
-      if (path === '/api/ai-logs/silent-failures' && method === 'GET') return requireAdminRole(listSilentFailures)(request, env, corsHeaders);
-
-      // Phase 2: Golden Set CRUD + eval results + shadow mode settings
-      if (path === '/api/golden-set' && method === 'GET')  return requireAdminRole(listGoldenSet)(request, env, corsHeaders);
-      if (path === '/api/golden-set' && method === 'POST') return requireAdminRole(createGoldenRow)(request, env, corsHeaders);
-      {
-        const m = path.match(/^\/api\/golden-set\/(\d+)$/);
-        if (m && method === 'PATCH')  return requireAdminRole(updateGoldenRow)(request, env, corsHeaders, parseInt(m[1], 10));
-        if (m && method === 'DELETE') return requireAdminRole(deleteGoldenRow)(request, env, corsHeaders, parseInt(m[1], 10));
-      }
-      if (path === '/api/golden-eval' && method === 'GET') return requireAdminRole(evalResults)(request, env, corsHeaders);
-      if (path === '/api/admin/shadow-config' && method === 'GET')  return requireAdminRole(getShadowConfig)(request, env, corsHeaders);
-      if (path === '/api/admin/shadow-config' && method === 'POST') return requireAdminRole(setShadowConfig)(request, env, corsHeaders);
-
-      // Phase 2b: Vectorize reindex + query + state
-      if (path === '/api/admin/vectorize/reindex' && method === 'POST') return requireAdminRole(vectorizeReindex)(request, env, corsHeaders);
-      if (path === '/api/admin/vectorize/query'   && method === 'POST') return requireAdminRole(vectorizeQuery)(request, env, corsHeaders);
-      if (path === '/api/admin/vectorize/state'   && method === 'GET')  return requireAdminRole(vectorizeState)(request, env, corsHeaders);
-      if (path === '/api/admin/vectorize/flags'   && method === 'POST') return requireAdminRole(setVectorizeFlags)(request, env, corsHeaders);
-
-      // Phase 2b: FAQ candidates Silver (clustering)
-      if (path === '/api/admin/faq-candidates/cluster'  && method === 'POST') return requireAdminRole(clusterFaqCandidates)(request, env, corsHeaders);
-      if (path === '/api/admin/faq-candidates/clusters' && method === 'GET')  return requireAdminRole(listClusters)(request, env, corsHeaders);
-      {
-        const m = path.match(/^\/api\/admin\/faq-candidates\/clusters\/(\d+)\/members$/);
-        if (m && method === 'GET') return requireAdminRole(clusterMembers)(request, env, corsHeaders, parseInt(m[1], 10));
-      }
-      {
-        const m = path.match(/^\/api\/ai-logs\/(\d+)$/);
-        if (m && method === 'GET') return requireAdminRole(getAiLog)(request, env, corsHeaders, parseInt(m[1], 10));
-        if (m && method === 'DELETE') return requireAdminRole(deleteAiLog)(request, env, corsHeaders, parseInt(m[1], 10));
-      }
-      {
-        const m = path.match(/^\/api\/ai-logs\/(\d+)\/feedback$/);
-        if (m && method === 'POST') return requireAdminRole(submitFeedback)(request, env, corsHeaders, parseInt(m[1], 10));
-      }
-
-      // Labels — reads = any staff, writes = admin
-      if (path === '/api/labels' && method === 'GET') return requireStaff(listLabels)(request, env, corsHeaders);
-      if (path === '/api/labels' && method === 'POST') return requireAdminRole(createLabel)(request, env, corsHeaders);
-      {
-        const m = path.match(/^\/api\/labels\/(\d+)$/);
-        if (m && method === 'PUT')    return requireAdminRole(updateLabel)(request, env, corsHeaders, parseInt(m[1], 10));
-        if (m && method === 'DELETE') return requireAdminRole(deleteLabel)(request, env, corsHeaders, parseInt(m[1], 10));
-      }
-
-      // FAQ — staff reads, admin writes. FAQ search stays public for widget.
-      if (path === '/api/faq' && method === 'GET') return requireStaff(handleFaqGet)(request, env, corsHeaders);
+      // ── Public FAQ search (rate-limited) ─────────────────────────────
       if (path === '/api/faq/search' && method === 'GET') {
-        // Public but rate-limited.
         const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
         const check = await checkRateLimit(env, `faqsearch:${ip}`, 60, 60, ctx);
         if (!check.allowed) return rateLimitResponse(check, corsHeaders);
         return handleFaqSearch(request, env, corsHeaders);
       }
-      if (path === '/api/faq' && method === 'POST') return requireAdminRole(handleFaqPost)(request, env, corsHeaders);
-      {
-        const m = path.match(/^\/api\/faq\/(\d+)$/);
-        if (m && method === 'GET') return requireStaff(handleFaqGetOne)(request, env, corsHeaders, parseInt(m[1], 10));
-        if (m && method === 'PUT') return requireAdminRole(handleFaqPut)(request, env, corsHeaders, parseInt(m[1], 10));
-        if (m && method === 'DELETE') return requireAdminRole(handleFaqDelete)(request, env, corsHeaders, parseInt(m[1], 10));
-      }
 
-      // Templates — staff reads, admin writes
-      if (path === '/api/templates' && method === 'GET') return requireStaff(handleTemplatesGet)(request, env, corsHeaders);
-      if (path === '/api/templates' && method === 'POST') return requireAdminRole(handleTemplatesPost)(request, env, corsHeaders);
-      {
-        const m = path.match(/^\/api\/templates\/(\d+)$/);
-        if (m && method === 'PUT') return requireAdminRole(handleTemplatesPut)(request, env, corsHeaders, parseInt(m[1], 10));
-        if (m && method === 'DELETE') return requireAdminRole(handleTemplatesDelete)(request, env, corsHeaders, parseInt(m[1], 10));
-      }
-
-      // Knowledge sources — staff reads (including :id), admin writes
-      if (path === '/api/knowledge-sources' && method === 'GET') return requireStaff(handleKnowledgeSourcesGet)(request, env, corsHeaders);
-      if (path === '/api/knowledge-sources' && method === 'POST') return requireAdminRole(handleKnowledgeSourcesPost)(request, env, corsHeaders);
-      {
-        const m = path.match(/^\/api\/knowledge-sources\/(\d+)$/);
-        if (m && method === 'GET') return requireStaff(handleKnowledgeSourcesGetOne)(request, env, corsHeaders, parseInt(m[1], 10));
-        if (m && method === 'PUT') return requireAdminRole(handleKnowledgeSourcesPut)(request, env, corsHeaders, parseInt(m[1], 10));
-        if (m && method === 'DELETE') return requireAdminRole(handleKnowledgeSourcesDelete)(request, env, corsHeaders, parseInt(m[1], 10));
-      }
+      // ── Standard CRUD routes via dispatch table ──────────────────────
+      const tableResp = await dispatchRoute(ROUTES, request, env, corsHeaders, ctx);
+      if (tableResp) return tableResp;
 
       return err('Not Found', 404, corsHeaders);
     } catch (e) {
@@ -720,3 +531,156 @@ export default {
     }
   },
 };
+
+// ─── Standard CRUD route table ──────────────────────────────────────
+// Order doesn't matter for non-overlapping patterns; for overlapping ones,
+// place the more specific entry first.
+//
+// Conventions:
+//   m: HTTP method (or array)
+//   p: path pattern (string for exact match, RegExp with capture groups)
+//   h: handler function
+//   auth: 'admin' | 'staff' | 'public'
+//   intParams: indices of capture groups to parseInt before passing
+//   extras: extra args spliced in after route params, before ctx
+const ROUTES = [
+  // ── Contacts (staff) ──
+  { m: 'GET', p: '/api/contacts', h: listContacts, auth: 'staff' },
+  { m: 'GET', p: /^\/api\/contacts\/([^/]+)\/conversations$/, h: listContactConversations, auth: 'staff' },
+  { m: 'GET', p: /^\/api\/contacts\/([^/]+)$/, h: getContact, auth: 'staff' },
+
+  // ── Conversations (staff view) ──
+  { m: 'GET',   p: '/api/conversations', h: listConversations, auth: 'staff' },
+  { m: 'GET',   p: /^\/api\/conversations\/([^/]+)$/, h: getConversation, auth: 'staff' },
+  { m: 'PATCH', p: /^\/api\/conversations\/([^/]+)$/, h: updateConversation, auth: 'staff' },
+  { m: 'GET',   p: /^\/api\/conversations\/([^/]+)\/messages$/, h: listMessages, auth: 'staff' },
+  { m: 'POST',  p: /^\/api\/conversations\/([^/]+)\/messages$/, h: sendMessage, auth: 'staff', extras: [{}] },
+  { m: 'POST',  p: /^\/api\/conversations\/([^/]+)\/mark_read$/, h: markRead, auth: 'staff' },
+
+  // ── Search + Dashboard ──
+  { m: 'GET', p: '/api/search', h: searchHandler, auth: 'staff' },
+  { m: 'GET', p: '/api/dashboard/stats', h: dashboardStats, auth: 'staff' },
+
+  // ── Staff admin ──
+  { m: 'GET',    p: '/api/staff', h: listStaff, auth: 'admin' },
+  { m: 'GET',    p: '/api/staff/lookup', h: listStaffLookup, auth: 'staff' },
+  { m: 'POST',   p: '/api/staff', h: createStaff, auth: 'admin' },
+  { m: 'POST',   p: '/api/staff/import_from_chatwoot', h: importStaffFromChatwoot, auth: 'admin' },
+  { m: 'PATCH',  p: /^\/api\/staff\/(\d+)$/, h: updateStaff, auth: 'admin', intParams: [0] },
+  { m: 'DELETE', p: /^\/api\/staff\/(\d+)$/, h: deleteStaff, auth: 'admin', intParams: [0] },
+  { m: 'POST',   p: /^\/api\/staff\/(\d+)\/reset_password$/, h: resetStaffPassword, auth: 'admin', intParams: [0] },
+
+  // ── Export CSV ──
+  { m: 'GET', p: /^\/api\/export\/([a-z_]+)\.csv$/, h: exportCsv, auth: 'admin' },
+
+  // ── Teams — reads = staff, writes = admin ──
+  { m: 'GET',    p: '/api/teams', h: listTeams, auth: 'staff' },
+  { m: 'POST',   p: '/api/teams', h: createTeam, auth: 'admin' },
+  { m: 'PATCH',  p: /^\/api\/teams\/(\d+)$/, h: updateTeam, auth: 'admin', intParams: [0] },
+  { m: 'DELETE', p: /^\/api\/teams\/(\d+)$/, h: deleteTeam, auth: 'admin', intParams: [0] },
+  { m: 'POST',   p: /^\/api\/teams\/(\d+)\/members$/, h: addTeamMember, auth: 'admin', intParams: [0] },
+  { m: 'DELETE', p: /^\/api\/teams\/(\d+)\/members\/(\d+)$/, h: removeTeamMember, auth: 'admin', intParams: [0, 1] },
+
+  // ── FAQ candidates (weekly extraction) — reads = staff, ops = admin ──
+  { m: 'GET',    p: '/api/faq-candidates', h: listCandidates, auth: 'staff' },
+  { m: 'POST',   p: '/api/faq-candidates/run', h: runExtractionNow, auth: 'admin' },
+  { m: 'POST',   p: '/api/faq-candidates/bulk', h: bulkAction, auth: 'admin' },
+  { m: 'PATCH',  p: /^\/api\/faq-candidates\/(\d+)$/, h: updateCandidate, auth: 'admin', intParams: [0] },
+  { m: 'POST',   p: /^\/api\/faq-candidates\/(\d+)\/approve$/, h: approveCandidate, auth: 'admin', intParams: [0] },
+  { m: 'POST',   p: /^\/api\/faq-candidates\/(\d+)\/reject$/, h: rejectCandidate, auth: 'admin', intParams: [0] },
+
+  // ── Bot flows (multi-step workflows) ──
+  { m: 'GET',    p: '/api/bot-flows', h: listBotFlows, auth: 'staff' },
+  { m: 'POST',   p: '/api/bot-flows', h: createBotFlow, auth: 'admin' },
+  { m: 'PATCH',  p: /^\/api\/bot-flows\/(\d+)$/, h: updateBotFlow, auth: 'admin', intParams: [0] },
+  { m: 'DELETE', p: /^\/api\/bot-flows\/(\d+)$/, h: deleteBotFlow, auth: 'admin', intParams: [0] },
+
+  // ── Bonus codes ──
+  { m: 'GET',    p: '/api/bonus-codes', h: listBonusCodes, auth: 'staff' },
+  { m: 'POST',   p: '/api/bonus-codes', h: createBonusCode, auth: 'admin' },
+  { m: 'PATCH',  p: /^\/api\/bonus-codes\/(\d+)$/, h: updateBonusCode, auth: 'admin', intParams: [0] },
+  { m: 'DELETE', p: /^\/api\/bonus-codes\/(\d+)$/, h: deleteBonusCode, auth: 'admin', intParams: [0] },
+  { m: 'GET',    p: '/api/bonus-code-submissions', h: listBonusSubmissions, auth: 'staff' },
+
+  // ── Admin operations (test-bot, GAS URLs, audit, backup, cache, GDPR) ──
+  { m: 'POST', p: '/api/admin/test-bot', h: adminTestBot, auth: 'admin' },
+  { m: 'GET',  p: '/api/admin/gas-urls', h: listGasUrls, auth: 'admin' },
+  { m: 'POST', p: '/api/admin/gas-urls', h: setGasUrl, auth: 'admin' },
+  { m: 'POST', p: '/api/admin/gas-ping', h: pingGasUrl, auth: 'admin' },
+  { m: 'GET',  p: '/api/admin/audit-log', h: listAuditLog, auth: 'admin' },
+  { m: 'GET',  p: '/api/admin/error-log', h: listErrorLog, auth: 'admin' },
+  { m: 'GET',  p: '/api/admin/backup', h: adminBackup, auth: 'admin' },
+  { m: 'POST', p: '/api/admin/restore', h: adminRestore, auth: 'admin' },
+  { m: 'GET',  p: '/api/admin/menu-tree', h: adminMenuTree, auth: 'staff' },
+  { m: 'POST', p: '/api/admin/cache/flush', h: flushGenaiCache, auth: 'admin' },
+  { m: 'POST', p: '/api/admin/cache/flush-faq', h: flushFaqCache, auth: 'admin' },
+  { m: 'GET',  p: '/api/admin/cache/stats', h: cacheStats, auth: 'admin' },
+  { m: 'GET',  p: /^\/api\/admin\/gdpr\/contact\/([^/]+)$/, h: exportContactData, auth: 'admin' },
+  { m: 'POST', p: /^\/api\/admin\/gdpr\/contact\/([^/]+)\/erase$/, h: eraseContactData, auth: 'admin' },
+
+  // ── Bot menus ──
+  { m: 'GET',    p: '/api/bot-menus', h: listBotMenus, auth: 'staff' },
+  { m: 'POST',   p: '/api/bot-menus', h: createBotMenu, auth: 'admin' },
+  { m: 'PATCH',  p: /^\/api\/bot-menus\/(\d+)$/, h: updateBotMenu, auth: 'admin', intParams: [0] },
+  { m: 'DELETE', p: /^\/api\/bot-menus\/(\d+)$/, h: deleteBotMenu, auth: 'admin', intParams: [0] },
+
+  // ── AI prompts ──
+  { m: 'GET',    p: '/api/ai-prompts', h: listPrompts, auth: 'admin' },
+  { m: 'POST',   p: '/api/ai-prompts', h: createPrompt, auth: 'admin' },
+  { m: 'PATCH',  p: /^\/api\/ai-prompts\/(\d+)$/, h: updatePrompt, auth: 'admin', intParams: [0] },
+  { m: 'DELETE', p: /^\/api\/ai-prompts\/(\d+)$/, h: deletePrompt, auth: 'admin', intParams: [0] },
+
+  // ── AI logs + feedback (TEXT UUID ids since migration 027) ──
+  { m: 'GET',    p: '/api/ai-logs', h: listAiLogs, auth: 'admin' },
+  { m: 'GET',    p: '/api/ai-logs/stats', h: aiStats, auth: 'admin' },
+  { m: 'GET',    p: '/api/ai-logs/silent-failures', h: listSilentFailures, auth: 'admin' },
+  { m: 'GET',    p: /^\/api\/ai-logs\/([^/]+)$/, h: getAiLog, auth: 'admin' },
+  { m: 'DELETE', p: /^\/api\/ai-logs\/([^/]+)$/, h: deleteAiLog, auth: 'admin' },
+  { m: 'POST',   p: /^\/api\/ai-logs\/([^/]+)\/feedback$/, h: submitFeedback, auth: 'admin' },
+
+  // ── Golden Set + shadow mode (Phase 2) ──
+  { m: 'GET',    p: '/api/golden-set', h: listGoldenSet, auth: 'admin' },
+  { m: 'POST',   p: '/api/golden-set', h: createGoldenRow, auth: 'admin' },
+  { m: 'PATCH',  p: /^\/api\/golden-set\/(\d+)$/, h: updateGoldenRow, auth: 'admin', intParams: [0] },
+  { m: 'DELETE', p: /^\/api\/golden-set\/(\d+)$/, h: deleteGoldenRow, auth: 'admin', intParams: [0] },
+  { m: 'GET',    p: '/api/golden-eval', h: evalResults, auth: 'admin' },
+  { m: 'GET',    p: '/api/admin/shadow-config', h: getShadowConfig, auth: 'admin' },
+  { m: 'POST',   p: '/api/admin/shadow-config', h: setShadowConfig, auth: 'admin' },
+
+  // ── Vectorize (Phase 2b) ──
+  { m: 'POST', p: '/api/admin/vectorize/reindex', h: vectorizeReindex, auth: 'admin' },
+  { m: 'POST', p: '/api/admin/vectorize/query',   h: vectorizeQuery,   auth: 'admin' },
+  { m: 'GET',  p: '/api/admin/vectorize/state',   h: vectorizeState,   auth: 'admin' },
+  { m: 'POST', p: '/api/admin/vectorize/flags',   h: setVectorizeFlags, auth: 'admin' },
+
+  // ── FAQ-candidate clustering (Phase 2b Silver) ──
+  { m: 'POST', p: '/api/admin/faq-candidates/cluster', h: clusterFaqCandidates, auth: 'admin' },
+  { m: 'GET',  p: '/api/admin/faq-candidates/clusters', h: listClusters, auth: 'admin' },
+  { m: 'GET',  p: /^\/api\/admin\/faq-candidates\/clusters\/(\d+)\/members$/, h: clusterMembers, auth: 'admin', intParams: [0] },
+
+  // ── Labels — reads = staff, writes = admin ──
+  { m: 'GET',    p: '/api/labels', h: listLabels, auth: 'staff' },
+  { m: 'POST',   p: '/api/labels', h: createLabel, auth: 'admin' },
+  { m: 'PUT',    p: /^\/api\/labels\/(\d+)$/, h: updateLabel, auth: 'admin', intParams: [0] },
+  { m: 'DELETE', p: /^\/api\/labels\/(\d+)$/, h: deleteLabel, auth: 'admin', intParams: [0] },
+
+  // ── FAQ — staff reads, admin writes (search is handled inline above) ──
+  { m: 'GET',    p: '/api/faq', h: handleFaqGet, auth: 'staff' },
+  { m: 'POST',   p: '/api/faq', h: handleFaqPost, auth: 'admin' },
+  { m: 'GET',    p: /^\/api\/faq\/(\d+)$/, h: handleFaqGetOne, auth: 'staff', intParams: [0] },
+  { m: 'PUT',    p: /^\/api\/faq\/(\d+)$/, h: handleFaqPut, auth: 'admin', intParams: [0] },
+  { m: 'DELETE', p: /^\/api\/faq\/(\d+)$/, h: handleFaqDelete, auth: 'admin', intParams: [0] },
+
+  // ── Templates ──
+  { m: 'GET',    p: '/api/templates', h: handleTemplatesGet, auth: 'staff' },
+  { m: 'POST',   p: '/api/templates', h: handleTemplatesPost, auth: 'admin' },
+  { m: 'PUT',    p: /^\/api\/templates\/(\d+)$/, h: handleTemplatesPut, auth: 'admin', intParams: [0] },
+  { m: 'DELETE', p: /^\/api\/templates\/(\d+)$/, h: handleTemplatesDelete, auth: 'admin', intParams: [0] },
+
+  // ── Knowledge sources ──
+  { m: 'GET',    p: '/api/knowledge-sources', h: handleKnowledgeSourcesGet, auth: 'staff' },
+  { m: 'POST',   p: '/api/knowledge-sources', h: handleKnowledgeSourcesPost, auth: 'admin' },
+  { m: 'GET',    p: /^\/api\/knowledge-sources\/(\d+)$/, h: handleKnowledgeSourcesGetOne, auth: 'staff', intParams: [0] },
+  { m: 'PUT',    p: /^\/api\/knowledge-sources\/(\d+)$/, h: handleKnowledgeSourcesPut, auth: 'admin', intParams: [0] },
+  { m: 'DELETE', p: /^\/api\/knowledge-sources\/(\d+)$/, h: handleKnowledgeSourcesDelete, auth: 'admin', intParams: [0] },
+];
