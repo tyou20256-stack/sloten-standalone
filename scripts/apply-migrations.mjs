@@ -18,8 +18,9 @@
 //   WRANGLER_CONFIG=wrangler.staging-bk.toml node scripts/apply-migrations.mjs --remote
 //   node scripts/apply-migrations.mjs --force                    # ignore tracker, re-apply all
 
-import { readdirSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { execSync } from 'node:child_process';
 
 const REMOTE = process.argv.includes('--remote');
@@ -75,25 +76,50 @@ if (!FORCE) {
 let appliedCount = 0;
 let skippedCount = 0;
 
-for (const f of files) {
-  const path = join(MIGRATIONS_DIR, f);
-  if (appliedSet.has(f)) {
-    console.log(`  ${f} ... SKIP (already applied)`);
-    skippedCount++;
-    continue;
+// Temp dir for combined migration+tracker files. `wrangler d1 execute --file`
+// runs each statement in the file as one batch — appending the tracker INSERT
+// to the migration body means the migration and its tracker record are atomic:
+// if any statement fails, D1 rolls back the entire batch, leaving us in a
+// clean state for the next run. Previously the two were separate execSync
+// calls and a partial failure could leave a migration applied but un-tracked,
+// causing a re-run loop on the next deploy (Security audit H-3, 2026-05-13).
+const tmpDir = mkdtempSync(join(tmpdir(), 'sloten-mig-'));
+
+function quoteSqlString(s) {
+  return s.replace(/'/g, "''");
+}
+
+try {
+  for (const f of files) {
+    const path = join(MIGRATIONS_DIR, f);
+    if (appliedSet.has(f)) {
+      console.log(`  ${f} ... SKIP (already applied)`);
+      skippedCount++;
+      continue;
+    }
+    process.stdout.write(`  ${f} ... `);
+    try {
+      // Build a combined SQL file: original migration body + tracker INSERT.
+      // Both run as one wrangler batch → atomic with respect to D1's batch
+      // execution model.
+      const originalSql = readFileSync(path, 'utf8');
+      const trackerInsert =
+        `\n-- Auto-appended by apply-migrations.mjs (atomic tracker INSERT)\n` +
+        `INSERT OR IGNORE INTO _schema_migrations (name) VALUES ('${quoteSqlString(f)}');\n`;
+      const combinedPath = join(tmpDir, f);
+      writeFileSync(combinedPath, originalSql + trackerInsert, 'utf8');
+      d1Exec(combinedPath, { isFile: true });
+      console.log('OK');
+      appliedCount++;
+    } catch (e) {
+      console.log('FAILED');
+      console.error(e.stdout?.toString() || e.message);
+      process.exit(1);
+    }
   }
-  process.stdout.write(`  ${f} ... `);
-  try {
-    d1Exec(path, { isFile: true });
-    // Record application — best-effort, won't roll back the migration on insert failure.
-    d1Exec(`INSERT OR IGNORE INTO _schema_migrations (name) VALUES ('${f.replace(/'/g, "''")}');`);
-    console.log('OK');
-    appliedCount++;
-  } catch (e) {
-    console.log('FAILED');
-    console.error(e.stdout?.toString() || e.message);
-    process.exit(1);
-  }
+} finally {
+  // Best-effort cleanup of the temp directory.
+  try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
 }
 
 console.log(`Done — applied ${appliedCount}, skipped ${skippedCount} (already applied).`);

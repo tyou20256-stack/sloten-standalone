@@ -100,6 +100,7 @@ export async function recordSubmission(env, { tenantId, conversationId, contactI
 export async function forwardToGas(env, ctx, { submissionId, match, conversationId, contact }) {
   if (!match?.row?.gas_type) return;
   const { getEnvValue } = await import('./env-resolver.mjs');
+  const { signOutgoingWebhook } = await import('./lib/webhook-signature.mjs');
   const url = await getEnvValue(env, 'BONUS_CODE_WEBHOOK_URL');
   if (!url) return;
   const row = match.row;
@@ -127,10 +128,16 @@ export async function forwardToGas(env, ctx, { submissionId, match, conversation
   };
   const task = async () => {
     try {
+      const bodyStr = JSON.stringify(payload);
+      // HMAC-sign outbound so the receiving GAS endpoint can authenticate the
+      // request (Security audit H-3, 2026-05-13). signOutgoingWebhook throws
+      // in production when WEBHOOK_SIGNING_SECRET is missing — that's deliberate
+      // (fail-closed), and matches the bot-flows.mjs webhook step.
+      const sigHeaders = await signOutgoingWebhook(env.WEBHOOK_SIGNING_SECRET, bodyStr, env);
       const r = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        headers: { 'Content-Type': 'application/json', ...sigHeaders },
+        body: bodyStr,
       });
       const text = await r.text().catch(() => '');
       if (submissionId) {

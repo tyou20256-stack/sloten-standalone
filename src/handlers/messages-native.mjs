@@ -266,10 +266,15 @@ async function maybeDispatchAttachmentWebhook(env, ctx, request, args) {
           url: signedUrl,
         },
       };
+      const bodyStr = JSON.stringify(payload);
+      // HMAC-sign outbound so OPERATOR_ATTACHMENT_WEBHOOK_URL receiver can
+      // authenticate (Security audit H-4, 2026-05-13).
+      const { signOutgoingWebhook } = await import('../lib/webhook-signature.mjs');
+      const sigHeaders = await signOutgoingWebhook(env.WEBHOOK_SIGNING_SECRET, bodyStr, env);
       const r = await fetch(webhookUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        headers: { 'Content-Type': 'application/json', ...sigHeaders },
+        body: bodyStr,
       });
       if (!r.ok) console.warn('[attachment-webhook] non-2xx:', r.status);
     } catch (e) {

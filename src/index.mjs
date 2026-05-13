@@ -75,6 +75,9 @@ import { exportContactData, eraseContactData } from './handlers/gdpr.mjs';
 import { uploadAttachment, downloadAttachment, downloadAttachmentSigned } from './handlers/attachments.mjs';
 import { getPublicJackpot } from './handlers/public-jackpot.mjs';
 import {
+  handlePachiSearch, handlePachiMachineGet, handlePachiSimilar, handlePachiChat,
+} from './handlers/pachi-machines.mjs';
+import {
   listCandidates, updateCandidate, approveCandidate, rejectCandidate, bulkAction, runExtractionNow,
 } from './handlers/faq-candidates.mjs';
 import {
@@ -536,9 +539,6 @@ export default {
 };
 
 // ─── Standard CRUD route table ──────────────────────────────────────
-// Order doesn't matter for non-overlapping patterns; for overlapping ones,
-// place the more specific entry first.
-//
 // Conventions:
 //   m: HTTP method (or array)
 //   p: path pattern (string for exact match, RegExp with capture groups)
@@ -546,6 +546,19 @@ export default {
 //   auth: 'admin' | 'staff' | 'public'
 //   intParams: indices of capture groups to parseInt before passing
 //   extras: extra args spliced in after route params, before ctx
+//
+// ORDERING RULES (avoid auth-bypass regressions — Security audit H-5):
+//   1. Within a (method, prefix) family, exact-string routes MUST appear
+//      before any RegExp routes that could match them. Example:
+//        ✓ { m: 'GET', p: '/api/staff/lookup', ..., auth: 'staff' }   ← first
+//          { m: 'PATCH', p: /^\/api\/staff\/(\d+)$/, ..., auth: 'admin' }
+//      The regex below is `\d+`-constrained today, but if a future regex
+//      `(.+)` is added it would shadow the lookup route and silently
+//      escalate it to admin-only (or worse, mismatch the handler).
+//   2. dispatchRoute returns the FIRST match — never compose patterns
+//      that overlap unless the intent is documented inline.
+//   3. New routes should match the surrounding section's auth convention
+//      (read = 'staff', write = 'admin') unless documented otherwise.
 const ROUTES = [
   // ── Contacts (staff) ──
   { m: 'GET', p: '/api/contacts', h: listContacts, auth: 'staff' },
@@ -686,4 +699,13 @@ const ROUTES = [
   { m: 'GET',    p: /^\/api\/knowledge-sources\/(\d+)$/, h: handleKnowledgeSourcesGetOne, auth: 'staff', intParams: [0] },
   { m: 'PUT',    p: /^\/api\/knowledge-sources\/(\d+)$/, h: handleKnowledgeSourcesPut, auth: 'admin', intParams: [0] },
   { m: 'DELETE', p: /^\/api\/knowledge-sources\/(\d+)$/, h: handleKnowledgeSourcesDelete, auth: 'admin', intParams: [0] },
+
+  // ── Pachi-slot proxy (admin browse + chat against upstream VPS API) ──
+  // Previously these handlers were exported but never registered (Security
+  // audit H-4, 2026-05-13). The /health/pachi probe at the top of fetch()
+  // covers binding presence; these endpoints expose the underlying data.
+  { m: 'GET',  p: '/api/pachi/search',  h: handlePachiSearch,    auth: 'staff' },
+  { m: 'GET',  p: /^\/api\/pachi\/machines\/([^/]+)$/, h: handlePachiMachineGet, auth: 'staff' },
+  { m: 'GET',  p: '/api/pachi/similar', h: handlePachiSimilar,   auth: 'staff' },
+  { m: 'POST', p: '/api/pachi/chat',    h: handlePachiChat,      auth: 'staff' },
 ];
