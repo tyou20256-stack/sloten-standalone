@@ -25,8 +25,11 @@ import { execSync } from 'node:child_process';
 const REMOTE = process.argv.includes('--remote');
 const FORCE = process.argv.includes('--force');
 const MIGRATIONS_DIR = 'migrations';
-const DB_BINDING_NAME = 'sloten_standalone_db';
 const WRANGLER_CONFIG = process.env.WRANGLER_CONFIG || '';
+// DB name override: staging-bk uses sloten_standalone_db_staging_bk while
+// prod uses sloten_standalone_db. Default to prod; override via env when
+// targeting staging.
+const DB_BINDING_NAME = process.env.D1_DB_NAME || 'sloten_standalone_db';
 
 const wranglerFlags = [
   REMOTE ? '--remote' : '--local',
