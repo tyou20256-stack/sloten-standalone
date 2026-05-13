@@ -227,18 +227,23 @@ export default {
     // Trace correlation id (audit C6, 2026-05-13): stamped on every request
     // and propagated to outbound webhook headers (X-Sloten-Trace-Id) plus
     // every response so incident-response can join logs across surfaces.
-    // Honour an inbound X-Sloten-Trace-Id when the caller is the trusted
-    // bearer-admin token; otherwise generate.
+    // Honour an inbound X-Sloten-Trace-Id ONLY when the caller actually
+    // presented a valid admin bearer (timing-safe equality vs ADMIN_API_TOKEN).
+    // Previously the check was a regex match on the header shape, which let
+    // any "Bearer <anything>" request push an attacker-chosen trace id into
+    // our log correlation system (audit M2, 2026-05-13 second pass).
     const inboundTrace = request.headers.get('X-Sloten-Trace-Id');
-    const isTrustedBearer = /^Bearer\s+(.+)$/.test(request.headers.get('Authorization') || '')
-      && !!env.ADMIN_API_TOKEN;
-    request.__trace_id = (inboundTrace && isTrustedBearer && /^[a-f0-9-]{16,40}$/i.test(inboundTrace))
+    request.__trace_id = (inboundTrace
+      && bearerAuth(request, env)
+      && /^[a-f0-9-]{16,40}$/i.test(inboundTrace))
       ? inboundTrace
       : uuid();
     // CORS-allowed header so the trace id surfaces in fetch() callers.
     corsHeaders['X-Sloten-Trace-Id'] = request.__trace_id;
 
-    if (method === 'OPTIONS') return handleCorsPreflight(request, env);
+    // Pass the already-mutated corsHeaders into preflight so OPTIONS responses
+    // also carry the trace id (audit code-H3, 2026-05-13 second pass).
+    if (method === 'OPTIONS') return handleCorsPreflight(request, env, corsHeaders);
 
     try {
       // ── Public probes + static assets + redirects ────────────────────

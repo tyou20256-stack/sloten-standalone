@@ -7,7 +7,7 @@ import { ok, created, err, parseJson } from '../json.mjs';
 import { generateBotReply } from '../ai-chat-adapter.mjs';
 import { broadcastToConversation } from '../broadcast.mjs';
 import { checkRateLimit, rateLimitResponse } from '../rate-limiter.mjs';
-import { runFlowForCustomerMessage, executeFlow } from './bot-flows.mjs';
+import { runFlowForCustomerMessage, executeFlow, buildFlowStateJson } from './bot-flows.mjs';
 import { buildMenuTreeText, inferJumpTarget } from '../lib/menu-tree.mjs';
 import { linkAttachmentToMessage, fetchAttachmentsForMessages } from './attachments.mjs';
 import { signAttachmentUrl, baseUrlOf } from '../auth/attachment-signature.mjs';
@@ -418,7 +418,10 @@ async function tryBonusCodeMatch(env, ctxArgs) {
     hasBridge = flowSteps.some((s) => s.id === bridgeStepId);
   }
   if (hasBridge && slotenMain) {
-    const bridgeState = JSON.stringify({ flow_id: slotenMain.id, step_id: bridgeStepId, vars: {} });
+    // Use buildFlowStateJson so v=FLOW_STATE_VERSION is stamped — direct
+    // JSON.stringify here would silently bypass the version guard added in
+    // audit HIGH-2 (2026-05-13 second pass).
+    const bridgeState = buildFlowStateJson(slotenMain.id, bridgeStepId, {});
     await env.DB.prepare(
       `UPDATE conversations SET flow_state=?, updated_at=datetime('now') WHERE id=?`,
     ).bind(bridgeState, conversationId).run();
@@ -585,7 +588,8 @@ async function runAiFallbackNavigation(env, ctxArgs, flowResult) {
       ? bestEffortSync('messages:jump-preserve-vars', () => JSON.parse(cur.flow_state))
       : null;
     const curVars = (parsed && typeof parsed.vars === 'object' && parsed.vars) ? parsed.vars : {};
-    const newState = JSON.stringify({ flow_id: mainFlowId, step_id: jumpToStepId, vars: curVars });
+    // buildFlowStateJson stamps v=FLOW_STATE_VERSION (audit HIGH-2, 2026-05-13).
+    const newState = buildFlowStateJson(mainFlowId, jumpToStepId, curVars);
     await env.DB.prepare(`UPDATE conversations SET flow_state = ?, updated_at = datetime('now') WHERE id = ?`)
       .bind(newState, conversationId).run();
     // Re-execute with no input — renders the destination menu.

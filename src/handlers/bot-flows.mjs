@@ -28,6 +28,7 @@ import { logError as _logError } from '../audit.mjs';
 import { looksLikeFreeText } from '../lib/text-classify.mjs';
 import { signOutgoingWebhook } from '../lib/webhook-signature.mjs';
 import { bestEffortSync } from '../lib/best-effort.mjs';
+import { safeCompileRegex } from '../lib/regex-safety.mjs';
 
 const VALID_TRIGGER_TYPES = new Set(['entry', 'manual']);
 const VALID_STEP_TYPES = new Set(['message', 'input', 'select', 'webhook', 'handoff', 'collect']);
@@ -122,7 +123,12 @@ export async function createBotFlow(request, env, corsHeaders) {
   const triggerType = body.trigger_type || 'entry';
   if (!VALID_TRIGGER_TYPES.has(triggerType)) return err('Invalid trigger_type', 400, corsHeaders);
   if (triggerType === 'entry' && body.trigger_value) {
-    try { new RegExp(body.trigger_value); } catch { return err('Invalid regex', 400, corsHeaders); }
+    // ReDoS guard at admin write time (audit HIGH-2, 2026-05-13 second pass).
+    // The compiled regex sits in ENTRY_FLOW_RE_CACHE and runs on every
+    // customer message — a catastrophic backtracking pattern would block
+    // the worker isolate for all concurrent requests.
+    const check = safeCompileRegex(body.trigger_value);
+    if (!check.ok) return err(`Invalid regex: ${check.reason}`, 400, corsHeaders);
   }
   const steps = parseSteps(body.steps);
   const stepsErr = validateSteps(steps);
@@ -162,7 +168,10 @@ export async function updateBotFlow(request, env, corsHeaders, id) {
     updates.push('trigger_type = ?'); vals.push(body.trigger_type);
   }
   if (body.trigger_value !== undefined) {
-    if (body.trigger_value) { try { new RegExp(body.trigger_value); } catch { return err('Invalid regex', 400, corsHeaders); } }
+    if (body.trigger_value) {
+      const check = safeCompileRegex(body.trigger_value);
+      if (!check.ok) return err(`Invalid regex: ${check.reason}`, 400, corsHeaders);
+    }
     updates.push('trigger_value = ?'); vals.push(body.trigger_value || null);
   }
   if (body.steps !== undefined) {
@@ -199,9 +208,15 @@ export async function deleteBotFlow(request, env, corsHeaders, id) {
     .bind(id, tenantId).run();
   // Clear conversations still pointing at this flow — limited to the same
   // tenant so we don't sneak cross-tenant writes here either.
+  // Use json_extract for an exact flow_id match (audit DB-H1, 2026-05-13)
+  // — the previous LIKE pattern `"flow_id":12` would also match `123`.
+  // The partial index `idx_conv_active_flow` (migration 030) narrows the
+  // scan to rows with non-null flow_state.
   await env.DB.prepare(
     `UPDATE conversations SET flow_state = NULL
-      WHERE tenant_id = ? AND flow_state LIKE '%"flow_id":' || ? || '%'`,
+      WHERE tenant_id = ?
+        AND flow_state IS NOT NULL
+        AND json_extract(flow_state, '$.flow_id') = ?`,
   ).bind(tenantId, id).run();
   return ok({ success: true }, corsHeaders);
 }
@@ -299,11 +314,20 @@ function newState(flow, vars = {}) {
 
 async function persistState(env, conversationId, state) {
   // Stamp the current version when persisting; null clears the column.
+  // Order matters: spread `state` first, then override `v` — otherwise a
+  // state object that happened to carry an older v would silently downgrade
+  // the persisted record (audit HIGH-1, 2026-05-13 second pass).
   const payload = state == null
     ? null
-    : JSON.stringify({ v: FLOW_STATE_VERSION, ...state });
+    : JSON.stringify({ ...state, v: FLOW_STATE_VERSION });
   await env.DB.prepare(`UPDATE conversations SET flow_state = ?, updated_at = datetime('now') WHERE id = ?`)
     .bind(payload, conversationId).run();
+}
+
+// Public helper so call sites that need to write flow_state outside the flow
+// engine (bonus-code bridge, AI-fallback jump) stay version-stamped.
+export function buildFlowStateJson(flowId, stepId, vars = {}) {
+  return JSON.stringify({ flow_id: flowId, step_id: stepId, vars, v: FLOW_STATE_VERSION });
 }
 
 // Validate a parsed state's version. Pre-versioned states (no `v` key) are

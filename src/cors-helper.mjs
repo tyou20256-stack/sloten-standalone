@@ -84,9 +84,15 @@ export function buildCorsHeaders(request, env) {
 
 /**
  * OPTIONS preflight ハンドラ
+ *
+ * The optional `existingHeaders` parameter lets callers (index.mjs fetch())
+ * pass the already-populated corsHeaders object — including any per-request
+ * stampings such as X-Sloten-Trace-Id — so the preflight response carries
+ * the same metadata as the real response. Without it, the preflight built
+ * its own headers from scratch and the trace id was lost.
  */
-export function handleCorsPreflight(request, env) {
-  const headers = buildCorsHeaders(request, env);
+export function handleCorsPreflight(request, env, existingHeaders) {
+  const headers = existingHeaders || buildCorsHeaders(request, env);
   // allowlist 外は 403
   if (!headers['Access-Control-Allow-Origin']) {
     return new Response(null, { status: 403, headers });

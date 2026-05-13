@@ -3,6 +3,7 @@
 import { ok, created, err, parseJson } from '../json.mjs';
 import { resolveTenantId } from '../tenant-scope.mjs';
 import { bestEffortSync } from '../lib/best-effort.mjs';
+import { safeCompileRegex } from '../lib/regex-safety.mjs';
 
 const VALID_TYPES = new Set(['default', 'keyword', 'fallback']);
 
@@ -51,7 +52,10 @@ export async function createBotMenu(request, env, corsHeaders) {
   if (triggerType === 'keyword') {
     const re = body.trigger_value;
     if (!re || typeof re !== 'string') return err('trigger_value (regex) required for keyword', 400, corsHeaders);
-    try { new RegExp(re); } catch { return err('Invalid regex', 400, corsHeaders); }
+    // ReDoS guard (audit HIGH-2, 2026-05-13 second pass) — compiled regex
+    // runs on every customer message via KEYWORD_RE_CACHE.
+    const check = safeCompileRegex(re);
+    if (!check.ok) return err(`Invalid regex: ${check.reason}`, 400, corsHeaders);
   }
   const items = parseItems(body.items);
   const itemsErr = validateItems(items);
@@ -89,7 +93,10 @@ export async function updateBotMenu(request, env, corsHeaders, id) {
     updates.push('trigger_type = ?'); vals.push(body.trigger_type);
   }
   if (body.trigger_value !== undefined) {
-    if (body.trigger_value) { try { new RegExp(body.trigger_value); } catch { return err('Invalid regex', 400, corsHeaders); } }
+    if (body.trigger_value) {
+      const check = safeCompileRegex(body.trigger_value);
+      if (!check.ok) return err(`Invalid regex: ${check.reason}`, 400, corsHeaders);
+    }
     updates.push('trigger_value = ?'); vals.push(body.trigger_value || null);
   }
   if (body.prompt !== undefined) { updates.push('prompt = ?'); vals.push(String(body.prompt)); }
