@@ -275,14 +275,45 @@ export async function getFlow(env, id) {
   return row ? decorate(row) : null;
 }
 
+// flow_state schema versioning. v1 was: { flow_id, step_id, vars }.
+// v2 (2026-05-13) adds an explicit `v` key so future breaking changes to the
+// state shape can be detected and either migrated forward or treated as
+// "expired" (escalate vs. silently restart, depending on direction).
+//
+// Architectural concern from 2026-05-13 audit (C4): without a version, any
+// edit to the state shape — even adding a required field — would corrupt
+// every in-flight conversation when deployed. Now executeFlow refuses to
+// resume states whose `v` it does not recognise and escalates instead.
+const FLOW_STATE_VERSION = 2;
+const SUPPORTED_FLOW_STATE_VERSIONS = new Set([1, 2]); // 1 = pre-versioned legacy
+
 // Build the JSON serializable flow_state row.
 function newState(flow, vars = {}) {
-  return JSON.stringify({ flow_id: flow.id, step_id: flow.start_step_id, vars });
+  return JSON.stringify({
+    v: FLOW_STATE_VERSION,
+    flow_id: flow.id,
+    step_id: flow.start_step_id,
+    vars,
+  });
 }
 
 async function persistState(env, conversationId, state) {
+  // Stamp the current version when persisting; null clears the column.
+  const payload = state == null
+    ? null
+    : JSON.stringify({ v: FLOW_STATE_VERSION, ...state });
   await env.DB.prepare(`UPDATE conversations SET flow_state = ?, updated_at = datetime('now') WHERE id = ?`)
-    .bind(state == null ? null : JSON.stringify(state), conversationId).run();
+    .bind(payload, conversationId).run();
+}
+
+// Validate a parsed state's version. Pre-versioned states (no `v` key) are
+// treated as v1 — the shape predates this guard and is still understood.
+// Anything beyond SUPPORTED_FLOW_STATE_VERSIONS triggers a controlled
+// restart rather than a silent crash.
+function isStateVersionSupported(rawState) {
+  if (!rawState || typeof rawState !== 'object') return false;
+  const v = typeof rawState.v === 'number' ? rawState.v : 1;
+  return SUPPORTED_FLOW_STATE_VERSIONS.has(v);
 }
 
 // Produce the bot message(s) that should be sent for the current step,
@@ -297,6 +328,14 @@ export async function executeFlow(env, conv, contact, inputText, ctx, inputAttrs
         : conv.flow_state)
     : null;
   if (!rawState) return { messages: [], state: null, handoff: false };
+  // Schema-version guard (audit C4): refuse to resume states whose shape we
+  // don't recognise. The conservative response is to drop the state and exit
+  // — the customer's next message re-enters the main menu from scratch.
+  if (!isStateVersionSupported(rawState)) {
+    console.warn('[bot-flows] dropping unsupported flow_state version:', rawState?.v);
+    await persistState(env, conv.id, null);
+    return { messages: [], state: null, handoff: false };
+  }
   const flow = await getFlow(env, rawState.flow_id);
   if (!flow) { await persistState(env, conv.id, null); return { messages: [], state: null, handoff: false }; }
 

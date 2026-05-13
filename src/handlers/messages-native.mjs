@@ -167,7 +167,9 @@ export async function sendMessage(request, env, corsHeaders, conversationId, opt
           ? await env.DB.prepare('SELECT * FROM contacts WHERE id = ?').bind(fresh.contact_id).first()
           : null;
 
-        const ctxArgs = { conv, fresh, contact, conversationId, content, contentAttributes, msg, corsHeaders, botReplies, ctx };
+        // `request` is included so helpers can read request.__trace_id for
+        // outbound webhook correlation (audit C6, 2026-05-13).
+        const ctxArgs = { request, conv, fresh, contact, conversationId, content, contentAttributes, msg, corsHeaders, botReplies, ctx };
 
         const escResp = await tryEscalationGate(env, ctxArgs);
         if (escResp) return escResp;
@@ -277,9 +279,14 @@ async function maybeDispatchAttachmentWebhook(env, ctx, request, args) {
       // authenticate (Security audit H-4, 2026-05-13).
       const { signOutgoingWebhook } = await import('../lib/webhook-signature.mjs');
       const sigHeaders = await signOutgoingWebhook(env.WEBHOOK_SIGNING_SECRET, bodyStr, env);
+      // Trace correlation (audit C6, 2026-05-13): propagate the request's
+      // trace id so the GAS receiver can echo it back for end-to-end logs.
+      const traceHeaders = request.__trace_id
+        ? { 'X-Sloten-Trace-Id': request.__trace_id }
+        : {};
       const r = await fetch(webhookUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...sigHeaders },
+        headers: { 'Content-Type': 'application/json', ...sigHeaders, ...traceHeaders },
         body: bodyStr,
       });
       if (!r.ok) console.warn('[attachment-webhook] non-2xx:', r.status);
@@ -444,7 +451,10 @@ async function tryBonusCodeMatch(env, ctxArgs) {
     match,
     code: match.code,
   });
-  await forwardToGas(env, ctx, { submissionId, match, conversationId, contact });
+  await forwardToGas(env, ctx, {
+    submissionId, match, conversationId, contact,
+    traceId: ctxArgs.request?.__trace_id || null,
+  });
   if (match.row.transfer_after) {
     await env.DB.prepare(
       `UPDATE conversations SET status='open', updated_at=datetime('now') WHERE id=?`,

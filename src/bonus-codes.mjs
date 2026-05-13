@@ -126,7 +126,7 @@ export async function recordSubmission(env, { tenantId, conversationId, contactI
 // sheetName) so the same GAS endpoint can dispatch via switch-case (built-in
 // types) OR fall through to the dynamic recordToBonusSheet(sheetName, ...)
 // branch for codes added through the admin UI.
-export async function forwardToGas(env, ctx, { submissionId, match, conversationId, contact }) {
+export async function forwardToGas(env, ctx, { submissionId, match, conversationId, contact, traceId }) {
   if (!match?.row?.gas_type) return;
   const { getEnvValue } = await import('./env-resolver.mjs');
   const { signOutgoingWebhook } = await import('./lib/webhook-signature.mjs');
@@ -163,9 +163,12 @@ export async function forwardToGas(env, ctx, { submissionId, match, conversation
       // in production when WEBHOOK_SIGNING_SECRET is missing — that's deliberate
       // (fail-closed), and matches the bot-flows.mjs webhook step.
       const sigHeaders = await signOutgoingWebhook(env.WEBHOOK_SIGNING_SECRET, bodyStr, env);
+      // Trace correlation (audit C6, 2026-05-13): propagate the request's
+      // trace id so the GAS receiver can correlate downstream actions.
+      const traceHeaders = traceId ? { 'X-Sloten-Trace-Id': traceId } : {};
       const r = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...sigHeaders },
+        headers: { 'Content-Type': 'application/json', ...sigHeaders, ...traceHeaders },
         body: bodyStr,
       });
       const text = await r.text().catch(() => '');

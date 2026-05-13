@@ -23,6 +23,7 @@
 import { buildCorsHeaders, handleCorsPreflight, isAllowedOrigin } from './cors-helper.mjs';
 import { checkRateLimit, rateLimitResponse } from './rate-limiter.mjs';
 import { ok, err } from './json.mjs';
+import { uuid } from './id.mjs';
 
 import {
   handleFaqGet, handleFaqGetOne, handleFaqPost, handleFaqPut, handleFaqDelete, handleFaqSearch,
@@ -212,9 +213,30 @@ export default {
   },
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    const path = url.pathname;
+    let path = url.pathname;
     const method = request.method.toUpperCase();
     const corsHeaders = buildCorsHeaders(request, env);
+
+    // /api/v1 alias (audit C7, 2026-05-13): introduce the version-prefix
+    // namespace without breaking the existing unversioned surface. New
+    // breaking changes can land under /api/v1/... while /api/... stays
+    // frozen-compatible. We normalise the prefix off here so handlers and
+    // route table entries don't need duplicate definitions.
+    if (path.startsWith('/api/v1/')) path = '/api/' + path.slice('/api/v1/'.length);
+
+    // Trace correlation id (audit C6, 2026-05-13): stamped on every request
+    // and propagated to outbound webhook headers (X-Sloten-Trace-Id) plus
+    // every response so incident-response can join logs across surfaces.
+    // Honour an inbound X-Sloten-Trace-Id when the caller is the trusted
+    // bearer-admin token; otherwise generate.
+    const inboundTrace = request.headers.get('X-Sloten-Trace-Id');
+    const isTrustedBearer = /^Bearer\s+(.+)$/.test(request.headers.get('Authorization') || '')
+      && !!env.ADMIN_API_TOKEN;
+    request.__trace_id = (inboundTrace && isTrustedBearer && /^[a-f0-9-]{16,40}$/i.test(inboundTrace))
+      ? inboundTrace
+      : uuid();
+    // CORS-allowed header so the trace id surfaces in fetch() callers.
+    corsHeaders['X-Sloten-Trace-Id'] = request.__trace_id;
 
     if (method === 'OPTIONS') return handleCorsPreflight(request, env);
 
