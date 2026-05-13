@@ -525,11 +525,11 @@
     "category": "announcement",
     "input": "お盆休みの営業時間を教えて",
     "expected_phrases": ["営業"],
-    "forbidden_phrases": ["不明"],
+    "forbidden_phrases": ["わかりません", "知りません"],
     "expected_handoff": false,
     "expected_jump": null,
     "source": "drafted",
-    "note": "2026-05-10 audit follow-up: filled empty assertions for regression coverage"
+    "note": "2026-05-13 fix: '不明' too broad — matched the polite phrase 'ご不明な点'. Now forbids explicit ignorance markers only."
   },
   {
     "id": "g-053",
