@@ -46,14 +46,21 @@ export async function listAiLogs(request, env, corsHeaders) {
 }
 
 export async function getAiLog(request, env, corsHeaders, id) {
-  const row = await env.DB.prepare('SELECT * FROM ai_logs WHERE id = ?').bind(id).first();
+  // Tenant-scoped: prevent cross-tenant log read via UUID enumeration.
+  const tenantId = resolveTenantId(request, env);
+  const row = await env.DB.prepare(
+    'SELECT * FROM ai_logs WHERE id = ? AND tenant_id = ?',
+  ).bind(id, tenantId).first();
   if (!row) return err('Log not found', 404, corsHeaders);
   const fb = await env.DB.prepare('SELECT * FROM ai_log_feedback WHERE ai_log_id = ? ORDER BY created_at DESC').bind(id).all();
   return ok({ success: true, log: row, feedback: fb.results || [] }, corsHeaders);
 }
 
 export async function deleteAiLog(request, env, corsHeaders, id) {
-  await env.DB.prepare('DELETE FROM ai_logs WHERE id = ?').bind(id).run();
+  // Tenant-scoped: prevent cross-tenant log deletion (evidence tampering).
+  const tenantId = resolveTenantId(request, env);
+  await env.DB.prepare('DELETE FROM ai_logs WHERE id = ? AND tenant_id = ?')
+    .bind(id, tenantId).run();
   return ok({ success: true }, corsHeaders);
 }
 
@@ -63,6 +70,12 @@ export async function submitFeedback(request, env, corsHeaders, logId) {
   const rating = parseInt(body.rating, 10);
   // Phase 1: accept -2 for ⚠️ (critical) in addition to 1/-1.
   if (![1, -1, -2].includes(rating)) return err('rating must be 1, -1, or -2', 400, corsHeaders);
+  // Tenant-scoped: confirm the log belongs to the caller's tenant before
+  // accepting feedback. Prevents cross-tenant feedback injection.
+  const tenantId = resolveTenantId(request, env);
+  const owning = await env.DB.prepare('SELECT id FROM ai_logs WHERE id = ? AND tenant_id = ?')
+    .bind(logId, tenantId).first();
+  if (!owning) return err('Log not found', 404, corsHeaders);
   // Require an identifiable staff; otherwise the ON CONFLICT unique key is NULL
   // and rows accumulate without upsert. Bearer-token callers must supply
   // `?staff_id=` explicitly, else fail.
@@ -89,9 +102,13 @@ export async function aiStats(request, env, corsHeaders) {
     env.DB.prepare(`SELECT COUNT(*) n FROM ai_logs WHERE tenant_id = ? AND created_at >= datetime('now','-7 day')`).bind(tenantId).first(),
     env.DB.prepare(`SELECT COUNT(*) n FROM ai_logs WHERE tenant_id = ? AND status = 'error' AND created_at >= datetime('now','-1 day')`).bind(tenantId).first(),
     env.DB.prepare(`SELECT AVG(latency_ms) n FROM ai_logs WHERE tenant_id = ? AND status = 'ok' AND created_at >= datetime('now','-1 day')`).bind(tenantId).first(),
-    env.DB.prepare(`SELECT SUM(CASE WHEN rating = 1 THEN 1 ELSE 0 END) up,
-                           SUM(CASE WHEN rating = -1 THEN 1 ELSE 0 END) down
-                      FROM ai_log_feedback`).first(),
+    // Tenant-scoped: feedback rows are joined through ai_logs so each tenant
+    // only sees its own thumbs-up/down totals.
+    env.DB.prepare(`SELECT SUM(CASE WHEN f.rating = 1 THEN 1 ELSE 0 END) up,
+                           SUM(CASE WHEN f.rating = -1 THEN 1 ELSE 0 END) down
+                      FROM ai_log_feedback f
+                      INNER JOIN ai_logs a ON a.id = f.ai_log_id
+                     WHERE a.tenant_id = ?`).bind(tenantId).first(),
   ]);
   return ok({
     success: true,
@@ -176,6 +193,10 @@ export async function listSilentFailures(request, env, corsHeaders) {
   const url = new URL(request.url);
   const view = url.searchParams.get('view') || 'escalation'; // escalation | repeat | anger
   const limit = Math.min(parseInt(url.searchParams.get('limit') || '50', 10), MAX_LIMIT);
+  // Tenant-scoped: silent-failure views (migration 018) don't include
+  // tenant_id in their output, so we join back through ai_logs to filter.
+  // PK index on ai_logs.id makes this join near-free.
+  const tenantId = resolveTenantId(request, env);
   const viewMap = {
     escalation: 'v_ai_silent_escalation',
     repeat: 'v_ai_repeat_question',
@@ -185,8 +206,11 @@ export async function listSilentFailures(request, env, corsHeaders) {
   if (!viewName) return err('invalid view (escalation|repeat|anger)', 400, corsHeaders);
   try {
     const { results } = await env.DB.prepare(
-      `SELECT * FROM ${viewName} ORDER BY ai_created_at DESC LIMIT ?`
-    ).bind(limit).all();
+      `SELECT v.* FROM ${viewName} v
+         INNER JOIN ai_logs a ON a.id = v.ai_log_id
+        WHERE a.tenant_id = ?
+        ORDER BY v.ai_created_at DESC LIMIT ?`
+    ).bind(tenantId, limit).all();
     return ok({ success: true, view, rows: results || [] }, corsHeaders);
   } catch (e) {
     return err(`view not ready (run migration 018): ${e.message}`, 500, corsHeaders);

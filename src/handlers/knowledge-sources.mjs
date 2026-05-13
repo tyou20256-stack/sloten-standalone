@@ -1,6 +1,8 @@
 // ⚠️ 弊社側暫定実装 — tking510 納品版で置き換え予定
 // NOTE: GET endpoints return {data: ...} (no success wrapper) to match tking510 live API.
 
+import { resolveTenantId } from '../tenant-scope.mjs';
+
 const JSON_HEADERS = { 'Content-Type': 'application/json; charset=utf-8' };
 
 function json(body, status, corsHeaders) {
@@ -59,7 +61,12 @@ export async function handleKnowledgeSourcesGet(request, env, corsHeaders) {
 
 export async function handleKnowledgeSourcesGetOne(request, env, corsHeaders, id) {
   try {
-    const row = await env.DB.prepare('SELECT * FROM knowledge_sources WHERE id = ?').bind(id).first();
+    // Tenant-scoped: migration 026 added knowledge_sources.tenant_id so each
+    // tenant's KB stays isolated from cross-tenant reads.
+    const tenantId = resolveTenantId(request, env);
+    const row = await env.DB.prepare(
+      'SELECT * FROM knowledge_sources WHERE id = ? AND tenant_id = ?',
+    ).bind(id, tenantId).first();
     if (!row) return json({ success: false, error: 'Not found' }, 404, corsHeaders);
     return json({ success: true, source: row, data: row }, 200, corsHeaders);
   } catch (e) {
@@ -106,7 +113,11 @@ export async function handleKnowledgeSourcesPut(request, env, corsHeaders, id) {
     return json({ success: false, error: 'Invalid JSON' }, 400, corsHeaders);
   }
   try {
-    const existing = await env.DB.prepare('SELECT id FROM knowledge_sources WHERE id = ?').bind(id).first();
+    // Tenant-scoped: prevent cross-tenant KB row mutation.
+    const tenantId = resolveTenantId(request, env);
+    const existing = await env.DB.prepare(
+      'SELECT id FROM knowledge_sources WHERE id = ? AND tenant_id = ?',
+    ).bind(id, tenantId).first();
     if (!existing) return json({ success: false, error: 'Not found' }, 404, corsHeaders);
 
     // Refresh action: body has refresh:true and nothing else to update — just bump timestamp.
@@ -115,8 +126,8 @@ export async function handleKnowledgeSourcesPut(request, env, corsHeaders, id) {
       && bodyKeys.every((k) => k === 'refresh' || !KS_UPDATABLE.includes(k));
     if (onlyRefresh) {
       await env.DB.prepare(
-        "UPDATE knowledge_sources SET last_refreshed_at = datetime('now'), updated_at = datetime('now') WHERE id = ?"
-      ).bind(id).run();
+        "UPDATE knowledge_sources SET last_refreshed_at = datetime('now'), updated_at = datetime('now') WHERE id = ? AND tenant_id = ?"
+      ).bind(id, tenantId).run();
       return json({ success: true, id: Number(id), refreshed: true }, 200, corsHeaders);
     }
 
@@ -137,7 +148,9 @@ export async function handleKnowledgeSourcesPut(request, env, corsHeaders, id) {
     }
     sets.push("updated_at = datetime('now')");
     binds.push(id);
-    await env.DB.prepare(`UPDATE knowledge_sources SET ${sets.join(', ')} WHERE id = ?`).bind(...binds).run();
+    binds.push(tenantId);
+    await env.DB.prepare(`UPDATE knowledge_sources SET ${sets.join(', ')} WHERE id = ? AND tenant_id = ?`)
+      .bind(...binds).run();
     return json({ success: true, id: Number(id) }, 200, corsHeaders);
   } catch (e) {
     console.error('handleKnowledgeSourcesPut:', e.message);
@@ -147,9 +160,14 @@ export async function handleKnowledgeSourcesPut(request, env, corsHeaders, id) {
 
 export async function handleKnowledgeSourcesDelete(request, env, corsHeaders, id) {
   try {
-    const existing = await env.DB.prepare('SELECT id FROM knowledge_sources WHERE id = ?').bind(id).first();
+    // Tenant-scoped: prevent cross-tenant KB deletion.
+    const tenantId = resolveTenantId(request, env);
+    const existing = await env.DB.prepare(
+      'SELECT id FROM knowledge_sources WHERE id = ? AND tenant_id = ?',
+    ).bind(id, tenantId).first();
     if (!existing) return json({ success: false, error: 'Not found' }, 404, corsHeaders);
-    await env.DB.prepare('DELETE FROM knowledge_sources WHERE id = ?').bind(id).run();
+    await env.DB.prepare('DELETE FROM knowledge_sources WHERE id = ? AND tenant_id = ?')
+      .bind(id, tenantId).run();
     return json({ success: true, id: Number(id) }, 200, corsHeaders);
   } catch (e) {
     console.error('handleKnowledgeSourcesDelete:', e.message);

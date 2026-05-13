@@ -142,8 +142,13 @@ export async function updateBonusCode(request, env, corsHeaders, id) {
   if (!sets.length) return err('No fields to update', 400, corsHeaders);
   sets.push(`updated_at = datetime('now')`);
   vals.push(id);
-  await env.DB.prepare(`UPDATE bonus_codes SET ${sets.join(', ')} WHERE id = ?`).bind(...vals).run();
-  const updated = await env.DB.prepare('SELECT * FROM bonus_codes WHERE id = ?').bind(id).first();
+  vals.push(tenantId);
+  // Defense in depth: SELECT above already verified tenant; carry the filter
+  // through UPDATE/SELECT so accidental refactors can't drop it.
+  await env.DB.prepare(`UPDATE bonus_codes SET ${sets.join(', ')} WHERE id = ? AND tenant_id = ?`)
+    .bind(...vals).run();
+  const updated = await env.DB.prepare('SELECT * FROM bonus_codes WHERE id = ? AND tenant_id = ?')
+    .bind(id, tenantId).first();
   return ok({ success: true, code: decorate(updated) }, corsHeaders);
 }
 

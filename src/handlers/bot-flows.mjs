@@ -136,7 +136,11 @@ export async function createBotFlow(request, env, corsHeaders) {
 }
 
 export async function updateBotFlow(request, env, corsHeaders, id) {
-  const existing = await env.DB.prepare('SELECT * FROM bot_flows WHERE id = ?').bind(id).first();
+  // Tenant-scoped: prevent cross-tenant flow mutation (flows control bot behaviour).
+  const tenantId = resolveTenantId(request, env);
+  const existing = await env.DB.prepare(
+    'SELECT * FROM bot_flows WHERE id = ? AND tenant_id = ?',
+  ).bind(id, tenantId).first();
   if (!existing) return err('Flow not found', 404, corsHeaders);
   const { body, response } = await parseJson(request, corsHeaders);
   if (response) return response;
@@ -171,16 +175,25 @@ export async function updateBotFlow(request, env, corsHeaders, id) {
   if (updates.length === 0) return err('No updatable fields', 400, corsHeaders);
   updates.push(`updated_at = datetime('now')`);
   vals.push(id);
-  await env.DB.prepare(`UPDATE bot_flows SET ${updates.join(', ')} WHERE id = ?`).bind(...vals).run();
-  const row = await env.DB.prepare('SELECT * FROM bot_flows WHERE id = ?').bind(id).first();
+  vals.push(tenantId);
+  await env.DB.prepare(`UPDATE bot_flows SET ${updates.join(', ')} WHERE id = ? AND tenant_id = ?`)
+    .bind(...vals).run();
+  const row = await env.DB.prepare('SELECT * FROM bot_flows WHERE id = ? AND tenant_id = ?')
+    .bind(id, tenantId).first();
   return ok({ success: true, flow: decorate(row) }, corsHeaders);
 }
 
 export async function deleteBotFlow(request, env, corsHeaders, id) {
-  await env.DB.prepare('DELETE FROM bot_flows WHERE id = ?').bind(id).run();
-  // Clear any conversations still pointing at this flow.
-  await env.DB.prepare(`UPDATE conversations SET flow_state = NULL
-                        WHERE flow_state LIKE '%"flow_id":' || ? || '%'`).bind(id).run();
+  // Tenant-scoped: prevent cross-tenant flow deletion.
+  const tenantId = resolveTenantId(request, env);
+  await env.DB.prepare('DELETE FROM bot_flows WHERE id = ? AND tenant_id = ?')
+    .bind(id, tenantId).run();
+  // Clear conversations still pointing at this flow — limited to the same
+  // tenant so we don't sneak cross-tenant writes here either.
+  await env.DB.prepare(
+    `UPDATE conversations SET flow_state = NULL
+      WHERE tenant_id = ? AND flow_state LIKE '%"flow_id":' || ? || '%'`,
+  ).bind(tenantId, id).run();
   return ok({ success: true }, corsHeaders);
 }
 

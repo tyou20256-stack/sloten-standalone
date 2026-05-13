@@ -45,6 +45,12 @@ export async function createLabel(request, env, corsHeaders) {
 export async function updateLabel(request, env, corsHeaders, id) {
   const { body, response } = await parseJson(request, corsHeaders);
   if (response) return response;
+  // Tenant-scoped: prevent cross-tenant label mutation.
+  const tenantId = resolveTenantId(request, env);
+  const existing = await env.DB.prepare(
+    'SELECT id FROM labels WHERE id = ? AND tenant_id = ?',
+  ).bind(id, tenantId).first();
+  if (!existing) return err('Label not found', 404, corsHeaders);
   const updates = [];
   const vals = [];
   if (body.name !== undefined) {
@@ -62,16 +68,24 @@ export async function updateLabel(request, env, corsHeaders, id) {
   if (updates.length === 0) return err('No updatable fields', 400, corsHeaders);
   updates.push(`updated_at = datetime('now')`);
   vals.push(id);
-  await env.DB.prepare(`UPDATE labels SET ${updates.join(', ')} WHERE id = ?`).bind(...vals).run();
-  const row = await env.DB.prepare('SELECT * FROM labels WHERE id = ?').bind(id).first();
+  vals.push(tenantId);
+  await env.DB.prepare(`UPDATE labels SET ${updates.join(', ')} WHERE id = ? AND tenant_id = ?`)
+    .bind(...vals).run();
+  const row = await env.DB.prepare('SELECT * FROM labels WHERE id = ? AND tenant_id = ?')
+    .bind(id, tenantId).first();
   if (!row) return err('Label not found', 404, corsHeaders);
   return ok({ success: true, label: row }, corsHeaders);
 }
 
 export async function deleteLabel(request, env, corsHeaders, id) {
-  const existing = await env.DB.prepare('SELECT name FROM labels WHERE id = ?').bind(id).first();
+  // Tenant-scoped: prevent cross-tenant label deletion.
+  const tenantId = resolveTenantId(request, env);
+  const existing = await env.DB.prepare(
+    'SELECT name FROM labels WHERE id = ? AND tenant_id = ?',
+  ).bind(id, tenantId).first();
   if (!existing) return err('Label not found', 404, corsHeaders);
-  await env.DB.prepare('DELETE FROM labels WHERE id = ?').bind(id).run();
+  await env.DB.prepare('DELETE FROM labels WHERE id = ? AND tenant_id = ?')
+    .bind(id, tenantId).run();
   // Remove the label name from any conversations referencing it (CSV cleanup).
   // LIKE pattern must escape %/_/\ in the label name itself.
   const escapedName = existing.name.replace(/[\\%_]/g, (c) => '\\' + c);

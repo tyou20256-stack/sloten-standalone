@@ -51,6 +51,12 @@ export async function createPrompt(request, env, corsHeaders) {
 export async function updatePrompt(request, env, corsHeaders, id) {
   const { body, response } = await parseJson(request, corsHeaders);
   if (response) return response;
+  // Tenant-scoped: prevent cross-tenant prompt mutation.
+  const tenantId = resolveTenantId(request, env);
+  const existing = await env.DB.prepare(
+    'SELECT id FROM ai_prompts WHERE id = ? AND tenant_id = ?',
+  ).bind(id, tenantId).first();
+  if (!existing) return err('Prompt not found', 404, corsHeaders);
   const updates = [];
   const vals = [];
   if (body.name !== undefined) { updates.push('name = ?'); vals.push(String(body.name).trim()); }
@@ -64,14 +70,20 @@ export async function updatePrompt(request, env, corsHeaders, id) {
   if (updates.length === 0) return err('No updatable fields', 400, corsHeaders);
   updates.push(`updated_at = datetime('now')`);
   vals.push(id);
-  await env.DB.prepare(`UPDATE ai_prompts SET ${updates.join(', ')} WHERE id = ?`).bind(...vals).run();
-  const row = await env.DB.prepare('SELECT * FROM ai_prompts WHERE id = ?').bind(id).first();
+  vals.push(tenantId);
+  await env.DB.prepare(`UPDATE ai_prompts SET ${updates.join(', ')} WHERE id = ? AND tenant_id = ?`)
+    .bind(...vals).run();
+  const row = await env.DB.prepare('SELECT * FROM ai_prompts WHERE id = ? AND tenant_id = ?')
+    .bind(id, tenantId).first();
   if (!row) return err('Prompt not found', 404, corsHeaders);
   return ok({ success: true, prompt: row }, corsHeaders);
 }
 
 export async function deletePrompt(request, env, corsHeaders, id) {
-  await env.DB.prepare('DELETE FROM ai_prompts WHERE id = ?').bind(id).run();
+  // Tenant-scoped: prevent cross-tenant prompt deletion.
+  const tenantId = resolveTenantId(request, env);
+  await env.DB.prepare('DELETE FROM ai_prompts WHERE id = ? AND tenant_id = ?')
+    .bind(id, tenantId).run();
   return ok({ success: true }, corsHeaders);
 }
 

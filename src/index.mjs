@@ -508,7 +508,10 @@ export default {
         if (m && method === 'GET') {
           const check = await verifyWidgetOwnership(m[1]);
           if (!check.ok) return check.response;
-          return getConversation(request, env, corsHeaders, m[1]);
+          // verifyWidgetOwnership already confirmed contact_id ownership; tell
+          // getConversation to skip its own tenant-scope check (the widget has
+          // no staff cookie / bearer to drive resolveTenantId).
+          return getConversation(request, env, corsHeaders, m[1], { ownershipChecked: true });
         }
       }
 

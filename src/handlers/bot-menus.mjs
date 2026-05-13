@@ -73,7 +73,11 @@ export async function createBotMenu(request, env, corsHeaders) {
 }
 
 export async function updateBotMenu(request, env, corsHeaders, id) {
-  const existing = await env.DB.prepare('SELECT * FROM bot_menus WHERE id = ?').bind(id).first();
+  // Tenant-scoped: prevent cross-tenant bot-menu mutation.
+  const tenantId = resolveTenantId(request, env);
+  const existing = await env.DB.prepare(
+    'SELECT * FROM bot_menus WHERE id = ? AND tenant_id = ?',
+  ).bind(id, tenantId).first();
   if (!existing) return err('Bot menu not found', 404, corsHeaders);
   const { body, response } = await parseJson(request, corsHeaders);
   if (response) return response;
@@ -100,13 +104,19 @@ export async function updateBotMenu(request, env, corsHeaders, id) {
   if (updates.length === 0) return err('No updatable fields', 400, corsHeaders);
   updates.push(`updated_at = datetime('now')`);
   vals.push(id);
-  await env.DB.prepare(`UPDATE bot_menus SET ${updates.join(', ')} WHERE id = ?`).bind(...vals).run();
-  const row = await env.DB.prepare('SELECT * FROM bot_menus WHERE id = ?').bind(id).first();
+  vals.push(tenantId);
+  await env.DB.prepare(`UPDATE bot_menus SET ${updates.join(', ')} WHERE id = ? AND tenant_id = ?`)
+    .bind(...vals).run();
+  const row = await env.DB.prepare('SELECT * FROM bot_menus WHERE id = ? AND tenant_id = ?')
+    .bind(id, tenantId).first();
   return ok({ success: true, menu: decorate(row) }, corsHeaders);
 }
 
 export async function deleteBotMenu(request, env, corsHeaders, id) {
-  await env.DB.prepare('DELETE FROM bot_menus WHERE id = ?').bind(id).run();
+  // Tenant-scoped: prevent cross-tenant bot-menu deletion.
+  const tenantId = resolveTenantId(request, env);
+  await env.DB.prepare('DELETE FROM bot_menus WHERE id = ? AND tenant_id = ?')
+    .bind(id, tenantId).run();
   return ok({ success: true }, corsHeaders);
 }
 

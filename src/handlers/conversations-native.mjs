@@ -109,8 +109,19 @@ export async function listConversations(request, env, corsHeaders) {
   return ok({ success: true, conversations: results || [] }, corsHeaders);
 }
 
-export async function getConversation(request, env, corsHeaders, id) {
-  const row = await env.DB.prepare('SELECT * FROM conversations WHERE id = ?').bind(id).first();
+// `opts.ownershipChecked` lets the widget path skip tenant scoping after it
+// has already verified contact_token ownership of this conversation. Every
+// other caller (staff, admin) MUST go through tenant resolution.
+export async function getConversation(request, env, corsHeaders, id, opts = {}) {
+  let row;
+  if (opts.ownershipChecked) {
+    row = await env.DB.prepare('SELECT * FROM conversations WHERE id = ?').bind(id).first();
+  } else {
+    const tenantId = resolveTenantId(request, env);
+    row = await env.DB.prepare(
+      'SELECT * FROM conversations WHERE id = ? AND tenant_id = ?',
+    ).bind(id, tenantId).first();
+  }
   if (!row) return err('Conversation not found', 404, corsHeaders);
   const contact = await env.DB.prepare('SELECT * FROM contacts WHERE id = ?').bind(row.contact_id).first();
   return ok({ success: true, conversation: row, contact }, corsHeaders);
@@ -119,7 +130,11 @@ export async function getConversation(request, env, corsHeaders, id) {
 export async function updateConversation(request, env, corsHeaders, id) {
   const { body, response } = await parseJson(request, corsHeaders);
   if (response) return response;
-  const existing = await env.DB.prepare('SELECT * FROM conversations WHERE id = ?').bind(id).first();
+  // Tenant-scoped: prevent cross-tenant conversation mutation via UUID guess.
+  const tenantId = resolveTenantId(request, env);
+  const existing = await env.DB.prepare(
+    'SELECT * FROM conversations WHERE id = ? AND tenant_id = ?',
+  ).bind(id, tenantId).first();
   if (!existing) return err('Conversation not found', 404, corsHeaders);
 
   const updates = [];
@@ -165,8 +180,12 @@ export async function updateConversation(request, env, corsHeaders, id) {
   if (updates.length === 0) return err('No updatable fields', 400, corsHeaders);
   updates.push(`updated_at = datetime('now')`);
   vals.push(id);
-  await env.DB.prepare(`UPDATE conversations SET ${updates.join(', ')} WHERE id = ?`).bind(...vals).run();
-  const row = await env.DB.prepare('SELECT * FROM conversations WHERE id = ?').bind(id).first();
+  // Tenant-scoped UPDATE — defense in depth even though we already verified
+  // ownership above; protects against TOCTOU if the row's tenant_id changed.
+  await env.DB.prepare(`UPDATE conversations SET ${updates.join(', ')} WHERE id = ? AND tenant_id = ?`)
+    .bind(...vals, tenantId).run();
+  const row = await env.DB.prepare('SELECT * FROM conversations WHERE id = ? AND tenant_id = ?')
+    .bind(id, tenantId).first();
   try {
     await broadcastToConversation(env, id, { type: 'conversation.updated', conversation: row });
   } catch (_) { /* swallow */ }
@@ -175,9 +194,15 @@ export async function updateConversation(request, env, corsHeaders, id) {
 
 // Mark conversation as read for staff — zero the staff unread counter.
 export async function markRead(request, env, corsHeaders, id) {
-  const conv = await env.DB.prepare('SELECT * FROM conversations WHERE id = ?').bind(id).first();
+  // Tenant-scoped: staff can only clear unread for conversations in their tenant.
+  const tenantId = resolveTenantId(request, env);
+  const conv = await env.DB.prepare(
+    'SELECT id FROM conversations WHERE id = ? AND tenant_id = ?',
+  ).bind(id, tenantId).first();
   if (!conv) return err('Conversation not found', 404, corsHeaders);
-  await env.DB.prepare(`UPDATE conversations SET unread_count_staff = 0, updated_at = datetime('now') WHERE id = ?`)
-    .bind(id).run();
+  await env.DB.prepare(
+    `UPDATE conversations SET unread_count_staff = 0, updated_at = datetime('now')
+      WHERE id = ? AND tenant_id = ?`,
+  ).bind(id, tenantId).run();
   return ok({ success: true }, corsHeaders);
 }

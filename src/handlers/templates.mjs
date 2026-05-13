@@ -76,7 +76,11 @@ export async function handleTemplatesPut(request, env, corsHeaders, id) {
     }
   }
   try {
-    const existing = await env.DB.prepare('SELECT * FROM templates WHERE id = ?').bind(id).first();
+    // Tenant-scoped: prevent cross-tenant template mutation.
+    const tenantId = resolveTenantId(request, env);
+    const existing = await env.DB.prepare(
+      'SELECT * FROM templates WHERE id = ? AND tenant_id = ?',
+    ).bind(id, tenantId).first();
     if (!existing) return err('Template not found', 404, corsHeaders);
     const sets = [];
     const vals = [];
@@ -86,15 +90,19 @@ export async function handleTemplatesPut(request, env, corsHeaders, id) {
     if (sets.length === 0) {
       // HTML PUTs with empty body to bump usage_count — special-case that.
       await env.DB.prepare(
-        "UPDATE templates SET usage_count = COALESCE(usage_count, 0) + 1, updated_at = datetime('now') WHERE id = ?"
-      ).bind(id).run();
-      const template = await env.DB.prepare('SELECT *, usage_count AS use_count FROM templates WHERE id = ?').bind(id).first();
+        "UPDATE templates SET usage_count = COALESCE(usage_count, 0) + 1, updated_at = datetime('now') WHERE id = ? AND tenant_id = ?"
+      ).bind(id, tenantId).run();
+      const template = await env.DB.prepare(
+        'SELECT *, usage_count AS use_count FROM templates WHERE id = ? AND tenant_id = ?',
+      ).bind(id, tenantId).first();
       return ok({ success: true, template }, corsHeaders);
     }
     sets.push("updated_at = datetime('now')");
     vals.push(id);
-    await env.DB.prepare(`UPDATE templates SET ${sets.join(', ')} WHERE id = ?`).bind(...vals).run();
-    const template = await env.DB.prepare('SELECT * FROM templates WHERE id = ?').bind(id).first();
+    vals.push(tenantId);
+    await env.DB.prepare(`UPDATE templates SET ${sets.join(', ')} WHERE id = ? AND tenant_id = ?`).bind(...vals).run();
+    const template = await env.DB.prepare('SELECT * FROM templates WHERE id = ? AND tenant_id = ?')
+      .bind(id, tenantId).first();
     return ok({ success: true, template }, corsHeaders);
   } catch (e) {
     console.error('handleTemplatesPut:', e.message);
@@ -104,9 +112,14 @@ export async function handleTemplatesPut(request, env, corsHeaders, id) {
 
 export async function handleTemplatesDelete(request, env, corsHeaders, id) {
   try {
-    const existing = await env.DB.prepare('SELECT id FROM templates WHERE id = ?').bind(id).first();
+    // Tenant-scoped: prevent cross-tenant template deletion.
+    const tenantId = resolveTenantId(request, env);
+    const existing = await env.DB.prepare(
+      'SELECT id FROM templates WHERE id = ? AND tenant_id = ?',
+    ).bind(id, tenantId).first();
     if (!existing) return err('Template not found', 404, corsHeaders);
-    await env.DB.prepare('DELETE FROM templates WHERE id = ?').bind(id).run();
+    await env.DB.prepare('DELETE FROM templates WHERE id = ? AND tenant_id = ?')
+      .bind(id, tenantId).run();
     return ok({ success: true, deleted: Number(id) }, corsHeaders);
   } catch (e) {
     console.error('handleTemplatesDelete:', e.message);

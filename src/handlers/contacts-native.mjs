@@ -122,7 +122,11 @@ export async function updateContact(request, env, corsHeaders, contactId) {
 }
 
 export async function getContact(request, env, corsHeaders, id) {
-  const row = await env.DB.prepare('SELECT * FROM contacts WHERE id = ?').bind(id).first();
+  // Tenant-scoped: prevent cross-tenant contact PII read via UUID guess.
+  const tenantId = resolveTenantId(request, env);
+  const row = await env.DB.prepare(
+    'SELECT * FROM contacts WHERE id = ? AND tenant_id = ?',
+  ).bind(id, tenantId).first();
   if (!row) return err('Contact not found', 404, corsHeaders);
   return ok({ success: true, contact: decorate(row) }, corsHeaders);
 }
@@ -141,15 +145,21 @@ export async function listContacts(request, env, corsHeaders) {
 export async function listContactConversations(request, env, corsHeaders, contactId) {
   const url = new URL(request.url);
   const limit = Math.min(parseInt(url.searchParams.get('limit') || '30', 10), 100);
-  const contact = await env.DB.prepare('SELECT * FROM contacts WHERE id = ?').bind(contactId).first();
+  // Tenant-scoped: gate the contact lookup, then constrain the conversation
+  // query to the same tenant so a cross-tenant contact_id (impossible if the
+  // contact fetch above succeeded, but defense in depth) cannot leak rows.
+  const tenantId = resolveTenantId(request, env);
+  const contact = await env.DB.prepare(
+    'SELECT * FROM contacts WHERE id = ? AND tenant_id = ?',
+  ).bind(contactId, tenantId).first();
   if (!contact) return err('Contact not found', 404, corsHeaders);
   const { results } = await env.DB.prepare(
     `SELECT id, status, assignee_id, last_message_at, last_message_preview, created_at, closed_at
        FROM conversations
-      WHERE contact_id = ?
+      WHERE contact_id = ? AND tenant_id = ?
    ORDER BY COALESCE(last_message_at, created_at) DESC
       LIMIT ?`
-  ).bind(contactId, limit).all();
+  ).bind(contactId, tenantId, limit).all();
   return ok({
     success: true,
     contact: decorate(contact),

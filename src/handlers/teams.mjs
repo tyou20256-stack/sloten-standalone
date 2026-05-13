@@ -45,6 +45,12 @@ export async function createTeam(request, env, corsHeaders) {
 export async function updateTeam(request, env, corsHeaders, id) {
   const { body, response } = await parseJson(request, corsHeaders);
   if (response) return response;
+  // Tenant-scoped: prevent cross-tenant team mutation.
+  const tenantId = resolveTenantId(request, env);
+  const existing = await env.DB.prepare(
+    'SELECT id FROM teams WHERE id = ? AND tenant_id = ?',
+  ).bind(id, tenantId).first();
+  if (!existing) return err('Team not found', 404, corsHeaders);
   const updates = [];
   const vals = [];
   if (body.name !== undefined) { updates.push('name = ?'); vals.push(String(body.name).trim()); }
@@ -52,21 +58,37 @@ export async function updateTeam(request, env, corsHeaders, id) {
   if (updates.length === 0) return err('No updatable fields', 400, corsHeaders);
   updates.push(`updated_at = datetime('now')`);
   vals.push(id);
-  await env.DB.prepare(`UPDATE teams SET ${updates.join(', ')} WHERE id = ?`).bind(...vals).run();
-  const row = await env.DB.prepare('SELECT * FROM teams WHERE id = ?').bind(id).first();
+  vals.push(tenantId);
+  await env.DB.prepare(`UPDATE teams SET ${updates.join(', ')} WHERE id = ? AND tenant_id = ?`)
+    .bind(...vals).run();
+  const row = await env.DB.prepare('SELECT * FROM teams WHERE id = ? AND tenant_id = ?')
+    .bind(id, tenantId).first();
   if (!row) return err('Team not found', 404, corsHeaders);
   return ok({ success: true, team: row }, corsHeaders);
 }
 
 export async function deleteTeam(request, env, corsHeaders, id) {
-  await env.DB.prepare('UPDATE conversations SET team_id = NULL WHERE team_id = ?').bind(id).run();
-  await env.DB.prepare('DELETE FROM teams WHERE id = ?').bind(id).run();
+  // Tenant-scoped: prevent cross-tenant team deletion + only null conversation
+  // assignments within the same tenant.
+  const tenantId = resolveTenantId(request, env);
+  await env.DB.prepare('UPDATE conversations SET team_id = NULL WHERE team_id = ? AND tenant_id = ?')
+    .bind(id, tenantId).run();
+  await env.DB.prepare('DELETE FROM teams WHERE id = ? AND tenant_id = ?')
+    .bind(id, tenantId).run();
   return ok({ success: true }, corsHeaders);
 }
 
 export async function addTeamMember(request, env, corsHeaders, teamId) {
   const { body, response } = await parseJson(request, corsHeaders);
   if (response) return response;
+  // Tenant-scoped: verify the team belongs to the caller's tenant before
+  // adding a member; otherwise a tenant-A admin could insert staff_id rows
+  // against a tenant-B team and grant cross-tenant visibility.
+  const tenantId = resolveTenantId(request, env);
+  const team = await env.DB.prepare(
+    'SELECT id FROM teams WHERE id = ? AND tenant_id = ?',
+  ).bind(teamId, tenantId).first();
+  if (!team) return err('Team not found', 404, corsHeaders);
   const staffId = parseInt(body.staff_id, 10);
   if (!staffId) return err('staff_id required', 400, corsHeaders);
   await env.DB.prepare(
@@ -76,6 +98,12 @@ export async function addTeamMember(request, env, corsHeaders, teamId) {
 }
 
 export async function removeTeamMember(request, env, corsHeaders, teamId, staffId) {
+  // Tenant-scoped: same protection as addTeamMember.
+  const tenantId = resolveTenantId(request, env);
+  const team = await env.DB.prepare(
+    'SELECT id FROM teams WHERE id = ? AND tenant_id = ?',
+  ).bind(teamId, tenantId).first();
+  if (!team) return err('Team not found', 404, corsHeaders);
   await env.DB.prepare(
     `DELETE FROM team_members WHERE team_id = ? AND staff_id = ?`
   ).bind(teamId, staffId).run();

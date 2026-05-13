@@ -57,7 +57,11 @@ export async function handleFaqGet(request, env, corsHeaders) {
 
 export async function handleFaqGetOne(request, env, corsHeaders, id) {
   try {
-    const row = await env.DB.prepare('SELECT * FROM faq WHERE id = ?').bind(id).first();
+    // Tenant-scoped: prevent cross-tenant FAQ read.
+    const tenantId = resolveTenantId(request, env);
+    const row = await env.DB.prepare(
+      'SELECT * FROM faq WHERE id = ? AND tenant_id = ?',
+    ).bind(id, tenantId).first();
     if (!row) return err('FAQ not found', 404, corsHeaders);
     return ok({ success: true, faq: decorateFaq(row) }, corsHeaders);
   } catch (e) {
@@ -108,7 +112,11 @@ export async function handleFaqPut(request, env, corsHeaders, id) {
   const parsed = await parseJson(request, corsHeaders);
   if (parsed.response) return parsed.response;
   try {
-    const existing = await env.DB.prepare('SELECT * FROM faq WHERE id = ?').bind(id).first();
+    // Tenant-scoped: prevent cross-tenant FAQ mutation.
+    const tenantId = resolveTenantId(request, env);
+    const existing = await env.DB.prepare(
+      'SELECT * FROM faq WHERE id = ? AND tenant_id = ?',
+    ).bind(id, tenantId).first();
     if (!existing) return err('FAQ not found', 404, corsHeaders);
     // Coalesce title/content into question/answer on input.
     const body = { ...parsed.body };
@@ -146,8 +154,10 @@ export async function handleFaqPut(request, env, corsHeaders, id) {
     if (sets.length === 0) return ok({ success: true, faq: decorateFaq(existing) }, corsHeaders);
     sets.push("updated_at = datetime('now')");
     vals.push(id);
-    await env.DB.prepare(`UPDATE faq SET ${sets.join(', ')} WHERE id = ?`).bind(...vals).run();
-    const faq = await env.DB.prepare('SELECT * FROM faq WHERE id = ?').bind(id).first();
+    await env.DB.prepare(`UPDATE faq SET ${sets.join(', ')} WHERE id = ? AND tenant_id = ?`)
+      .bind(...vals, tenantId).run();
+    const faq = await env.DB.prepare('SELECT * FROM faq WHERE id = ? AND tenant_id = ?')
+      .bind(id, tenantId).first();
     // Fire-and-forget: flush genai response cache so the next user query
     // sees the updated FAQ instead of a stale cached LLM answer.
     try {
@@ -163,9 +173,14 @@ export async function handleFaqPut(request, env, corsHeaders, id) {
 
 export async function handleFaqDelete(request, env, corsHeaders, id) {
   try {
-    const existing = await env.DB.prepare('SELECT id FROM faq WHERE id = ?').bind(id).first();
+    // Tenant-scoped: prevent cross-tenant FAQ deletion.
+    const tenantId = resolveTenantId(request, env);
+    const existing = await env.DB.prepare(
+      'SELECT id FROM faq WHERE id = ? AND tenant_id = ?',
+    ).bind(id, tenantId).first();
     if (!existing) return err('FAQ not found', 404, corsHeaders);
-    await env.DB.prepare('DELETE FROM faq WHERE id = ?').bind(id).run();
+    await env.DB.prepare('DELETE FROM faq WHERE id = ? AND tenant_id = ?')
+      .bind(id, tenantId).run();
     try {
       const { invalidateGenaiCache } = await import('../lib/cache-invalidator.mjs');
       await invalidateGenaiCache(env);
