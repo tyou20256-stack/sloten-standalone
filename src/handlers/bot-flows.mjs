@@ -26,7 +26,7 @@ import { signAttachmentUrl, baseUrlOf } from '../auth/attachment-signature.mjs';
 import { resolveEnvForTemplate } from '../env-resolver.mjs';
 import { logError as _logError } from '../audit.mjs';
 import { looksLikeFreeText } from '../lib/text-classify.mjs';
-import { signOutgoingWebhook } from '../lib/webhook-signature.mjs';
+import { signOutgoingWebhook, verifyIncomingWebhook } from '../lib/webhook-signature.mjs';
 import { bestEffortSync } from '../lib/best-effort.mjs';
 import { safeCompileRegex } from '../lib/regex-safety.mjs';
 
@@ -647,12 +647,34 @@ export async function executeFlow(env, conv, contact, inputText, ctx, inputAttrs
           signal: ac.signal,
         });
         clearTimeout(timer);
+        // Receivers may echo `set_vars` / `next` to drive the flow forward —
+        // a spoofed response could inject arbitrary state mutations into the
+        // active conversation (audit L2, 2026-05-13 second pass). If the
+        // signing secret is provisioned AND the receiver signed the reply,
+        // we verify before honouring set_vars/next. Unsigned replies are
+        // accepted but their state-mutating fields are stripped.
+        const respText = await r.text().catch(() => '');
         let data = null;
-        try { data = await r.json(); } catch { /* non-JSON response */ }
+        try { data = JSON.parse(respText); } catch { /* non-JSON response */ }
+        let trustResponseDirectives = false;
+        if (env.WEBHOOK_SIGNING_SECRET) {
+          trustResponseDirectives = await verifyIncomingWebhook(
+            env.WEBHOOK_SIGNING_SECRET, r.headers, respText,
+          );
+        } else {
+          // No secret provisioned — accept directives only when the receiver
+          // is the same trust domain as the outgoing call. Today this is
+          // unverifiable, so we degrade to "messages only" semantics.
+          trustResponseDirectives = false;
+        }
         if (data && typeof data === 'object') {
           if (data.message) messages.push({ content: String(data.message), content_type: 'text' });
-          if (data.set_vars && typeof data.set_vars === 'object') Object.assign(state.vars, data.set_vars);
-          if (data.next) nextStepId = String(data.next);
+          if (trustResponseDirectives) {
+            if (data.set_vars && typeof data.set_vars === 'object') Object.assign(state.vars, data.set_vars);
+            if (data.next) nextStepId = String(data.next);
+          } else if (data.set_vars || data.next) {
+            console.warn('[flow:webhook] ignoring unsigned set_vars/next from', url);
+          }
         }
       } catch (e) {
         console.warn('[flow:webhook]', step.id, e.message);

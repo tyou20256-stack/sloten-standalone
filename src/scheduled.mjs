@@ -81,10 +81,20 @@ export async function handleScheduled(event, env, ctx) {
   }
 
   // --- 4) Daily summary (00:00 UTC = 09:00 JST)
+  // KV-gated per day — CF cron can deliver duplicate invocations within a
+  // single minute (audit M1, 2026-05-13 second pass). Without this the
+  // Telegram daily summary would fire twice on duplicate delivery.
   try {
     const now = new Date();
     if (now.getUTCHours() === 0 && now.getUTCMinutes() === 0) {
-      await runDailySummary(env);
+      const kv = env.SESSION_KV;
+      const dayKey = `scheduled:daily-summary:${new Date().toISOString().slice(0, 10)}`;
+      let alreadyRan = false;
+      if (kv) try { alreadyRan = !!(await kv.get(dayKey)); } catch (_) {}
+      if (!alreadyRan) {
+        await runDailySummary(env);
+        if (kv) try { await kv.put(dayKey, '1', { expirationTtl: 26 * 60 * 60 }); } catch (_) {}
+      }
     }
   } catch (e) {
     console.error('[scheduled] daily summary error:', e.message);
@@ -110,14 +120,20 @@ export async function handleScheduled(event, env, ctx) {
   }
 
   // --- 4a2) Weekly DB ANALYZE (Sunday 18:01 UTC = Monday 03:01 JST)
-  // Refreshes SQLite query planner stats so index decisions stay good as
-  // tables grow. Cheap (~ms) on D1 — runs in the same Sunday window as
-  // FAQ extraction so weekly maintenance is consolidated.
+  // KV-gated per ISO-week so a duplicate cron tick inside the 6-minute window
+  // (00–05) only runs ANALYZE once per Sunday (audit M1, 2026-05-13).
   try {
     const now = new Date();
     if (now.getUTCDay() === 0 && now.getUTCHours() === 18 && now.getUTCMinutes() <= 5) {
-      await env.DB.prepare('ANALYZE').run();
-      console.log('[scheduled] D1 ANALYZE complete');
+      const kv = env.SESSION_KV;
+      const weekKey = `scheduled:analyze:${new Date().toISOString().slice(0, 10)}`;
+      let alreadyRan = false;
+      if (kv) try { alreadyRan = !!(await kv.get(weekKey)); } catch (_) {}
+      if (!alreadyRan) {
+        await env.DB.prepare('ANALYZE').run();
+        if (kv) try { await kv.put(weekKey, '1', { expirationTtl: 7 * 24 * 60 * 60 }); } catch (_) {}
+        console.log('[scheduled] D1 ANALYZE complete');
+      }
     }
   } catch (e) {
     console.error('[scheduled] ANALYZE error:', e.message);
@@ -136,14 +152,22 @@ export async function handleScheduled(event, env, ctx) {
   }
 
   // --- 5) Weekly FAQ extraction
+  // Two-phase commit: write the gate key FIRST so a concurrent cron tick
+  // sees it and bails (audit M2, 2026-05-13). The previous getLast →
+  // extract → setLast pattern was non-atomic: duplicate delivery could
+  // run extractFaqCandidates twice for the same 7-day window before
+  // either invocation updated the timestamp.
   try {
     const last = await getLastExtractionTs(env);
     const now = Date.now();
     if (now - last < WEEK_MS) return; // not yet
-    // Last-7-days scan:
+    // Optimistic gate: stamp the timestamp BEFORE running. If another
+    // invocation already stamped, our `last` read is stale by the time
+    // we get here, but setLastExtractionTs is idempotent and the next
+    // check (which reads the freshly-stamped value) will short-circuit.
+    await setLastExtractionTs(env, now);
     const since = new Date(now - WEEK_MS).toISOString().slice(0, 19).replace('T', ' ');
     const stats = await extractFaqCandidates(env, { sinceIso: since });
-    await setLastExtractionTs(env, now);
     console.log('[scheduled] FAQ extraction:', JSON.stringify(stats));
   } catch (e) {
     console.error('[scheduled] FAQ extraction error:', e.message);

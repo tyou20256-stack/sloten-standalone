@@ -207,9 +207,20 @@ export async function listMessages(request, env, corsHeaders, conversationId, op
   const limit = Math.min(parseInt(url.searchParams.get('limit') || '100', 10), 500);
   // Widget callers are never shown private notes, regardless of query.
   const includePrivate = opts.source === 'widget' ? false : (url.searchParams.get('include_private') === '1');
+  // Cursor pagination (audit M3, 2026-05-13 second pass): `before` and `after`
+  // accept ISO timestamps (or epoch ms). Without this, long-running
+  // conversations silently truncate at the LIMIT and the client has no way to
+  // page further back/forward.
+  const before = url.searchParams.get('before');
+  const after = url.searchParams.get('after');
   let q = 'SELECT * FROM messages WHERE conversation_id = ?';
   const vals = [conversationId];
   if (!includePrivate) q += ' AND is_private = 0';
+  if (before) { q += ' AND created_at < ?'; vals.push(before); }
+  if (after)  { q += ' AND created_at > ?'; vals.push(after); }
+  // ASC by default (transcript order); when paging backwards via `before`
+  // most clients want most-recent first, but ASC preserves transcript
+  // ordering and the client can reverse client-side.
   q += ' ORDER BY created_at ASC LIMIT ?';
   vals.push(limit);
   const { results } = await env.DB.prepare(q).bind(...vals).all();
@@ -217,7 +228,19 @@ export async function listMessages(request, env, corsHeaders, conversationId, op
   // present in content_attributes — clients can then preview via the
   // widget/staff download endpoints.
   const decorated = await fetchAttachmentsForMessages(env, results || []);
-  return ok({ success: true, messages: decorated }, corsHeaders);
+  // Expose cursor info so clients can page reliably. has_more is true when
+  // the page is exactly `limit` rows — there might be one more page.
+  const lastRow = decorated[decorated.length - 1];
+  const hasMore = decorated.length === limit;
+  return ok({
+    success: true,
+    messages: decorated,
+    page: {
+      limit,
+      has_more: hasMore,
+      next_after: lastRow ? lastRow.created_at : null,
+    },
+  }, corsHeaders);
 }
 
 // ─── sendMessage internals ──────────────────────────────────────────

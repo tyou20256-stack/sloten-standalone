@@ -57,10 +57,13 @@ async function getEnabledBonusRows(env, tenantId) {
   ).bind(key).all();
   // Pre-parse the JSON codes array once so per-message matching is allocation
   // free. matchOne expects a string array.
-  const rows = (results || []).map((row) => ({
+  // Object.freeze each row + the array (audit M4, 2026-05-13 second pass):
+  // the cache is shared across requests in the isolate. A future caller that
+  // mutates a row would silently corrupt every subsequent reply.
+  const rows = Object.freeze((results || []).map((row) => Object.freeze({
     ...row,
-    _parsedCodes: parseJson(row.codes, []) || [],
-  }));
+    _parsedCodes: Object.freeze(parseJson(row.codes, []) || []),
+  })));
   BONUS_ROW_CACHE.set(key, { rows, expires: Date.now() + BONUS_ROW_TTL_MS });
   return rows;
 }

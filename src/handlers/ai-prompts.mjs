@@ -102,7 +102,9 @@ async function getActivePromptRows(env, tenantId) {
   const { results } = await env.DB.prepare(
     'SELECT id, name, system_prompt, weight FROM ai_prompts WHERE tenant_id = ? AND is_active = 1 AND weight > 0'
   ).bind(key).all();
-  const rows = results || [];
+  // Freeze rows + array so a stray caller mutation can't poison the cache
+  // (audit M5, 2026-05-13 second pass).
+  const rows = Object.freeze((results || []).map((r) => Object.freeze(r)));
   PROMPT_ROW_CACHE.set(key, { rows, expires: Date.now() + PROMPT_ROW_TTL_MS });
   return rows;
 }
