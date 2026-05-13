@@ -11,7 +11,10 @@ export async function dashboardStats(request, env, corsHeaders) {
   const queries = await Promise.all([
     env.DB.prepare(`SELECT COUNT(*) n FROM faq WHERE tenant_id = ?`).bind(tenantId).first(),
     env.DB.prepare(`SELECT COUNT(*) n FROM templates WHERE tenant_id = ?`).bind(tenantId).first(),
-    env.DB.prepare(`SELECT COUNT(*) n FROM knowledge_sources`).first(),
+    // Tenant-scoped count (knowledge_sources got tenant_id in migration 026;
+    // exposing the global count from a tenant-scoped dashboard was a small
+    // cross-tenant leak — fixed 2026-05-13 second-pass audit).
+    env.DB.prepare(`SELECT COUNT(*) n FROM knowledge_sources WHERE tenant_id = ?`).bind(tenantId).first(),
     env.DB.prepare(`SELECT status, COUNT(*) n FROM conversations WHERE tenant_id = ? GROUP BY status`).bind(tenantId).all(),
     env.DB.prepare(`SELECT COUNT(*) n FROM contacts WHERE tenant_id = ?`).bind(tenantId).first(),
     env.DB.prepare(`SELECT COUNT(*) n FROM staff_members WHERE is_active = 1`).first(),

@@ -16,13 +16,19 @@
 
 import { ok, err } from '../json.mjs';
 import { revokeAllContactTokens } from '../auth/contact-token.mjs';
+import { resolveTenantId } from '../tenant-scope.mjs';
 
 /** GET /api/admin/gdpr/contact/:id */
 export async function exportContactData(request, env, corsHeaders, contactId) {
   if (!contactId) return err('contact_id required', 400, corsHeaders);
 
   try {
-    const contact = await env.DB.prepare(`SELECT * FROM contacts WHERE id = ?`).bind(contactId).first();
+    // Tenant-scoped: a tenant-A admin must not be able to export contact
+    // PII belonging to tenant B by UUID guess (2026-05-13 audit, second pass).
+    const tenantId = resolveTenantId(request, env);
+    const contact = await env.DB.prepare(
+      `SELECT * FROM contacts WHERE id = ? AND tenant_id = ?`,
+    ).bind(contactId, tenantId).first();
     if (!contact) return err('Contact not found', 404, corsHeaders);
 
     // Audit-log the export — accessing all PII for a contact is a sensitive
@@ -44,9 +50,11 @@ export async function exportContactData(request, env, corsHeaders, contactId) {
       console.warn('[gdpr.export] audit_log failed:', auditErr?.message);
     }
 
+    // All downstream queries are constrained to (contact_id, tenant_id) —
+    // belt-and-braces over the contact tenant check above.
     const conversations = await env.DB.prepare(
-      `SELECT * FROM conversations WHERE contact_id = ? ORDER BY created_at ASC`,
-    ).bind(contactId).all();
+      `SELECT * FROM conversations WHERE contact_id = ? AND tenant_id = ? ORDER BY created_at ASC`,
+    ).bind(contactId, tenantId).all();
     const convIds = (conversations.results || []).map((c) => c.id);
 
     let messages = [];
@@ -55,8 +63,9 @@ export async function exportContactData(request, env, corsHeaders, contactId) {
       const placeholders = convIds.map(() => '?').join(',');
       const msgRes = await env.DB.prepare(
         `SELECT id, conversation_id, sender_type, sender_id, content, content_type, created_at
-           FROM messages WHERE conversation_id IN (${placeholders}) ORDER BY created_at ASC`,
-      ).bind(...convIds).all();
+           FROM messages WHERE conversation_id IN (${placeholders}) AND tenant_id = ?
+           ORDER BY created_at ASC`,
+      ).bind(...convIds, tenantId).all();
       messages = msgRes.results || [];
 
       const attRes = await env.DB.prepare(
@@ -98,15 +107,21 @@ export async function eraseContactData(request, env, corsHeaders, contactId) {
   }
 
   try {
-    const contact = await env.DB.prepare(`SELECT id, email, tenant_id FROM contacts WHERE id = ?`).bind(contactId).first();
+    // Tenant-scoped: cross-tenant erase is the worst-case for this endpoint —
+    // a tenant-A admin must not be able to wipe another tenant's customer
+    // (2026-05-13 audit, second pass — was an explicit CWE-639 hit).
+    const tenantId = resolveTenantId(request, env);
+    const contact = await env.DB.prepare(
+      `SELECT id, email, tenant_id FROM contacts WHERE id = ? AND tenant_id = ?`,
+    ).bind(contactId, tenantId).first();
     if (!contact) return err('Contact not found', 404, corsHeaders);
 
-    // Anonymize contact PII
+    // Anonymize contact PII — scoped to the caller's tenant for defense in depth.
     await env.DB.prepare(
       `UPDATE contacts SET name='[ERASED]', email=NULL, phone=NULL, metadata=NULL,
               avatar_url=NULL, external_id=NULL, updated_at=datetime('now')
-        WHERE id = ?`,
-    ).bind(contactId).run();
+        WHERE id = ? AND tenant_id = ?`,
+    ).bind(contactId, tenantId).run();
 
     // Revoke any outstanding widget tokens — without this, the contact's
     // localStorage-cached token would continue to work for up to 7 days,
@@ -115,15 +130,17 @@ export async function eraseContactData(request, env, corsHeaders, contactId) {
 
     // Anonymize message content for this contact's conversations.
     // Keep id/conversation_id/created_at/sender_type for analytics.
-    const convs = await env.DB.prepare(`SELECT id FROM conversations WHERE contact_id = ?`).bind(contactId).all();
+    const convs = await env.DB.prepare(
+      `SELECT id FROM conversations WHERE contact_id = ? AND tenant_id = ?`,
+    ).bind(contactId, tenantId).all();
     const convIds = (convs.results || []).map((c) => c.id);
     let msgsErased = 0;
     if (convIds.length > 0) {
       const placeholders = convIds.map(() => '?').join(',');
       const r = await env.DB.prepare(
         `UPDATE messages SET content='[ERASED]', content_attributes=NULL
-          WHERE conversation_id IN (${placeholders})`,
-      ).bind(...convIds).run();
+          WHERE conversation_id IN (${placeholders}) AND tenant_id = ?`,
+      ).bind(...convIds, tenantId).run();
       msgsErased = r.meta?.changes || 0;
     }
 

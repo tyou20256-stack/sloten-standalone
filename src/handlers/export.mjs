@@ -42,9 +42,10 @@ const RESOURCES = {
     query: (tenantId) => `SELECT * FROM templates WHERE tenant_id = ? ORDER BY id DESC`,
   },
   knowledge: {
-    columns: ['id', 'title', 'url', 'category', 'content', 'source_type', 'priority', 'is_active', 'created_at', 'updated_at'],
-    query: () => `SELECT * FROM knowledge_sources ORDER BY id DESC`,
-    noTenant: true,
+    // migration 026 added knowledge_sources.tenant_id — exporters must scope.
+    // Previously `noTenant: true` returned cross-tenant rows (2026-05-13 audit).
+    columns: ['id', 'tenant_id', 'title', 'url', 'category', 'content', 'source_type', 'priority', 'is_active', 'created_at', 'updated_at'],
+    query: () => `SELECT * FROM knowledge_sources WHERE tenant_id = ? ORDER BY id DESC`,
   },
   staff: {
     columns: ['id', 'tenant_id', 'email', 'name', 'role', 'is_active', 'phone', 'department', 'language', 'last_login_at', 'created_at', 'updated_at'],

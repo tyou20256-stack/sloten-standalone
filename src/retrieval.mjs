@@ -179,11 +179,14 @@ export async function retrievalLegacy(env, tenantId, faqLimit, kbLimit) {
          FROM faq WHERE tenant_id = ? AND is_active = 1
          ORDER BY priority DESC, usage_count DESC LIMIT ?`,
     ).bind(tenantId, faqLimit).all(),
+    // Tenant-scoped KB lookup (migration 026 added knowledge_sources.tenant_id).
+    // Without this filter, a tenant-A bot reply could be grounded against
+    // tenant-B's KB content (CWE-639 RAG-side; 2026-05-13 second-pass audit).
     env.DB.prepare(
       `SELECT id, title, content
-         FROM knowledge_sources WHERE is_active = 1
+         FROM knowledge_sources WHERE tenant_id = ? AND is_active = 1
          ORDER BY priority DESC, id DESC LIMIT ?`,
-    ).bind(kbLimit).all(),
+    ).bind(tenantId, kbLimit).all(),
   ]);
   return {
     faqRows: faq.results || [],
@@ -199,22 +202,30 @@ async function retrievalFts5(env, tenantId, userQuery, faqLimit, kbLimit, useChu
   if (!q) return null;
 
   try {
+    // Tenant-scoped KB queries (CWE-639 fix, 2026-05-13 second-pass audit).
+    // Both kb_fts and kb_chunks_fts join back to knowledge_sources, which
+    // since migration 026 carries tenant_id. For kb_chunks_fts the chunk row
+    // links to its source via knowledge_chunks.source_id → knowledge_sources.
     const kbQuery = useChunks
       ? env.DB.prepare(
           `SELECT c.id, c.heading_path AS title, c.content, bm25(kb_chunks_fts) AS score
              FROM kb_chunks_fts
              JOIN knowledge_chunks c ON c.id = kb_chunks_fts.rowid
+             JOIN knowledge_sources ks ON ks.id = c.source_id
             WHERE kb_chunks_fts MATCH ?
+              AND ks.tenant_id = ?
+              AND ks.is_active = 1
             ORDER BY score LIMIT ?`,
-        ).bind(q, kbLimit)
+        ).bind(q, tenantId, kbLimit)
       : env.DB.prepare(
           `SELECT k.id, k.title, k.content, bm25(kb_fts) AS score
              FROM kb_fts
              JOIN knowledge_sources k ON k.id = kb_fts.rowid
             WHERE kb_fts MATCH ?
+              AND k.tenant_id = ?
               AND k.is_active = 1
             ORDER BY score LIMIT ?`,
-        ).bind(q, kbLimit);
+        ).bind(q, tenantId, kbLimit);
 
     const [faq, kb] = await Promise.all([
       env.DB.prepare(
@@ -249,19 +260,26 @@ async function retrievalHybrid(env, tenantId, userQuery, faqLimit, kbLimit) {
   if (!q) return null;
   try {
     // Dense query — tenantId required (fail-closed cross-tenant guard).
+    // The Vectorize ID format `${tenant_id}:kb_${id}` already namespaces vectors
+    // per tenant, AND the metadata index includes tenant_id — so the filter
+    // here mirrors the BM25-side tenant check below for defense in depth.
     const denseMatches = await vectorizeQueryInternal(env, userQuery, {
       tenantId,
       topK: kbLimit * 2,
-      filter: { kind: 'kb_chunk' },
+      filter: { kind: 'kb_chunk', tenant_id: tenantId },
     });
-    // BM25 on chunks
+    // BM25 on chunks — tenant-scoped via knowledge_sources join (CWE-639 fix,
+    // 2026-05-13 second-pass audit).
     const { results: chunkBm25 } = await env.DB.prepare(
       `SELECT c.id, c.heading_path AS title, c.content, bm25(kb_chunks_fts) AS score
          FROM kb_chunks_fts
          JOIN knowledge_chunks c ON c.id = kb_chunks_fts.rowid
+         JOIN knowledge_sources ks ON ks.id = c.source_id
         WHERE kb_chunks_fts MATCH ?
+          AND ks.tenant_id = ?
+          AND ks.is_active = 1
         ORDER BY score LIMIT ?`,
-    ).bind(q, kbLimit * 2).all();
+    ).bind(q, tenantId, kbLimit * 2).all();
     // FAQ FTS5 (unchanged — small corpus)
     const { results: faqRes } = await env.DB.prepare(
       `SELECT f.id, f.question, f.answer, f.category, bm25(faq_fts) AS score
