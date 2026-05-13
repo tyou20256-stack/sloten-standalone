@@ -57,54 +57,87 @@ function sanitizeFtsQuery(text) {
   return tokens.map((t) => `"${t.replace(/"/g, '""')}"`).join(' OR ');
 }
 
+// Per-isolate cache for the 3 retrieval-feature probes. Each probe runs 2-3
+// sequential D1 reads (sqlite_master + feature_flags + EXISTS). On every
+// AI-bot message we previously executed all 8 of those reads before BM25 even
+// started — ~80-200 ms of sequential D1 wait time, every reply (Perf audit
+// 2026-05-13 H1). Probes are effectively static at the isolate level: a
+// schema change (rare) plus an admin feature-flag toggle (also rare) both
+// involve a deploy/cron pause. 60 s TTL bounds staleness for the toggle case.
+const PROBE_CACHE = { hasFts: null, hasChunks: null, hasVectorize: null };
+const PROBE_TTL_MS = 60_000;
+function cacheFresh(entry) {
+  return entry && entry.expires > Date.now();
+}
+function cachePut(key, value) {
+  PROBE_CACHE[key] = { value, expires: Date.now() + PROBE_TTL_MS };
+}
+function cacheGet(key) {
+  return cacheFresh(PROBE_CACHE[key]) ? PROBE_CACHE[key].value : undefined;
+}
+
 async function ftsAvailable(env) {
+  const cached = cacheGet('hasFts');
+  if (cached !== undefined) return cached;
+  let value = false;
   try {
     const r = await env.DB.prepare(
       `SELECT name FROM sqlite_master WHERE type='table' AND name='faq_fts'`,
     ).first();
-    return !!r;
-  } catch {
-    return false;
-  }
+    value = !!r;
+  } catch { value = false; }
+  cachePut('hasFts', value);
+  return value;
 }
 
 // Phase 2 B: prefer chunk-level retrieval when chunks have been populated
 // (scripts/chunk-knowledge.mjs --apply). Falls back to whole-document kb_fts
 // when the chunks table is empty.
 async function chunksAvailable(env) {
+  const cached = cacheGet('hasChunks');
+  if (cached !== undefined) return cached;
+  let value = false;
   try {
     const flag = await env.DB.prepare(
       `SELECT value FROM feature_flags WHERE key = 'retrieval.use_chunks'`,
     ).first();
-    if (flag?.value !== '1') return false;
-    const tbl = await env.DB.prepare(
-      `SELECT name FROM sqlite_master WHERE type='table' AND name='kb_chunks_fts'`,
-    ).first();
-    if (!tbl) return false;
-    const cnt = await env.DB.prepare(
-      `SELECT COUNT(*) AS n FROM knowledge_chunks`,
-    ).first();
-    return (cnt?.n || 0) > 0;
-  } catch {
-    return false;
-  }
+    if (flag?.value === '1') {
+      const tbl = await env.DB.prepare(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='kb_chunks_fts'`,
+      ).first();
+      if (tbl) {
+        // EXISTS (LIMIT 1) instead of COUNT(*) — same boolean answer, but
+        // scan terminates on the first row rather than counting all rows.
+        const has = await env.DB.prepare(
+          `SELECT 1 FROM knowledge_chunks LIMIT 1`,
+        ).first();
+        value = !!has;
+      }
+    }
+  } catch { value = false; }
+  cachePut('hasChunks', value);
+  return value;
 }
 
 // Phase 2b C: hybrid with Vectorize dense retrieval when flag is on.
 async function vectorizeAvailable(env) {
   if (!env.VECTORIZE || !env.AI) return false;
+  const cached = cacheGet('hasVectorize');
+  if (cached !== undefined) return cached;
+  let value = false;
   try {
     const flag = await env.DB.prepare(
       `SELECT value FROM feature_flags WHERE key = 'retrieval.use_vectorize'`,
     ).first();
-    if (flag?.value !== '1') return false;
-    const state = await env.DB.prepare(
-      `SELECT item_count FROM vectorize_index_state WHERE kind = 'kb_chunks'`,
-    ).first();
-    return (state?.item_count || 0) > 0;
-  } catch {
-    return false;
-  }
+    if (flag?.value === '1') {
+      const state = await env.DB.prepare(
+        `SELECT item_count FROM vectorize_index_state WHERE kind = 'kb_chunks'`,
+      ).first();
+      value = (state?.item_count || 0) > 0;
+    }
+  } catch { value = false; }
+  cachePut('hasVectorize', value);
+  return value;
 }
 
 // Reciprocal Rank Fusion — merges 2+ ranked lists into one by summing
@@ -296,15 +329,24 @@ export async function retrieveContext(env, tenantId, userQuery, opts = {}) {
   const faqLimit = opts.faqLimit || 10;
   const kbLimit = opts.kbLimit || 6;
 
+  // Resolve all three probes once and reuse — eliminates the duplicate
+  // chunksAvailable() invocations the old code path made (Perf audit H1).
+  // Each call now hits the per-isolate cache after the first run.
+  const [hasVectorize, hasChunks, hasFts] = await Promise.all([
+    vectorizeAvailable(env),
+    chunksAvailable(env),
+    ftsAvailable(env),
+  ]);
+
   // Phase 2b: Hybrid RRF path — only when Vectorize + chunks are both active.
-  if (await vectorizeAvailable(env) && await chunksAvailable(env)) {
+  if (hasVectorize && hasChunks) {
     const hybrid = await retrievalHybrid(env, tenantId, userQuery, faqLimit, kbLimit);
     if (hybrid) return hybrid;
     // fall through to FTS-only on hybrid failure
   }
 
-  if (await ftsAvailable(env)) {
-    const useChunks = await chunksAvailable(env);
+  if (hasFts) {
+    const useChunks = hasChunks;
     const fts = await retrievalFts5(env, tenantId, userQuery, faqLimit, kbLimit, useChunks);
     // If FTS returned at least one result we trust it. Otherwise blend with
     // priority fallback so the LLM still has general-purpose context.

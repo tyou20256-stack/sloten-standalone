@@ -254,6 +254,18 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
     };
   }
 
+  // 0.5) Non-Japanese language short-circuit — must happen BEFORE the
+  //    expensive RAG retrieval / pachi HTTP / announcement HTTP calls below.
+  //    Previously this fired after all three (Perf audit M5, 2026-05-13).
+  //    Pure-language detection is a few microseconds and saves 50-150 ms of
+  //    needless I/O for non-Japanese inputs.
+  if (isNonJapaneseQuery(customerMessage)) {
+    return {
+      content: '申し訳ございませんが、現在は日本語のみの対応となっております。日本語でご質問いただけますでしょうか。',
+      content_type: 'text',
+    };
+  }
+
   // 1) Keyword menu short-circuit — if the user's message matches a configured
   //    regex, skip the LLM entirely and return a menu instead. Much faster and
   //    zero AI cost for well-known intents.
@@ -444,13 +456,7 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
 
   const maskedInput = maskPII(customerMessage || '');
 
-  // Non-Japanese language short-circuit — see lib/text-classify.mjs.
-  if (isNonJapaneseQuery(customerMessage)) {
-    return {
-      content: '申し訳ございませんが、現在は日本語のみの対応となっております。日本語でご質問いただけますでしょうか。',
-      content_type: 'text',
-    };
-  }
+  // (Non-Japanese language short-circuit moved earlier — see step 0.5 above.)
 
   // Input threat detection — block prompt injection / data extraction before
   // sending to the LLM. This saves an API call and prevents adversarial inputs

@@ -130,6 +130,28 @@ export async function findDefaultMenu(env, tenantId) {
   return decorate(row);
 }
 
+// Per-isolate compiled-RegExp cache, same pattern as bot-flows.mjs. Saves
+// re-compilation on every customer message (Perf audit H4, 2026-05-13).
+const KEYWORD_RE_CACHE = new Map();
+const KEYWORD_RE_CACHE_MAX = 128;
+
+function compiledMenuRe(row) {
+  const key = `${row.id}:${row.updated_at || row.created_at || ''}`;
+  let re = KEYWORD_RE_CACHE.get(key);
+  if (re !== undefined) return re;
+  try {
+    re = new RegExp(row.trigger_value);
+  } catch {
+    re = null;
+  }
+  if (KEYWORD_RE_CACHE.size >= KEYWORD_RE_CACHE_MAX) {
+    const oldestKey = KEYWORD_RE_CACHE.keys().next().value;
+    KEYWORD_RE_CACHE.delete(oldestKey);
+  }
+  KEYWORD_RE_CACHE.set(key, re);
+  return re;
+}
+
 export async function findKeywordMenu(env, tenantId, userText) {
   const text = String(userText || '');
   if (!text) return null;
@@ -138,10 +160,8 @@ export async function findKeywordMenu(env, tenantId, userText) {
      ORDER BY priority DESC, id ASC`
   ).bind(tenantId).all();
   for (const row of (results || [])) {
-    try {
-      const re = new RegExp(row.trigger_value);
-      if (re.test(text)) return decorate(row);
-    } catch { /* invalid regex at runtime — skip */ }
+    const re = compiledMenuRe(row);
+    if (re && re.test(text)) return decorate(row);
   }
   return null;
 }

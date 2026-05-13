@@ -36,22 +36,51 @@ export function matchOne(codes, normalizedInput, matchMode) {
   return null;
 }
 
+// Per-isolate cache for the bonus_codes rowset. Every customer message used
+// to hit this query even when the message had no chance of matching any code
+// (Perf audit H3, 2026-05-13). Now we:
+//   1. Short-circuit when the normalized input is too short or has no
+//      alphanumeric character (codes always contain letters/digits).
+//   2. Cache the parsed rowset per tenant for 60 s. Admin CRUD bumps
+//      updated_at, so refreshing every minute keeps staleness bounded.
+const BONUS_ROW_CACHE = new Map();
+const BONUS_ROW_TTL_MS = 60_000;
+
+async function getEnabledBonusRows(env, tenantId) {
+  const key = tenantId || 'tenant_default';
+  const entry = BONUS_ROW_CACHE.get(key);
+  if (entry && entry.expires > Date.now()) return entry.rows;
+  const { results } = await env.DB.prepare(
+    `SELECT * FROM bonus_codes
+        WHERE tenant_id = ? AND enabled = 1
+        ORDER BY priority DESC, id ASC`,
+  ).bind(key).all();
+  // Pre-parse the JSON codes array once so per-message matching is allocation
+  // free. matchOne expects a string array.
+  const rows = (results || []).map((row) => ({
+    ...row,
+    _parsedCodes: parseJson(row.codes, []) || [],
+  }));
+  BONUS_ROW_CACHE.set(key, { rows, expires: Date.now() + BONUS_ROW_TTL_MS });
+  return rows;
+}
+
 // Returns { matched: true, row, code } where `row` is the bonus_codes row
 // and `code` is the canonical code string that matched. When no code
 // matches, returns { matched: false }.
 export async function matchBonusCode(env, tenantId, text) {
   const normalized = removeSpaces(text);
   if (!normalized) return { matched: false };
+  // Bonus codes always include at least one alphanumeric character; bail out
+  // early on pure punctuation/whitespace input to avoid the rowset fetch +
+  // per-row linear scan on greetings / menu clicks.
+  if (!/[\p{L}\p{N}]/u.test(normalized)) return { matched: false };
 
-  const { results } = await env.DB.prepare(
-    `SELECT * FROM bonus_codes
-        WHERE tenant_id = ? AND enabled = 1
-        ORDER BY priority DESC, id ASC`,
-  ).bind(tenantId || 'tenant_default').all();
+  const rows = await getEnabledBonusRows(env, tenantId);
 
-  for (const row of results || []) {
-    const codes = parseJson(row.codes, []);
-    if (!Array.isArray(codes) || !codes.length) continue;
+  for (const row of rows) {
+    const codes = row._parsedCodes;
+    if (!codes.length) continue;
     const hit = matchOne(codes, normalized, row.match_mode);
     if (hit) return { matched: true, row, code: hit };
   }

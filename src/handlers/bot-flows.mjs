@@ -53,15 +53,24 @@ function getCachedSteps(row) {
   if (!row) return null;
   // updated_at acts as a version key — any admin edit forces re-parse.
   const key = `${row.id}:${row.updated_at || ''}`;
-  let parsed = PARSED_FLOW_CACHE.get(key);
-  if (parsed) return parsed;
-  parsed = parseSteps(row.steps) || [];
+  const parsed = PARSED_FLOW_CACHE.get(key);
+  if (parsed) {
+    // True LRU: promote to most-recently-used so the eviction below targets
+    // genuinely cold entries instead of the hottest one (Perf audit M4,
+    // 2026-05-13 — `sloten-main` was being evicted first under load because
+    // Map iterator is insertion order and it had been inserted first).
+    PARSED_FLOW_CACHE.delete(key);
+    PARSED_FLOW_CACHE.set(key, parsed);
+    return parsed;
+  }
+  const next = parseSteps(row.steps) || [];
   if (PARSED_FLOW_CACHE.size >= PARSED_FLOW_CACHE_MAX) {
+    // Evict the oldest insertion (least-recently-used after the promote-on-read).
     const firstKey = PARSED_FLOW_CACHE.keys().next().value;
     PARSED_FLOW_CACHE.delete(firstKey);
   }
-  PARSED_FLOW_CACHE.set(key, parsed);
-  return parsed;
+  PARSED_FLOW_CACHE.set(key, next);
+  return next;
 }
 
 function validateSteps(steps) {
@@ -222,6 +231,30 @@ function findStep(flow, stepId) {
   return (flow.steps || []).find((s) => s.id === stepId) || null;
 }
 
+// Per-isolate cache for the compiled trigger regex of every entry flow.
+// Previously each customer message recompiled `new RegExp(row.trigger_value)`
+// for every active row (Perf audit H4, 2026-05-13). Now we cache the compiled
+// regex keyed by `${id}:${updated_at}` so admin edits invalidate naturally.
+const ENTRY_FLOW_RE_CACHE = new Map();
+const ENTRY_FLOW_RE_CACHE_MAX = 128;
+
+function compiledTriggerRe(row) {
+  const key = `${row.id}:${row.updated_at || row.created_at || ''}`;
+  let re = ENTRY_FLOW_RE_CACHE.get(key);
+  if (re !== undefined) return re;
+  try {
+    re = new RegExp(row.trigger_value);
+  } catch {
+    re = null;
+  }
+  if (ENTRY_FLOW_RE_CACHE.size >= ENTRY_FLOW_RE_CACHE_MAX) {
+    const oldestKey = ENTRY_FLOW_RE_CACHE.keys().next().value;
+    ENTRY_FLOW_RE_CACHE.delete(oldestKey);
+  }
+  ENTRY_FLOW_RE_CACHE.set(key, re);
+  return re;
+}
+
 // Pick matching entry flow. Returns null if none matches.
 export async function findEntryFlow(env, tenantId, userText) {
   const text = String(userText || '');
@@ -231,10 +264,8 @@ export async function findEntryFlow(env, tenantId, userText) {
      ORDER BY priority DESC, id ASC`
   ).bind(tenantId).all();
   for (const row of (results || [])) {
-    try {
-      const re = new RegExp(row.trigger_value);
-      if (re.test(text)) return decorate(row);
-    } catch { /* skip */ }
+    const re = compiledTriggerRe(row);
+    if (re && re.test(text)) return decorate(row);
   }
   return null;
 }

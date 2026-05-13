@@ -156,7 +156,13 @@ export async function sendMessage(request, env, corsHeaders, conversationId, opt
     // the first non-null short-circuits the rest.
     if (senderType === 'customer' && conv.status === 'bot') {
       try {
-        const fresh = await env.DB.prepare('SELECT * FROM conversations WHERE id = ?').bind(conversationId).first();
+        // Skip the redundant conversation re-fetch when no intervening UPDATE
+        // happened (Perf audit M1, 2026-05-13). reset_flow=true is the only
+        // path that mutates flow_state above; otherwise `conv` is still current.
+        const flowReset = isWidget && body.reset_flow === true;
+        const fresh = flowReset
+          ? await env.DB.prepare('SELECT * FROM conversations WHERE id = ?').bind(conversationId).first()
+          : conv;
         const contact = fresh?.contact_id
           ? await env.DB.prepare('SELECT * FROM contacts WHERE id = ?').bind(fresh.contact_id).first()
           : null;

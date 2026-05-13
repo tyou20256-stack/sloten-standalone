@@ -87,13 +87,30 @@ export async function deletePrompt(request, env, corsHeaders, id) {
   return ok({ success: true }, corsHeaders);
 }
 
+// Per-isolate cache for the active prompt rowset. Admin edits (create/update/
+// delete) bump the rows' updated_at — we key the cache by tenantId and refresh
+// every 60 s. Hot path saves 1 D1 read per AI reply (~10-30 ms p50). Each
+// invocation still does its own weighted-random pick from the cached rows, so
+// the A/B split semantics are unchanged.
+const PROMPT_ROW_CACHE = new Map();
+const PROMPT_ROW_TTL_MS = 60_000;
+
+async function getActivePromptRows(env, tenantId) {
+  const key = tenantId || 'tenant_default';
+  const entry = PROMPT_ROW_CACHE.get(key);
+  if (entry && entry.expires > Date.now()) return entry.rows;
+  const { results } = await env.DB.prepare(
+    'SELECT id, name, system_prompt, weight FROM ai_prompts WHERE tenant_id = ? AND is_active = 1 AND weight > 0'
+  ).bind(key).all();
+  const rows = results || [];
+  PROMPT_ROW_CACHE.set(key, { rows, expires: Date.now() + PROMPT_ROW_TTL_MS });
+  return rows;
+}
+
 // Internal: pick an active prompt using weighted-random; falls back to null
 // if no active prompts exist (adapter will use its hard-coded default).
 export async function pickActivePrompt(env, tenantId) {
-  const { results } = await env.DB.prepare(
-    'SELECT id, name, system_prompt, weight FROM ai_prompts WHERE tenant_id = ? AND is_active = 1 AND weight > 0'
-  ).bind(tenantId || 'tenant_default').all();
-  const rows = results || [];
+  const rows = await getActivePromptRows(env, tenantId);
   if (rows.length === 0) return null;
   const total = rows.reduce((s, r) => s + r.weight, 0);
   let pick = Math.random() * total;
