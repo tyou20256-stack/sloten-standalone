@@ -14,8 +14,8 @@
     "smoke": "node scripts/dev-smoke.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:property": "node tests/property/sanitize.test.mjs && node tests/property/pii-masker.test.mjs && node tests/property/escalation-fp.test.mjs && node tests/property/rate-limiter.test.mjs && node tests/property/webhook-signature.test.mjs && node tests/property/bonus-codes.test.mjs",
-    "test:integration": "node tests/integration/lifecycle.test.mjs && node tests/integration/security-tier1-tier2.test.mjs",
+    "test:property": "node tests/property/sanitize.test.mjs && node tests/property/pii-masker.test.mjs && node tests/property/escalation-fp.test.mjs && node tests/property/rate-limiter.test.mjs && node tests/property/webhook-signature.test.mjs && node tests/property/bonus-codes.test.mjs && node tests/property/regex-safety.test.mjs && node tests/property/flow-state-version.test.mjs",
+    "test:integration": "node tests/integration/lifecycle.test.mjs && node tests/integration/security-tier1-tier2.test.mjs && node tests/integration/api-versioning-and-trace.test.mjs",
     "lint:migrations": "node scripts/lint-migrations.mjs",
     "drift:check": "node scripts/check-config-drift.mjs",
     "smoke:migrations": "node scripts/migration-replay-smoke.mjs"

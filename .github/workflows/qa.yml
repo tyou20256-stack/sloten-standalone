@@ -185,6 +185,26 @@ jobs:
           fi
           echo "::notice::Worker bundle size: $SIZE bytes"
 
+  # Aggregator: a single required check that fans-in every PR-gating job.
+  # Without this, GitHub's branch-protection rules have to list each job
+  # individually — and a newly-added job is not automatically required.
+  # Add `pr-gate` to required checks once and every job listed in `needs:`
+  # becomes blocking automatically (audit Test-L10, 2026-05-13 second pass).
+  pr-gate:
+    name: PR gate (all required checks)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    needs:
+      - golden-set
+      - lint-secrets
+      - config-drift
+      - property-tests
+      - migration-lint
+      - migration-replay-smoke
+      - bundle-size
+    steps:
+      - run: echo "All required PR checks passed."
+
   # Optional: trigger after merge to main only
   k6-mini:
     name: k6 mini-soak (5VUs × 60s)

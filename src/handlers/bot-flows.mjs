@@ -334,11 +334,15 @@ export function buildFlowStateJson(flowId, stepId, vars = {}) {
 // treated as v1 — the shape predates this guard and is still understood.
 // Anything beyond SUPPORTED_FLOW_STATE_VERSIONS triggers a controlled
 // restart rather than a silent crash.
-function isStateVersionSupported(rawState) {
+// Exported for unit tests (tests/property/flow-state-version.test.mjs).
+export function isStateVersionSupported(rawState) {
   if (!rawState || typeof rawState !== 'object') return false;
   const v = typeof rawState.v === 'number' ? rawState.v : 1;
   return SUPPORTED_FLOW_STATE_VERSIONS.has(v);
 }
+
+// Exported so tests can assert the current stamping behaviour.
+export const _FLOW_STATE_VERSION_INTERNAL = FLOW_STATE_VERSION;
 
 // Produce the bot message(s) that should be sent for the current step,
 // advancing state when possible. Returns an array of message specs:
