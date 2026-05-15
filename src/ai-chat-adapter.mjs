@@ -541,13 +541,29 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
       try {
         result = await callGemini(env.GEMINI_API_KEY, system, maskedInput, model);
       } catch (geminiErr) {
-        // Provider fallback: Gemini exhausted retries with HTTP 5xx → if
-        // Anthropic key present, try Haiku as fallback. This pushes error_rate
-        // toward 0 during Gemini outages without changing user-facing UX.
-        // Only triggers on transient HTTP errors — auth/quota errors fail through.
-        const isTransient = /Gemini HTTP (429|502|503|504)/.test(geminiErr.message);
-        if (isTransient && env.ANTHROPIC_API_KEY) {
-          console.warn('[ai-chat] Gemini exhausted — falling back to Anthropic Haiku');
+        // Provider fallback: when Gemini is unavailable *for us* and an
+        // Anthropic key is present, fail over to Haiku. This pushes
+        // error_rate toward 0 during Gemini outages without changing
+        // user-facing UX.
+        //
+        // Failover-eligible classes (geminiErr.message):
+        //   - Transient HTTP: 429 / 502 / 503 / 504 — retry exhausted.
+        //   - Key/account dead: 403 CONSUMER_SUSPENDED, API key suspended,
+        //     billing/quota disabled. Retrying Gemini is pointless but
+        //     Anthropic is unaffected. (2026-05-15 incident: the staging
+        //     GEMINI_API_KEY was suspended by Google and zeroed the bot
+        //     because a bare 403 wasn't classified failover-eligible.)
+        //
+        // NOT failover-eligible: request-specific 400s, safety blocks,
+        // malformed-prompt 403s — those would fail the same way on any
+        // provider, so we surface them rather than double-spend.
+        const msg = geminiErr.message || '';
+        const isTransient = /Gemini HTTP (429|502|503|504)/.test(msg);
+        const isProviderDead = /Gemini HTTP 403/.test(msg)
+          && /(CONSUMER_SUSPENDED|has been suspended|SERVICE_DISABLED|billing|consumer_suspended)/i.test(msg);
+        const failoverEligible = isTransient || isProviderDead;
+        if (failoverEligible && env.ANTHROPIC_API_KEY) {
+          console.warn(`[ai-chat] Gemini unavailable (${isProviderDead ? 'key/account suspended' : 'transient'}) — falling back to Anthropic Haiku`);
           const fbModel = env.ANTHROPIC_MODEL || 'claude-haiku-4-5';
           result = await callAnthropic(env.ANTHROPIC_API_KEY, system, maskedInput, fbModel);
           providerFallback = 'anthropic';
