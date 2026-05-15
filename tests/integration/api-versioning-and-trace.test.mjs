@@ -44,6 +44,16 @@ await step('/api/v1/widget/contacts (POST) creates a contact like /api/widget/co
   assert.ok(body.contact_token, 'contact token missing');
 });
 
+await step('/api/v1 alias reaches ROUTES-table endpoints (not just inline ones)', async () => {
+  // Regression guard for the 2026-05-14 bug where dispatchRoute re-derived
+  // the path from request.url and bypassed the /api/v1 rewrite for every
+  // table route. An unauthenticated call must hit the auth gate (401),
+  // NOT fall through to 404 — 404 means the alias never routed into the
+  // table at all.
+  const r = await fetch(`${BASE}/api/v1/dashboard/stats`);
+  assert.equal(r.status, 401, `expected 401 (auth gate reached), got ${r.status} — /api/v1 alias not routing into ROUTES table`);
+});
+
 // ─── Trace ID propagation ───────────────────────────────────────
 await step('GET /health echoes X-Sloten-Trace-Id (generated UUID)', async () => {
   const r = await fetch(`${BASE}/health`);

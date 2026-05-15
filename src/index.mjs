@@ -179,9 +179,12 @@ function requireAdminRole(handler) {
 //   intParams: indices of params to parseInt(_, 10) before passing.
 //   extras: extra args spliced in between params and ctx (e.g. `{}` opts).
 //   auth: 'public' | 'staff' | 'admin'
-async function dispatchRoute(routes, request, env, corsHeaders, ctx) {
-  const url = new URL(request.url);
-  const path = url.pathname;
+// `normalizedPath` is the fetch()-rewritten path (e.g. /api/v1 prefix already
+// stripped). It MUST be passed in — re-deriving from request.url here would
+// bypass the /api/v1 alias for every ROUTES-table endpoint (only the inline
+// special routes use the fetch-local path). Bug found 2026-05-14 verification.
+async function dispatchRoute(routes, request, env, corsHeaders, ctx, normalizedPath) {
+  const path = normalizedPath || new URL(request.url).pathname;
   const method = request.method.toUpperCase();
   for (const r of routes) {
     const methods = Array.isArray(r.m) ? r.m : [r.m];
@@ -554,7 +557,9 @@ export default {
       }
 
       // ── Standard CRUD routes via dispatch table ──────────────────────
-      const tableResp = await dispatchRoute(ROUTES, request, env, corsHeaders, ctx);
+      // Pass the alias-normalized `path` (see /api/v1 stripping above) so
+      // ROUTES-table endpoints honour the version prefix too.
+      const tableResp = await dispatchRoute(ROUTES, request, env, corsHeaders, ctx, path);
       if (tableResp) return tableResp;
 
       return err('Not Found', 404, corsHeaders);
