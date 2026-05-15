@@ -69,12 +69,15 @@
       <strong>API:</strong> <span id="api-base"></span>
     </div>
 
-    <button class="demo-reset" onclick="SlotenChat && SlotenChat.reset()">localStorage の会話状態をリセット</button>
+    <!-- inline onclick removed: /widget/* CSP is script-src 'self' (no
+         unsafe-inline) so the handler never fired. Wired in demo.js. -->
+    <button class="demo-reset" id="demo-reset-btn" type="button">localStorage の会話状態をリセット</button>
   </main>
 
-  <script>
-    document.getElementById('api-base').textContent = window.location.origin;
-  </script>
+  <!-- demo.js: CSP-safe replacement for the former inline <script> + onclick.
+       Must NOT be async — it only depends on the DOM, and guards on
+       window.SlotenChat which widget.js (async) populates. -->
+  <script src="./demo.js?v=20260515-fix22" defer></script>
   <script src="./widget.js?v=20260515-fix22" async></script>
 </body>
 </html>
