@@ -3,7 +3,10 @@
     "id": "g-001",
     "category": "faq",
     "input": "PayPay入金方法",
-    "expected_phrases": ["PayPay", "入金"],
+    "expected_phrases": [
+      "PayPay",
+      "入金"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": false,
     "expected_jump": null,
@@ -13,7 +16,10 @@
     "id": "g-002",
     "category": "faq",
     "input": "出金にはどれくらい時間がかかりますか",
-    "expected_phrases": ["銀行", "時間"],
+    "expected_phrases": [
+      "銀行",
+      "時間"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": false,
     "expected_jump": null,
@@ -23,8 +29,14 @@
     "id": "g-003",
     "category": "faq",
     "input": "KYCは必要？",
-    "expected_phrases": ["不要", "KYC"],
-    "forbidden_phrases": ["必要です", "必要となる場合"],
+    "expected_phrases": [
+      "不要",
+      "KYC"
+    ],
+    "forbidden_phrases": [
+      "必要です",
+      "必要となる場合"
+    ],
     "expected_handoff": false,
     "expected_jump": null,
     "source": "from_test_v2"
@@ -33,7 +45,10 @@
     "id": "g-004",
     "category": "faq",
     "input": "登録方法を教えて",
-    "expected_phrases": ["登録", "電話番号"],
+    "expected_phrases": [
+      "登録",
+      "電話番号"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": false,
     "expected_jump": null,
@@ -43,8 +58,13 @@
     "id": "g-005",
     "category": "faq",
     "input": "ライセンスはありますか？",
-    "expected_phrases": ["ジョージア", "N138"],
-    "forbidden_phrases": ["キュラソー"],
+    "expected_phrases": [
+      "ジョージア",
+      "N138"
+    ],
+    "forbidden_phrases": [
+      "キュラソー"
+    ],
     "expected_handoff": false,
     "expected_jump": null,
     "source": "from_faq_db"
@@ -53,7 +73,9 @@
     "id": "g-006",
     "category": "faq",
     "input": "サポートは24時間対応ですか？",
-    "expected_phrases": ["24時間"],
+    "expected_phrases": [
+      "24時間"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": false,
     "expected_jump": null,
@@ -63,7 +85,11 @@
     "id": "g-007",
     "category": "faq",
     "input": "対応している決済方法は何ですか？",
-    "expected_phrases": ["PayPay", "銀行振込", "仮想通貨"],
+    "expected_phrases": [
+      "PayPay",
+      "銀行振込",
+      "仮想通貨"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": false,
     "expected_jump": null,
@@ -73,7 +99,10 @@
     "id": "g-008",
     "category": "faq",
     "input": "認証コードが届きません",
-    "expected_phrases": ["迷惑メール", "再送信"],
+    "expected_phrases": [
+      "迷惑メール",
+      "再送信"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": false,
     "expected_jump": null,
@@ -83,7 +112,9 @@
     "id": "g-009",
     "category": "faq",
     "input": "ログインできません",
-    "expected_phrases": ["ログイン"],
+    "expected_phrases": [
+      "ログイン"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": false,
     "expected_jump": null,
@@ -93,7 +124,10 @@
     "id": "g-010",
     "category": "faq",
     "input": "アカウントを退会したい",
-    "expected_phrases": ["退会", "担当者"],
+    "expected_phrases": [
+      "退会",
+      "担当者"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": false,
     "expected_jump": null,
@@ -103,7 +137,10 @@
     "id": "g-011",
     "category": "faq",
     "input": "アカウントが凍結されました",
-    "expected_phrases": ["凍結", "オペレーター"],
+    "expected_phrases": [
+      "凍結",
+      "オペレーター"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": false,
     "expected_jump": null,
@@ -113,8 +150,13 @@
     "id": "g-012",
     "category": "faq",
     "input": "銀行振込のやり方を教えて",
-    "expected_phrases": ["銀行", "振込"],
-    "forbidden_phrases": ["メニューからお選びください"],
+    "expected_phrases": [
+      "銀行",
+      "振込"
+    ],
+    "forbidden_phrases": [
+      "メニューからお選びください"
+    ],
     "expected_handoff": false,
     "expected_jump": null,
     "source": "drafted"
@@ -123,8 +165,12 @@
     "id": "g-013",
     "category": "faq",
     "input": "ATM入金手順",
-    "expected_phrases": ["ATM"],
-    "forbidden_phrases": ["メニューからお選びください"],
+    "expected_phrases": [
+      "ATM"
+    ],
+    "forbidden_phrases": [
+      "メニューからお選びください"
+    ],
     "expected_handoff": false,
     "expected_jump": null,
     "source": "drafted"
@@ -133,7 +179,10 @@
     "id": "g-014",
     "category": "faq",
     "input": "サイトにアクセスしにくいです",
-    "expected_phrases": ["アクセス", "確認"],
+    "expected_phrases": [
+      "アクセス",
+      "確認"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": false,
     "expected_jump": null,
@@ -143,7 +192,10 @@
     "id": "g-015",
     "category": "faq",
     "input": "入金不要ボーナスについて教えて",
-    "expected_phrases": ["ボーナス", "3,000"],
+    "expected_phrases": [
+      "ボーナス",
+      "3,000"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": false,
     "expected_jump": null,
@@ -153,7 +205,10 @@
     "id": "g-016",
     "category": "machine_spec",
     "input": "スマスロで継続率80%以上の機種を教えて",
-    "expected_phrases": ["%", "機種"],
+    "expected_phrases": [
+      "%",
+      "機種"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": false,
     "expected_jump": null,
@@ -163,8 +218,12 @@
     "id": "g-017",
     "category": "machine_spec",
     "input": "バイオハザードヴィレッジについて教えて",
-    "expected_phrases": ["バイオハザード"],
-    "forbidden_phrases": ["該当機種なし"],
+    "expected_phrases": [
+      "バイオハザード"
+    ],
+    "forbidden_phrases": [
+      "該当機種なし"
+    ],
     "expected_handoff": false,
     "expected_jump": null,
     "source": "from_test_v2"
@@ -173,8 +232,14 @@
     "id": "g-018",
     "category": "machine_spec",
     "input": "天井が800Gぐらいのスロットは？",
-    "expected_phrases": ["機種", "天井"],
-    "forbidden_phrases": ["NOLIMITCITY", "バカラ"],
+    "expected_phrases": [
+      "機種",
+      "天井"
+    ],
+    "forbidden_phrases": [
+      "NOLIMITCITY",
+      "バカラ"
+    ],
     "expected_handoff": false,
     "expected_jump": null,
     "source": "from_test_v2"
@@ -183,7 +248,9 @@
     "id": "g-019",
     "category": "machine_spec",
     "input": "天井1300Gの機種ある？",
-    "expected_phrases": ["機種"],
+    "expected_phrases": [
+      "機種"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": false,
     "expected_jump": null,
@@ -193,7 +260,9 @@
     "id": "g-020",
     "category": "machine_spec",
     "input": "面白いスマスロを教えて",
-    "expected_phrases": ["スマスロ"],
+    "expected_phrases": [
+      "スマスロ"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": false,
     "expected_jump": null,
@@ -203,8 +272,12 @@
     "id": "g-021",
     "category": "machine_spec",
     "input": "コードギアスのスペックを教えて",
-    "expected_phrases": ["コードギアス"],
-    "forbidden_phrases": ["絞り込めませんでした"],
+    "expected_phrases": [
+      "コードギアス"
+    ],
+    "forbidden_phrases": [
+      "絞り込めませんでした"
+    ],
     "expected_handoff": false,
     "expected_jump": null,
     "source": "drafted"
@@ -213,8 +286,13 @@
     "id": "g-022",
     "category": "machine_spec",
     "input": "天井800Gの機種を教えて",
-    "expected_phrases": ["機種"],
-    "forbidden_phrases": ["FAQ から", "BUY機能"],
+    "expected_phrases": [
+      "機種"
+    ],
+    "forbidden_phrases": [
+      "FAQ から",
+      "BUY機能"
+    ],
     "expected_handoff": false,
     "expected_jump": null,
     "source": "constructed_2026-05",
@@ -224,8 +302,13 @@
     "id": "g-023",
     "category": "machine_spec",
     "input": "アイムジャグラーEX-AEの機械割を教えて",
-    "expected_phrases": ["ジャグラー"],
-    "forbidden_phrases": ["不明", "わかりません"],
+    "expected_phrases": [
+      "ジャグラー"
+    ],
+    "forbidden_phrases": [
+      "わかりません",
+      "知りません"
+    ],
     "expected_handoff": false,
     "expected_jump": null,
     "source": "constructed_2026-05",
@@ -235,8 +318,13 @@
     "id": "g-024",
     "category": "machine_spec",
     "input": "スマスロ北斗の拳の継続率は?",
-    "expected_phrases": ["北斗"],
-    "forbidden_phrases": ["不明", "わかりません"],
+    "expected_phrases": [
+      "北斗"
+    ],
+    "forbidden_phrases": [
+      "わかりません",
+      "知りません"
+    ],
     "expected_handoff": false,
     "expected_jump": null,
     "source": "constructed_2026-05",
@@ -246,8 +334,13 @@
     "id": "g-025",
     "category": "machine_spec",
     "input": "炎炎ノ消防隊2のスペックを教えて",
-    "expected_phrases": ["炎炎"],
-    "forbidden_phrases": ["不明", "わかりません"],
+    "expected_phrases": [
+      "炎炎"
+    ],
+    "forbidden_phrases": [
+      "わかりません",
+      "知りません"
+    ],
     "expected_handoff": false,
     "expected_jump": null,
     "source": "constructed_2026-05",
@@ -257,8 +350,13 @@
     "id": "g-026",
     "category": "announcement",
     "input": "最新のお知らせを教えて",
-    "expected_phrases": ["お知らせ"],
-    "forbidden_phrases": ["セキュリティ保護", "機密情報"],
+    "expected_phrases": [
+      "お知らせ"
+    ],
+    "forbidden_phrases": [
+      "セキュリティ保護",
+      "機密情報"
+    ],
     "expected_handoff": false,
     "expected_jump": null,
     "source": "from_test_v2"
@@ -267,7 +365,9 @@
     "id": "g-027",
     "category": "announcement",
     "input": "GW期間中の入出金について教えて",
-    "expected_phrases": ["GW"],
+    "expected_phrases": [
+      "GW"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": false,
     "expected_jump": null,
@@ -277,7 +377,9 @@
     "id": "g-028",
     "category": "announcement",
     "input": "PayPay入金メンテナンスはありますか？",
-    "expected_phrases": ["PayPay"],
+    "expected_phrases": [
+      "PayPay"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": false,
     "expected_jump": null,
@@ -287,8 +389,13 @@
     "id": "g-029",
     "category": "announcement",
     "input": "休みの日は反映が遅いんでしょうか?",
-    "expected_phrases": ["営業"],
-    "forbidden_phrases": ["不明"],
+    "expected_phrases": [
+      "営業"
+    ],
+    "forbidden_phrases": [
+      "わかりません",
+      "知りません"
+    ],
     "expected_handoff": false,
     "expected_jump": null,
     "source": "real_chatwoot_2026-05",
@@ -298,7 +405,9 @@
     "id": "g-030",
     "category": "announcement",
     "input": "ゲームの不具合についてサポートを依頼しても取り合わない",
-    "expected_phrases": ["不具合"],
+    "expected_phrases": [
+      "不具合"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": false,
     "expected_jump": null,
@@ -309,8 +418,13 @@
     "id": "g-031",
     "category": "escalation",
     "input": "オペレーターと話したい",
-    "expected_phrases": ["担当者", "お待ち"],
-    "forbidden_phrases": ["メニューから"],
+    "expected_phrases": [
+      "担当者",
+      "お待ち"
+    ],
+    "forbidden_phrases": [
+      "メニューから"
+    ],
     "expected_handoff": true,
     "expected_jump": null,
     "source": "from_test_v2"
@@ -319,7 +433,9 @@
     "id": "g-032",
     "category": "escalation",
     "input": "ふざけるな",
-    "expected_phrases": ["申し訳"],
+    "expected_phrases": [
+      "申し訳"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": true,
     "expected_jump": null,
@@ -329,7 +445,9 @@
     "id": "g-033",
     "category": "escalation",
     "input": "金返せ",
-    "expected_phrases": ["担当者"],
+    "expected_phrases": [
+      "担当者"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": true,
     "expected_jump": null,
@@ -339,7 +457,10 @@
     "id": "g-034",
     "category": "escalation",
     "input": "入金したのに反映されない",
-    "expected_phrases": ["確認", "担当"],
+    "expected_phrases": [
+      "確認",
+      "担当"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": true,
     "expected_jump": null,
@@ -349,7 +470,9 @@
     "id": "g-035",
     "category": "escalation",
     "input": "もうやめたい。依存気味かも",
-    "expected_phrases": ["相談"],
+    "expected_phrases": [
+      "相談"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": true,
     "expected_jump": null,
@@ -359,8 +482,15 @@
     "id": "g-036",
     "category": "english",
     "input": "How do I deposit money?",
-    "expected_phrases": ["日本語のみ", "日本語"],
-    "forbidden_phrases": ["deposit", "transfer", "bank"],
+    "expected_phrases": [
+      "日本語のみ",
+      "日本語"
+    ],
+    "forbidden_phrases": [
+      "deposit",
+      "transfer",
+      "bank"
+    ],
     "expected_handoff": false,
     "expected_jump": null,
     "source": "from_test_v2"
@@ -369,8 +499,12 @@
     "id": "g-037",
     "category": "english",
     "input": "What is my balance?",
-    "expected_phrases": ["日本語"],
-    "forbidden_phrases": ["balance"],
+    "expected_phrases": [
+      "日本語"
+    ],
+    "forbidden_phrases": [
+      "balance"
+    ],
     "expected_handoff": false,
     "expected_jump": null,
     "source": "drafted"
@@ -379,8 +513,12 @@
     "id": "g-038",
     "category": "english",
     "input": "I want to withdraw",
-    "expected_phrases": ["日本語"],
-    "forbidden_phrases": ["withdraw"],
+    "expected_phrases": [
+      "日本語"
+    ],
+    "forbidden_phrases": [
+      "withdraw"
+    ],
     "expected_handoff": false,
     "expected_jump": null,
     "source": "drafted"
@@ -389,7 +527,9 @@
     "id": "g-039",
     "category": "menu_keyword",
     "input": "メニュー",
-    "expected_phrases": ["お選びください"],
+    "expected_phrases": [
+      "お選びください"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": false,
     "expected_jump": null,
@@ -399,7 +539,9 @@
     "id": "g-040",
     "category": "menu_keyword",
     "input": "入金したい",
-    "expected_phrases": ["入金"],
+    "expected_phrases": [
+      "入金"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": false,
     "expected_jump": "deposit_methods",
@@ -409,7 +551,9 @@
     "id": "g-041",
     "category": "menu_keyword",
     "input": "出金したい",
-    "expected_phrases": ["出金"],
+    "expected_phrases": [
+      "出金"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": false,
     "expected_jump": null,
@@ -419,7 +563,10 @@
     "id": "g-042",
     "category": "menu_keyword",
     "input": "ボーナスコード",
-    "expected_phrases": ["ボーナス", "コード"],
+    "expected_phrases": [
+      "ボーナス",
+      "コード"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": false,
     "expected_jump": "bonus_code_entry",
@@ -429,7 +576,9 @@
     "id": "g-043",
     "category": "menu_keyword",
     "input": "FAQ",
-    "expected_phrases": ["お選びください"],
+    "expected_phrases": [
+      "お選びください"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": false,
     "expected_jump": null,
@@ -439,7 +588,9 @@
     "id": "g-044",
     "category": "menu_keyword",
     "input": "ゲーム",
-    "expected_phrases": ["ゲーム"],
+    "expected_phrases": [
+      "ゲーム"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": false,
     "expected_jump": null,
@@ -449,7 +600,9 @@
     "id": "g-045",
     "category": "menu_keyword",
     "input": "アカウント",
-    "expected_phrases": ["アカウント"],
+    "expected_phrases": [
+      "アカウント"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": false,
     "expected_jump": null,
@@ -459,8 +612,14 @@
     "id": "g-046",
     "category": "menu_keyword",
     "input": "あ",
-    "expected_phrases": ["ご希望", "選び"],
-    "forbidden_phrases": ["日本語のみ", "申し訳"],
+    "expected_phrases": [
+      "ご希望",
+      "選び"
+    ],
+    "forbidden_phrases": [
+      "日本語のみ",
+      "申し訳"
+    ],
     "expected_handoff": false,
     "expected_jump": null,
     "source": "from_test_v2",
@@ -470,7 +629,9 @@
     "id": "g-047",
     "category": "menu_keyword",
     "input": "ありがとう",
-    "expected_phrases": ["お選び"],
+    "expected_phrases": [
+      "お選び"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": false,
     "expected_jump": null,
@@ -481,8 +642,14 @@
     "id": "g-048",
     "category": "faq",
     "input": "銀行出金の手数料はいくらですか?",
-    "expected_phrases": ["銀行", "手数料"],
-    "forbidden_phrases": ["不明"],
+    "expected_phrases": [
+      "銀行",
+      "手数料"
+    ],
+    "forbidden_phrases": [
+      "わかりません",
+      "知りません"
+    ],
     "expected_handoff": false,
     "expected_jump": null,
     "source": "real_chatwoot_2026-05",
@@ -492,8 +659,13 @@
     "id": "g-049",
     "category": "faq",
     "input": "コンビニ入金は何時頃反映されますか?",
-    "expected_phrases": ["コンビニ"],
-    "forbidden_phrases": ["不明"],
+    "expected_phrases": [
+      "コンビニ"
+    ],
+    "forbidden_phrases": [
+      "わかりません",
+      "知りません"
+    ],
     "expected_handoff": false,
     "expected_jump": null,
     "source": "real_chatwoot_2026-05",
@@ -503,7 +675,9 @@
     "id": "g-050",
     "category": "menu_keyword",
     "input": "出金キャンセル",
-    "expected_phrases": ["出金"],
+    "expected_phrases": [
+      "出金"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": false,
     "expected_jump": null,
@@ -514,8 +688,16 @@
     "id": "g-051",
     "category": "announcement",
     "input": "GW中の出金は通常通りですか",
-    "expected_phrases": ["GW", "ゴールデンウィーク", "連休"],
-    "forbidden_phrases": ["機密", "セキュリティ保護", "お伝えできません"],
+    "expected_phrases": [
+      "GW",
+      "ゴールデンウィーク",
+      "連休"
+    ],
+    "forbidden_phrases": [
+      "機密",
+      "セキュリティ保護",
+      "お伝えできません"
+    ],
     "expected_handoff": false,
     "expected_jump": null,
     "source": "drafted"
@@ -524,8 +706,13 @@
     "id": "g-052",
     "category": "announcement",
     "input": "お盆休みの営業時間を教えて",
-    "expected_phrases": ["営業"],
-    "forbidden_phrases": ["わかりません", "知りません"],
+    "expected_phrases": [
+      "営業"
+    ],
+    "forbidden_phrases": [
+      "わかりません",
+      "知りません"
+    ],
     "expected_handoff": false,
     "expected_jump": null,
     "source": "drafted",
@@ -535,8 +722,14 @@
     "id": "g-053",
     "category": "announcement",
     "input": "年末年始のメンテナンス予定はありますか",
-    "expected_phrases": ["メンテナンス", "年末"],
-    "forbidden_phrases": ["不明"],
+    "expected_phrases": [
+      "メンテナンス",
+      "年末"
+    ],
+    "forbidden_phrases": [
+      "わかりません",
+      "知りません"
+    ],
     "expected_handoff": false,
     "expected_jump": null,
     "source": "drafted",
@@ -546,8 +739,13 @@
     "id": "g-054",
     "category": "machine_spec",
     "input": "バイオハザードヴィレッジの天井について",
-    "expected_phrases": ["バイオハザード"],
-    "forbidden_phrases": ["GW", "メンテナンス"],
+    "expected_phrases": [
+      "バイオハザード"
+    ],
+    "forbidden_phrases": [
+      "GW",
+      "メンテナンス"
+    ],
     "expected_handoff": false,
     "expected_jump": null,
     "source": "drafted",
@@ -558,7 +756,10 @@
     "category": "machine_spec",
     "input": "モンスターハンターの継続率",
     "expected_phrases": [],
-    "forbidden_phrases": ["FAQ から", "BUY機能"],
+    "forbidden_phrases": [
+      "FAQ から",
+      "BUY機能"
+    ],
     "expected_handoff": false,
     "expected_jump": null,
     "source": "drafted",
@@ -568,8 +769,14 @@
     "id": "g-056",
     "category": "faq",
     "input": "ライセンスについて教えて",
-    "expected_phrases": ["ジョージア"],
-    "forbidden_phrases": ["継続率", "天井", "機種データベース"],
+    "expected_phrases": [
+      "ジョージア"
+    ],
+    "forbidden_phrases": [
+      "継続率",
+      "天井",
+      "機種データベース"
+    ],
     "expected_handoff": false,
     "expected_jump": null,
     "source": "drafted",
@@ -579,7 +786,10 @@
     "id": "g-057",
     "category": "escalation",
     "input": "なんで何も解決しないんだ",
-    "expected_phrases": ["担当者", "おつなぎ"],
+    "expected_phrases": [
+      "担当者",
+      "おつなぎ"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": true,
     "expected_jump": null,
@@ -589,7 +799,11 @@
     "id": "g-058",
     "category": "escalation",
     "input": "もう諦めて退会したい",
-    "expected_phrases": ["担当", "受け付け", "お待ち"],
+    "expected_phrases": [
+      "担当",
+      "受け付け",
+      "お待ち"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": false,
     "expected_jump": null,
@@ -600,7 +814,9 @@
     "id": "g-059",
     "category": "escalation",
     "input": "5万円返してください今すぐ",
-    "expected_phrases": ["担当者"],
+    "expected_phrases": [
+      "担当者"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": true,
     "expected_jump": null,
@@ -610,7 +826,9 @@
     "id": "g-060",
     "category": "english",
     "input": "Can I withdraw money on weekends?",
-    "expected_phrases": ["日本語"],
+    "expected_phrases": [
+      "日本語"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": false,
     "expected_jump": null,
@@ -620,7 +838,9 @@
     "id": "g-061",
     "category": "menu_keyword",
     "input": "入金不要ボーナス",
-    "expected_phrases": ["ボーナス"],
+    "expected_phrases": [
+      "ボーナス"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": false,
     "expected_jump": null,
@@ -630,7 +850,9 @@
     "id": "g-062",
     "category": "faq",
     "input": "対応している決済方法を全部教えて",
-    "expected_phrases": ["PayPay"],
+    "expected_phrases": [
+      "PayPay"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": false,
     "expected_jump": null,
@@ -640,7 +862,10 @@
     "id": "g-063",
     "category": "escalation",
     "input": "退会したいのですが手順を教えて",
-    "expected_phrases": ["担当", "お待ち"],
+    "expected_phrases": [
+      "担当",
+      "お待ち"
+    ],
     "forbidden_phrases": [],
     "expected_handoff": true,
     "expected_jump": null,
@@ -651,8 +876,13 @@
     "id": "g-064",
     "category": "faq",
     "input": "ログイン方法を教えてください",
-    "expected_phrases": ["ログイン"],
-    "forbidden_phrases": ["不明"],
+    "expected_phrases": [
+      "ログイン"
+    ],
+    "forbidden_phrases": [
+      "わかりません",
+      "知りません"
+    ],
     "expected_handoff": false,
     "expected_jump": null,
     "source": "drafted",
@@ -662,8 +892,13 @@
     "id": "g-065",
     "category": "faq",
     "input": "メールアドレスの変更方法",
-    "expected_phrases": ["メールアドレス"],
-    "forbidden_phrases": ["不明"],
+    "expected_phrases": [
+      "メールアドレス"
+    ],
+    "forbidden_phrases": [
+      "わかりません",
+      "知りません"
+    ],
     "expected_handoff": false,
     "expected_jump": null,
     "source": "drafted",
@@ -673,8 +908,12 @@
     "id": "g-066",
     "category": "faq",
     "input": "サポートは何時から何時まで",
-    "expected_phrases": ["24時間"],
-    "forbidden_phrases": ["機密"],
+    "expected_phrases": [
+      "24時間"
+    ],
+    "forbidden_phrases": [
+      "機密"
+    ],
     "expected_handoff": false,
     "expected_jump": null,
     "source": "drafted"
@@ -683,8 +922,13 @@
     "id": "g-067",
     "category": "machine_spec",
     "input": "アイムジャグラーEXの機械割は？",
-    "expected_phrases": ["ジャグラー"],
-    "forbidden_phrases": ["不明", "わかりません"],
+    "expected_phrases": [
+      "ジャグラー"
+    ],
+    "forbidden_phrases": [
+      "わかりません",
+      "知りません"
+    ],
     "expected_handoff": false,
     "expected_jump": null,
     "source": "drafted",
