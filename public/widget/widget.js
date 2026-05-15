@@ -1096,7 +1096,7 @@
 
   // Expose minimal API for host pages.
   window.SlotenChat = {
-    version: 'v20260430.fix21',
+    version: 'v20260515.fix22',
     open,
     close,
     // Chatwoot parity: `window.$chatwoot.setUser(identifier, userInfo)`
@@ -1105,10 +1105,52 @@
     // config and sent on first contact creation. After: PATCH to update.
     setUser,
     reset() {
+      // Previously this only nulled contactId + conversationId and removed
+      // the localStorage key. That left the live session fully alive:
+      //   - state.contactToken survived in memory, so api() kept sending the
+      //     old X-Sloten-Contact-Token and the next turn reattached to the
+      //     SAME contact/conversation;
+      //   - the WebSocket to the old conversation stayed OPEN; its 'close'
+      //     handler would even scheduleReconnect() back to it;
+      //   - pollTimer / wsReconnectTimer kept polling the old conversation;
+      //   - state.status / state.history kept stale data.
+      // Net effect: "reset" did nothing observable. Full teardown below.
+
+      // 1. Best-effort server-side revoke so a shared device is truly reset
+      //    (fire-and-forget; local teardown must not depend on it).
+      if (state.contactToken) {
+        try {
+          fetch(cfg.apiBase + '/api/widget/contacts/logout', {
+            method: 'POST',
+            headers: { 'X-Sloten-Contact-Token': state.contactToken },
+            keepalive: true,
+          }).catch(() => {});
+        } catch (_) {}
+      }
+
+      // 2. Tear down the live socket WITHOUT triggering reconnect/polling.
+      if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
+      wsAttempt = 0;
+      if (ws) {
+        try {
+          ws.onopen = ws.onmessage = ws.onclose = ws.onerror = null;
+          ws.close();
+        } catch (_) {}
+        ws = null;
+      }
+      stopPolling();
+
+      // 3. Clear ALL in-memory session state (incl. contactToken/status/history).
       state.contactId = null;
       state.conversationId = null;
-      localStorage.removeItem(STORAGE_KEY);
+      state.contactToken = null;
+      state.status = null;
+      state.history = [];
+
+      // 4. Drop persisted state + rendered transcript.
+      try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
       dom.messages.querySelectorAll('.sloten-chat-msg').forEach((n) => n.remove());
+      // Next send() → ensureContact()/ensureConversation() bootstrap fresh.
     },
     getState() { return Object.assign({}, state); },
   };
