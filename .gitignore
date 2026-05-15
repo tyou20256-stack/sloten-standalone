@@ -12,3 +12,7 @@ Thumbs.db
 # Internal-only configs (staging-bk)
 wrangler.staging-bk.toml
 .staging-bk-*.secret
+# Golden Set per-run results — append-only artifacts, don't churn the repo
+tests/golden-set/results-*.json
+# Wrangler temp outdirs used by dry-run + bundle-size checks
+/tmp/dryrun/

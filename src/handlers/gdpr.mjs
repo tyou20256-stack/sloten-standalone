@@ -135,6 +135,7 @@ export async function eraseContactData(request, env, corsHeaders, contactId) {
     ).bind(contactId, tenantId).all();
     const convIds = (convs.results || []).map((c) => c.id);
     let msgsErased = 0;
+    let attsErased = 0;
     if (convIds.length > 0) {
       const placeholders = convIds.map(() => '?').join(',');
       const r = await env.DB.prepare(
@@ -142,6 +143,37 @@ export async function eraseContactData(request, env, corsHeaders, contactId) {
           WHERE conversation_id IN (${placeholders}) AND tenant_id = ?`,
       ).bind(...convIds, tenantId).run();
       msgsErased = r.meta?.changes || 0;
+
+      // Erase attachments — the previous gdpr.erase implementation left
+      // R2 blobs AND the DB row filename intact. Customer-uploaded
+      // attachments routinely contain ID photos / passport scans /
+      // bank-statement screenshots — pure PII that GDPR right-to-erasure
+      // applies to (2026-05-14 third-pass audit).
+      const attRows = await env.DB.prepare(
+        `SELECT id FROM attachments WHERE conversation_id IN (${placeholders})`,
+      ).bind(...convIds).all();
+      const attIds = (attRows.results || []).map((a) => a.id);
+      if (attIds.length > 0 && env.FILES) {
+        // Drop R2 objects best-effort — D1 rows below get anonymised either
+        // way, so a partial R2 failure still leaves no DB pointer back to
+        // the customer.
+        for (const attId of attIds) {
+          try { await env.FILES.delete(attId); }
+          catch (delErr) { console.warn('[gdpr.erase] R2 delete failed for', attId, delErr?.message); }
+        }
+      }
+      // Anonymise the DB row: keep id/conversation_id/timestamps so the
+      // referential graph for audit + analytics stays intact, wipe filename
+      // (likely PII) + checksum (could be used to re-identify if the same
+      // file appears elsewhere).
+      if (attIds.length > 0) {
+        const attPlaceholders = attIds.map(() => '?').join(',');
+        const ar = await env.DB.prepare(
+          `UPDATE attachments SET filename='[ERASED]', checksum_sha256=NULL
+            WHERE id IN (${attPlaceholders})`,
+        ).bind(...attIds).run();
+        attsErased = ar.meta?.changes || 0;
+      }
     }
 
     // Audit-log the erasure (auditor can see WHO did it later).
@@ -167,6 +199,7 @@ export async function eraseContactData(request, env, corsHeaders, contactId) {
       contact_id: contactId,
       conversations_affected: convIds.length,
       messages_anonymized: msgsErased,
+      attachments_anonymized: attsErased,
       timestamp: new Date().toISOString(),
     }, corsHeaders);
   } catch (e) {
