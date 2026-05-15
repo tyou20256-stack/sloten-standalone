@@ -244,6 +244,29 @@ wrangler d1 execute sloten_standalone_db --remote --command="SELECT COUNT(*) AS 
 # すべて tenant_id='tenant_default' で backfill されていること
 ```
 
+### 6.4 オペレーターボタン除去 (フロー seed/clone 後は必須)
+
+`migrations/031` は handoff-fallback メニュー (固定 JSON) のみを処理する。
+`bot_flows` (sloten-main + bonus クローン) の steps blob は >100 KB あり
+D1 のインライン SQL 上限を超えるため、純 SQL では除去できない。フローを
+seed / 複製した場合は **必ず** 以下の冪等スクリプトを流すこと:
+
+```bash
+ADMIN_EMAIL=<admin> ADMIN_PASSWORD=<pw> \
+BASE_URL=<worker url> \
+node scripts/strip-operator-buttons.mjs
+# 期待: "Total operator buttons removed: N" (再実行で 0 = 冪等)
+```
+
+- 判定は `title` に「オペレーターと話す」を含む select option のみ。
+  `💬 その他の方法で出金(チャット対応)` (value=transfer_to_agent) は
+  出金手段選択なので **温存** される。
+- `transfer_to_agent` handoff ステップ自体は残す (出金チャット導線 +
+  キーワード/RG/怒りエスカの着地点)。
+- bonus フロー (19-22) はソースファイルが無い DB クローンのため、
+  再クローン時はこのスクリプトを再実行すること。
+- `--dry-run` で件数のみ確認可能。
+
 ---
 
 ## 7. Workers デプロイ
