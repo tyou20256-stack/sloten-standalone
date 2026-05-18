@@ -88,8 +88,30 @@ export async function vectorizeReindex(request, env, corsHeaders) {
       hashColumn: 'embedding_hash',
       dbId: r.id,
     }));
+  } else if (kind === 'faq') {
+    // Active FAQ semantic index (2026-05-18). Trigram FTS5 can't match a
+    // question whose wording differs from the stored FAQ (e.g. "出金方法は"
+    // vs FAQ "出金にはどれくらい…") — dense retrieval closes that gap.
+    // Embed question + answer so paraphrases on either side still match.
+    // ID prefix is `faqa_` (NOT `faq_`) to avoid colliding with the
+    // faq_candidates namespace (`${tenant}:faq_${id}`), whose autoincrement
+    // ids overlap numerically with the faq table's.
+    const { results } = await env.DB.prepare(
+      `SELECT id, question, answer FROM faq
+        WHERE is_active = 1 AND tenant_id = ?`,
+    ).bind(tenantId).all();
+    rows = (results || []).map((r) => ({
+      id: `${tenantId}:faqa_${r.id}`,
+      text: `${r.question}\n${r.answer}`,
+      metadata: {
+        kind: 'faq',
+        tenant_id: tenantId,
+        faq_id: r.id,
+      },
+      dbId: r.id,
+    }));
   } else {
-    return err('kind must be kb_chunks or faq_candidates', 400, corsHeaders);
+    return err('kind must be kb_chunks, faq_candidates, or faq', 400, corsHeaders);
   }
 
   if (rows.length === 0) {
@@ -101,7 +123,11 @@ export async function vectorizeReindex(request, env, corsHeaders) {
   // After tenant scoping, queries filter by tenant_id metadata which excludes
   // legacy vectors anyway, so leftover orphans degrade only storage cost.
   try {
-    const legacyIds = rows.map((r) => kind === 'kb_chunks' ? `kb_${r.dbId}` : `faq_${r.dbId}`);
+    const legacyIds = rows.map((r) => {
+      if (kind === 'kb_chunks') return `kb_${r.dbId}`;
+      if (kind === 'faq') return `faqa_${r.dbId}`;
+      return `faq_${r.dbId}`;
+    });
     if (legacyIds.length > 0) {
       await env.VECTORIZE.deleteByIds(legacyIds);
     }

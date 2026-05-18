@@ -267,6 +267,31 @@ node scripts/strip-operator-buttons.mjs
   再クローン時はこのスクリプトを再実行すること。
 - `--dry-run` で件数のみ確認可能。
 
+### 6.5 Vectorize 再インデックス (migration 034 適用後は必須)
+
+`migration 034` は `retrieval.use_vectorize=1` を有効化し、回答精度を
+ハイブリッド検索 (BM25 + dense RRF) に切り替える。FAQ の意味検索ベクトルは
+**未生成**なので、デプロイ直後に必ず以下を流すこと (流さない場合 FAQ dense は
+空のまま = 旧 BM25 のみにグレースフル縮退し、言い換え/2文字クエリの精度向上が
+効かない):
+
+```bash
+# ADMIN_API_TOKEN は wrangler secret (値はチームのシークレットストア参照)。
+WURL=https://sloten-standalone-staging-bk.rcc-aoki.workers.dev
+# 1. アクティブ FAQ を埋め込み (新規 kind='faq')
+curl -fsS -X POST "$WURL/api/admin/vectorize/reindex" \
+  -H "Authorization: Bearer $ADMIN_API_TOKEN" \
+  -H 'Content-Type: application/json' -d '{"kind":"faq"}'
+# 2. KB チャンクを再埋め込み (任意 / 整合性確保)
+curl -fsS -X POST "$WURL/api/admin/vectorize/reindex" \
+  -H "Authorization: Bearer $ADMIN_API_TOKEN" \
+  -H 'Content-Type: application/json' -d '{"kind":"kb_chunks"}'
+# 期待: {"success":true,"kind":"faq","embedded":<件数>,...}
+```
+
+確認: `SELECT kind,item_count FROM vectorize_index_state;` で `faq` の
+`item_count` > 0、`ai_logs.retrieval_trace` の `faq_dense_count` > 0。
+
 ---
 
 ## 7. Workers デプロイ

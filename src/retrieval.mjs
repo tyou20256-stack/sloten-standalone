@@ -22,8 +22,14 @@ const FTS_QUERY_MAX_LEN = 200;
 // `unicode61 remove_diacritics 2` tokenizer in migration 019.
 function sanitizeFtsQuery(text) {
   if (!text) return '';
+  // Strip FTS5 operator chars AND Japanese punctuation. Now that all three
+  // FTS tables use the `trigram` tokenizer, a trailing 「？」「。」 etc. is
+  // baked into the 3-char windows ("必要？" → 要？ ...), polluting the match
+  // and dropping recall. The long-vowel mark 「ー」 is intentionally NOT
+  // stripped — it is part of ordinary words (メニュー, カレー).
   const cleaned = String(text)
     .replace(/["'(){}\[\]\*\^:]/g, ' ')
+    .replace(/[？！。、，．・…〜「」『』（）【】〈〉《》〔〕!?]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, FTS_QUERY_MAX_LEN);
@@ -130,10 +136,15 @@ async function vectorizeAvailable(env) {
       `SELECT value FROM feature_flags WHERE key = 'retrieval.use_vectorize'`,
     ).first();
     if (flag?.value === '1') {
+      // Hybrid is viable if EITHER the KB-chunk index OR the FAQ index has
+      // vectors. FAQ dense alone meaningfully lifts recall (the dominant
+      // grounding source is FAQ), so don't gate the whole hybrid path on
+      // kb_chunks being populated.
       const state = await env.DB.prepare(
-        `SELECT item_count FROM vectorize_index_state WHERE kind = 'kb_chunks'`,
+        `SELECT COALESCE(SUM(item_count), 0) AS n FROM vectorize_index_state
+          WHERE kind IN ('kb_chunks', 'faq')`,
       ).first();
-      value = (state?.item_count || 0) > 0;
+      value = (state?.n || 0) > 0;
     }
   } catch { value = false; }
   cachePut('hasVectorize', value);
@@ -167,6 +178,18 @@ async function fetchChunksById(env, ids) {
     `SELECT id, heading_path AS title, content FROM knowledge_chunks WHERE id IN (${placeholders})`,
   ).bind(...ids).all();
   // Preserve input order
+  const byId = new Map((results || []).map((r) => [r.id, r]));
+  return ids.map((id) => byId.get(id)).filter(Boolean);
+}
+
+// Fetch FAQ rows by ids in bulk, tenant-scoped, preserving fused rank order.
+async function fetchFaqById(env, tenantId, ids) {
+  if (!ids || ids.length === 0) return [];
+  const placeholders = ids.map(() => '?').join(',');
+  const { results } = await env.DB.prepare(
+    `SELECT id, question, answer, category FROM faq
+      WHERE id IN (${placeholders}) AND tenant_id = ? AND is_active = 1`,
+  ).bind(...ids, tenantId).all();
   const byId = new Map((results || []).map((r) => [r.id, r]));
   return ids.map((id) => byId.get(id)).filter(Boolean);
 }
@@ -280,16 +303,44 @@ async function retrievalHybrid(env, tenantId, userQuery, faqLimit, kbLimit) {
           AND ks.is_active = 1
         ORDER BY score LIMIT ?`,
     ).bind(q, tenantId, kbLimit * 2).all();
-    // FAQ FTS5 (unchanged — small corpus)
-    const { results: faqRes } = await env.DB.prepare(
-      `SELECT f.id, f.question, f.answer, f.category, bm25(faq_fts) AS score
-         FROM faq_fts
-         JOIN faq f ON f.id = faq_fts.rowid
-        WHERE faq_fts MATCH ?
-          AND f.tenant_id = ?
-          AND f.is_active = 1
-        ORDER BY score LIMIT ?`,
-    ).bind(q, tenantId, faqLimit).all();
+    // FAQ — hybrid BM25 + dense, RRF-fused (2026-05-18). FAQ was previously
+    // FTS5-only; trigram can't match when the user's wording differs from the
+    // stored FAQ ("出金方法は" vs FAQ "出金にはどれくらい…") or when the query
+    // reduces to <3-char tokens ("入金"/"出金"). Dense closes both gaps. The
+    // dense list also rescues the case where BM25 returns nothing at all
+    // (previously → hybrid_fts_miss → generic priority dump).
+    const faqBm25Limit = Math.max(faqLimit * 2, faqLimit);
+    const [{ results: faqBm25 }, faqDenseRaw] = await Promise.all([
+      env.DB.prepare(
+        `SELECT f.id, f.question, f.answer, f.category, bm25(faq_fts) AS score
+           FROM faq_fts
+           JOIN faq f ON f.id = faq_fts.rowid
+          WHERE faq_fts MATCH ?
+            AND f.tenant_id = ?
+            AND f.is_active = 1
+          ORDER BY score LIMIT ?`,
+      ).bind(q, tenantId, faqBm25Limit).all(),
+      vectorizeQueryInternal(env, userQuery, {
+        tenantId,
+        topK: faqBm25Limit,
+        filter: { kind: 'faq', tenant_id: tenantId },
+      }),
+    ]);
+    const faqBm25Ranked = (faqBm25 || []).map((r, i) => ({ key: r.id, rank: i, source: 'bm25' }));
+    const faqDenseRanked = (faqDenseRaw || [])
+      .map((m, i) => {
+        const idStr = String(m.id);
+        // ID format: `${tenant}:faqa_${faqId}` (faqa = active FAQ; distinct
+        // from the faq_candidates `:faq_` namespace).
+        const after = idStr.includes(':faqa_')
+          ? idStr.split(':faqa_').pop()
+          : idStr.replace(/^faqa_/, '');
+        return { key: parseInt(after, 10), rank: i, source: 'dense', vec_score: m.score };
+      })
+      .filter((m) => Number.isFinite(m.key));
+    const faqFused = rrfFuse([faqBm25Ranked, faqDenseRanked]).slice(0, faqLimit);
+    const faqFusedIds = faqFused.map((f) => f.key);
+    const faqRes = await fetchFaqById(env, tenantId, faqFusedIds);
 
     // RRF fusion on KB chunks.
     // Vectorize ID format: `${tenant_id}:kb_${dbId}` (post tenant scoping
@@ -315,11 +366,14 @@ async function retrievalHybrid(env, tenantId, userQuery, faqLimit, kbLimit) {
       query: q,
       trace: {
         strategy: 'hybrid_rrf',
-        faq_ids: (faqRes || []).map((r) => r.id),
-        // BM25 scores per FAQ (negative = more relevant in FTS5 bm25() output).
-        // Surfaced so Golden Set evaluation can distinguish "wrong FAQ ranked
-        // top" from "no match" without re-running the query.
-        faq_scores: (faqRes || []).map((r) => ({ id: r.id, score: r.score })),
+        faq_ids: faqFusedIds,
+        // FAQ is now RRF-fused (bm25 + dense), so per-row bm25 scores no
+        // longer reflect final rank. Surface the component counts instead so
+        // Golden Set eval can tell "BM25 missed, dense rescued" from "both
+        // missed".
+        faq_bm25_count: faqBm25Ranked.length,
+        faq_dense_count: faqDenseRanked.length,
+        faq_top_rrf_score: faqFused[0]?.rrf_score || 0,
         kb_ids: fusedIds,
         kb_bm25_scores: (chunkBm25 || []).map((r) => ({ id: r.id, score: r.score })),
         query: q,

@@ -34,7 +34,7 @@ const SHORT_QUERY_CHAR_THRESHOLD = 30;
 const RESPONSE_CACHE_TTL_SEC = 900;
 const RESPONSE_CACHE_MIN_LEN = 50; // don't cache fallbacks / error messages
 
-function buildSystemPrompt(faqRows, kbRows, header, opts = {}) {
+export function buildSystemPrompt(faqRows, kbRows, header, opts = {}) {
   // Dynamic exclusion: when a specialized RAG path (pachi machine DB or
   // announcements) is going to fire, the generic FAQ / KB context is more
   // likely to mislead the LLM than help it. e.g. a machine query about
@@ -50,7 +50,15 @@ function buildSystemPrompt(faqRows, kbRows, header, opts = {}) {
   const kbText = includeKb ? kbRows.slice(0, MAX_CONTEXT_KB)
     .map((r) => `[${r.title || 'untitled'}]\n${(r.content || '').slice(0, 3000)}`)
     .join('\n\n---\n\n') : '';
-  const head = header || [
+
+  // MANDATORY block — these safety/accuracy rules are non-negotiable and are
+  // ALWAYS emitted, regardless of whether an admin-configured DB prompt
+  // (ai_prompts) is active. Before 2026-05-18, a truthy `header` replaced this
+  // block wholesale; the active DB prompt (id=5) lacked the 最優先ルール, so
+  // Flash Lite hallucinated "KYCは実施しております" (opposite of truth) and
+  // deflected 方法/手順 questions to a bare menu. Prepending unconditionally
+  // makes it impossible for any DB prompt to silently strip these rules.
+  const mandatory = [
     'あなたは「スロット天国」のAIカスタマーサポート担当です。',
     '',
     '## 最優先ルール (これらは他のどのルールよりも優先する。違反は絶対に許されない)',
@@ -71,13 +79,6 @@ function buildSystemPrompt(faqRows, kbRows, header, opts = {}) {
     '- 「入金したい」「振り込みたい」「PayPayで送金したい」 → **実行依頼** → メニュー誘導のみ可',
     '- 「KYC必要？」「本人確認って？」 → **情報質問** → 「原則不要」と回答',
     '',
-    '## 基本ルール',
-    '- 日本語で丁寧に（です・ます調で）回答してください。ナレッジベースに詳しい情報があれば**省略せず具体的に**案内してください。',
-    '- **必ず下記の FAQ とナレッジベースの情報のみに基づいて回答してください。** 記載のない情報を推測や一般知識で補わないでください。',
-    '- FAQ・ナレッジに情報がない場合は「担当者におつなぎしますので、少々お待ちください」と案内してください。',
-    '- **直接の実行依頼**（「入金したい」「振り込みたい」「PayPayで送金したい」等、ユーザーが今まさに手続きを始めようとしている場合）に限り、メニュー（💰 入金・出金）への誘導のみで構いません。',
-    '- 意味不明な入力には「ご質問内容を確認できませんでした。メニューからお選びいただくか、ご質問をお書きください」と案内してください。',
-    '',
     '## スロット天国の基本情報（必ずこの情報を正として使用）',
     '- カスタマーサポートは **24時間対応** です。',
     '- ライセンス: **ジョージア（グルジア）iGaming サブライセンス N138/1**（有効期限: 2026年10月29日）。キュラソーではありません。',
@@ -86,8 +87,24 @@ function buildSystemPrompt(faqRows, kbRows, header, opts = {}) {
     '- 出金方法: 自動銀行振込、仮想通貨。出金ページ https://sloten.io/withdraw から手続き可。',
     '- ドリームポット: 業界初の独自賞金プール機能。',
   ].join('\n');
+
+  // Customizable persona/style layer. An admin DB prompt (header) tunes tone
+  // and adds escalation flow; when absent, this default basics block is used.
+  // Either way it is appended AFTER `mandatory` and can only ADD to — never
+  // remove — the rules above.
+  const basics = header || [
+    '## 基本ルール',
+    '- 日本語で丁寧に（です・ます調で）回答してください。ナレッジベースに詳しい情報があれば**省略せず具体的に**案内してください。',
+    '- **必ず下記の FAQ とナレッジベースの情報のみに基づいて回答してください。** 記載のない情報を推測や一般知識で補わないでください。',
+    '- FAQ・ナレッジに情報がない場合は「担当者におつなぎしますので、少々お待ちください」と案内してください。',
+    '- **直接の実行依頼**（「入金したい」「振り込みたい」「PayPayで送金したい」等、ユーザーが今まさに手続きを始めようとしている場合）に限り、メニュー（💰 入金・出金）への誘導のみで構いません。',
+    '- 意味不明な入力には「ご質問内容を確認できませんでした。メニューからお選びいただくか、ご質問をお書きください」と案内してください。',
+  ].join('\n');
+
   return [
-    head,
+    mandatory,
+    '',
+    basics,
     '',
     '=== FAQ ===',
     faqText || '(no FAQ entries)',
@@ -181,6 +198,12 @@ async function callGemini(apiKey, system, userMessage, model = 'gemini-2.5-flash
   };
 }
 
+// 1536 (was 800): as the PRIMARY provider, Haiku now answers 方法/手順
+// questions that must quote multi-step FAQ procedures. 800 tokens truncated
+// those mid-sentence, which read as low accuracy. Japanese is ~1 token/char
+// for this tokenizer, so 1536 ≈ a long procedural answer with headroom.
+const ANTHROPIC_MAX_TOKENS = 1536;
+
 async function callAnthropic(apiKey, system, userMessage, model = 'claude-haiku-4-5') {
   const r = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -191,7 +214,7 @@ async function callAnthropic(apiKey, system, userMessage, model = 'claude-haiku-
     },
     body: JSON.stringify({
       model,
-      max_tokens: 800,
+      max_tokens: ANTHROPIC_MAX_TOKENS,
       system,
       messages: [{ role: 'user', content: userMessage }],
     }),
@@ -199,8 +222,13 @@ async function callAnthropic(apiKey, system, userMessage, model = 'claude-haiku-
   if (!r.ok) throw new Error(`Anthropic HTTP ${r.status}: ${await r.text()}`);
   const data = await r.json();
   const text = (data?.content?.[0]?.text || '').trim();
+  // Map Anthropic stop_reason → the finish_reason vocabulary the diagnostics
+  // path (retrieval_trace) already understands. 'max_tokens' is the only one
+  // that matters for the truncation-retry decision below.
+  const stop = data?.stop_reason || null;
   return {
     text,
+    finish_reason: stop === 'max_tokens' ? 'MAX_TOKENS' : (stop || null),
     tokens_in: data?.usage?.input_tokens ?? null,
     tokens_out: data?.usage?.output_tokens ?? null,
   };
@@ -535,7 +563,32 @@ export async function generateBotReply(env, { conversationId, tenantId, customer
     let result;
     if (provider === 'anthropic') {
       if (!env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY not set');
-      result = await callAnthropic(env.ANTHROPIC_API_KEY, system, maskedInput, model);
+      try {
+        result = await callAnthropic(env.ANTHROPIC_API_KEY, system, maskedInput, model);
+      } catch (anthropicErr) {
+        // Reverse failover (mirror of the Gemini→Anthropic path below). Now
+        // that Anthropic is the PRIMARY provider, an Anthropic outage would
+        // zero the bot unless Gemini covers it.
+        //
+        // Failover-eligible (anthropicErr.message = "Anthropic HTTP <s>: ..."):
+        //   - Transient: 429 / 500 / 502 / 503 / 529 (overloaded) — retry
+        //     exhausted on Anthropic's side.
+        //   - Key/account dead: 401 / 403 — auth revoked / suspended /
+        //     permission. Pointless to retry Anthropic; Gemini is unaffected.
+        // NOT eligible: 400 (malformed request) — fails identically on Gemini.
+        const msg = anthropicErr.message || '';
+        const isTransient = /Anthropic HTTP (429|500|502|503|529)/.test(msg);
+        const isProviderDead = /Anthropic HTTP (401|403)/.test(msg);
+        const failoverEligible = isTransient || isProviderDead;
+        if (failoverEligible && env.GEMINI_API_KEY) {
+          console.warn(`[ai-chat] Anthropic unavailable (${isProviderDead ? 'key/account dead' : 'transient'}) — falling back to Gemini`);
+          const fbModel = env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
+          result = await callGemini(env.GEMINI_API_KEY, system, maskedInput, fbModel);
+          providerFallback = 'gemini';
+        } else {
+          throw anthropicErr;
+        }
+      }
     } else {
       if (!env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not set');
       try {
